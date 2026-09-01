@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.claude/worktrees/
+.DS_Store

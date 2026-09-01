@@ -1,0 +1,1156 @@
+<title>Castles</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Grenze+Gotisch:wght@500;700&family=Grenze:ital,wght@0,400;0,600;1,400&family=Barlow+Semi+Condensed:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #14170f;
+    --ground-2: #191d13;
+    --panel: rgba(26, 31, 19, 0.88);
+    --line: #3a4030;
+    --line-soft: #2a3020;
+    --ink: #f2ecd9;
+    --ink-dim: #b0aa93;
+    --ink-faint: #7e7a68;
+    --gold: #dca23c;
+    --gold-deep: #8c6a26;
+    --rust: #b8503a;
+    --sage: #8fbf52;
+    --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
+    --text: "Grenze", Georgia, serif;
+    --display: "Grenze Gotisch", "Grenze", Georgia, serif;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--text);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: 16px;
+  }
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1;
+    letter-spacing: 0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .wordmark span { color: var(--gold); }
+  .tagline {
+    max-width: 48ch;
+    color: var(--ink-dim);
+    font-size: 16px;
+    margin: 6px 0 0;
+  }
+  .stamp {
+    font-family: var(--ui);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+
+  /* ---------- the game screen ---------- */
+  .screen {
+    position: relative;
+    background: #0f1109;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+  }
+  .stage-hold {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    min-height: 420px;
+  }
+  #stage {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(#1d2416 0%, #2a3320 55%, #333d26 100%);
+    cursor: crosshair;
+  }
+
+  .panel {
+    position: absolute;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(3px);
+    font-family: var(--ui);
+  }
+
+  /* resource ribbon */
+  .ribbon {
+    top: 0; left: 0; right: 0;
+    border-width: 0 0 1px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 8px 14px;
+    flex-wrap: wrap;
+  }
+  .ribbon .brand {
+    font-family: var(--display);
+    font-size: 19px;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    margin-right: 4px;
+  }
+  .res {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .res b { font-weight: 600; font-size: 15px; }
+  .res i {
+    width: 9px; height: 9px;
+    border-radius: 1px;
+    display: inline-block;
+    transform: rotate(45deg);
+    align-self: center;
+  }
+  .res u {
+    text-decoration: none;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+  }
+  .ribbon .clock {
+    margin-left: auto;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    font-size: 13px;
+    color: var(--ink-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* build rail */
+  .rail {
+    left: 12px; top: 62px;
+    width: 62px;
+    padding: 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 2px;
+  }
+  .rail-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: center;
+    padding-bottom: 6px;
+  }
+  .tool {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-left: 2px solid transparent;
+    color: var(--ink-dim);
+    font-family: var(--ui);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    padding: 7px 2px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+  }
+  .tool svg { width: 22px; height: 18px; }
+  .tool:hover { color: var(--ink); background: rgba(220, 162, 60, 0.08); }
+  .tool[aria-pressed="true"] {
+    color: var(--gold);
+    background: rgba(220, 162, 60, 0.13);
+    border-left-color: var(--gold);
+  }
+  .tool:focus-visible { outline: 1px solid var(--gold); outline-offset: -1px; }
+
+  /* inspector */
+  .inspector {
+    right: 12px; top: 62px;
+    width: 246px;
+    padding: 12px 14px 14px;
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .insp-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: 8px;
+  }
+  .insp-head h3 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 20px;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  .tag {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .tag.slot { background: rgba(184, 80, 58, 0.18); color: #e08a72; }
+  .tag.pool { background: rgba(143, 191, 82, 0.16); color: var(--sage); }
+
+  .chain {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .chip {
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 3px 7px;
+    color: var(--ink);
+    background: rgba(0, 0, 0, 0.25);
+    white-space: nowrap;
+  }
+  .arrow { color: var(--gold-deep); }
+
+  .rows { display: flex; flex-direction: column; gap: 5px; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .row b { color: var(--ink); font-weight: 600; }
+  .row.note { color: var(--ink-faint); font-style: italic; }
+
+  .labour { border-top: 1px solid var(--line-soft); padding-top: 10px; }
+  .labour h4 {
+    font-family: var(--ui);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 7px;
+  }
+  .meter {
+    height: 6px;
+    display: flex;
+    gap: 2px;
+    margin-bottom: 7px;
+  }
+  .meter i { flex: 1; border-radius: 1px; }
+  .meter i.p { background: var(--sage); }
+  .meter i.s { background: var(--rust); }
+  .legend { font-size: 12px; color: var(--ink-dim); line-height: 1.4; margin: 0; }
+  .legend em { font-style: normal; color: var(--ink); }
+
+  /* wilds readout */
+  .wilds {
+    right: 12px; bottom: 62px;
+    width: 246px;
+    padding: 10px 14px 12px;
+    border-radius: 2px;
+    border-left: 2px solid var(--rust);
+  }
+  .wilds h4 {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 500;
+    margin: 0 0 3px;
+  }
+  .wilds p {
+    margin: 0;
+    font-family: var(--ui);
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    line-height: 1.45;
+  }
+  .wilds .calm {
+    color: var(--gold);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 10.5px;
+  }
+
+  /* ring bar */
+  .ringbar {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 12px;
+    padding: 9px 14px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .ringbar .name {
+    font-family: var(--display);
+    font-size: 18px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .ringbar .name .num {
+    font-family: var(--ui);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+  }
+  .rings { display: flex; gap: 4px; }
+  .ringbtn {
+    appearance: none;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    font-family: var(--ui);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    padding: 4px 9px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .ringbtn[aria-pressed="true"] { color: var(--gold); border-color: var(--gold-deep); }
+  .ringbtn:disabled { opacity: 0.35; cursor: default; }
+  .ringbtn:focus-visible { outline: 1px solid var(--gold); outline-offset: 1px; }
+  .commit {
+    appearance: none;
+    background: var(--gold);
+    border: 1px solid var(--gold);
+    color: #17190f;
+    font-family: var(--ui);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .commit:disabled {
+    background: transparent;
+    color: var(--ink-faint);
+    border-color: var(--line);
+    cursor: default;
+  }
+  .commit:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
+  .ringstat {
+    font-family: var(--ui);
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .ringstat b { color: var(--ink); font-weight: 600; }
+
+  /* tile readout */
+  .tileread {
+    left: 86px; bottom: 12px;
+    padding: 6px 10px;
+    border-radius: 2px;
+    font-family: var(--ui);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .tileread b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- pillars ---------- */
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+  }
+  .pillar {
+    background: var(--ground-2);
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .pillar .eyebrow {
+    font-family: var(--ui);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gold-deep);
+  }
+  .pillar h2 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 22px;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .pillar p { margin: 0; color: var(--ink-dim); font-size: 15px; }
+
+  .footnote {
+    font-family: var(--ui);
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+    max-width: 78ch;
+    margin: 0;
+  }
+
+  @media (max-width: 900px) {
+    .stage-hold { aspect-ratio: 4 / 3; }
+    .rail { flex-direction: row; width: auto; left: 12px; right: 12px; overflow-x: auto; }
+    .rail-label { display: none; }
+    .tool { border-left: 0; border-bottom: 2px solid transparent; min-width: 54px; }
+    .tool[aria-pressed="true"] { border-left-color: transparent; border-bottom-color: var(--gold); }
+    .inspector, .wilds { position: static; width: auto; border-width: 1px 0 0; backdrop-filter: none; }
+    .ringbar { position: static; transform: none; border-width: 1px 0 0; }
+    .tileread { display: none; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <h1 class="wordmark">Cas<span>t</span>les</h1>
+      <p class="tagline">A quiet voxel keep. Short production chains, a wall you push outward, and something in the woods that keeps the wall honest.</p>
+    </div>
+    <div class="stamp">Visual mockup &middot; not playable</div>
+  </header>
+
+  <div class="screen">
+    <div class="stage-hold">
+      <canvas id="stage"></canvas>
+
+      <div class="panel ribbon">
+        <span class="brand">Castles</span>
+        <span class="res"><i style="background:#b98a5e"></i><b id="r-timber">240</b><u>timber</u></span>
+        <span class="res"><i style="background:#b4bac0"></i><b id="r-stone">186</b><u>stone</u></span>
+        <span class="res"><i style="background:#d8c24e"></i><b>95</b><u>grain</u></span>
+        <span class="res"><i style="background:#c6603b"></i><b>41</b><u>bread</u></span>
+        <span class="res"><i style="background:#dca23c"></i><b>60</b><u>coin</u></span>
+        <span class="clock"><span>Day 12</span><span>Spring</span><span>11 souls</span></span>
+      </div>
+
+      <nav class="panel rail" aria-label="Build tools">
+        <span class="rail-label">Build</span>
+      </nav>
+
+      <aside class="panel inspector" aria-live="polite">
+        <div class="insp-head">
+          <h3 id="i-name">Sawmill</h3>
+          <span class="tag slot" id="i-tag">Slot</span>
+        </div>
+        <div class="chain" id="i-chain"></div>
+        <div class="rows" id="i-rows"></div>
+        <div class="labour">
+          <h4>Labour</h4>
+          <div class="meter" id="i-meter" role="img" aria-label="Six of eleven colonists in the shared pool, five locked to workshop slots"></div>
+          <p class="legend"><em>6 in the pool</em> &mdash; hauling and building, switching freely.<br><em>5 in slots</em> &mdash; locked to a workshop until you pull them out.</p>
+        </div>
+      </aside>
+
+      <aside class="panel wilds">
+        <span class="calm">The Wilds &middot; restless</span>
+        <h4>A probe, around day 14</h4>
+        <p>Four of them, from the east treeline. Ring I holds this comfortably. Nothing is coming for your bakery.</p>
+      </aside>
+
+      <div class="panel ringbar">
+        <span class="name" id="ring-name">Ring I</span>
+        <div class="rings" role="group" aria-label="Wall rings">
+          <button class="ringbtn" type="button" data-ring="1" aria-pressed="true">I</button>
+          <button class="ringbtn" type="button" data-ring="2" aria-pressed="false">II</button>
+          <button class="ringbtn" type="button" data-ring="3" aria-pressed="false">III</button>
+        </div>
+        <span class="ringstat" id="ring-stat"></span>
+        <button class="commit" type="button" id="ring-commit" disabled>Raise wall</button>
+      </div>
+
+      <div class="panel tileread" id="tileread">hover the ground</div>
+    </div>
+  </div>
+
+  <section class="pillars">
+    <article class="pillar">
+      <span class="eyebrow">Pillar one</span>
+      <h2>Chains stay two steps deep</h2>
+      <p>Grain to flour to bread. Log to plank. Rock to block. Every chain fits on one screen, so the puzzle is where you put things, not whether you can hold the recipe in your head.</p>
+    </article>
+    <article class="pillar">
+      <span class="eyebrow">Pillar two</span>
+      <h2>The wall is the progress bar</h2>
+      <p>You never watch a tech tree fill up. You watch a ring of stone move outward, and the flat buildable ground inside it double. Ring III is the late game.</p>
+    </article>
+    <article class="pillar">
+      <span class="eyebrow">Pillar three</span>
+      <h2>Pressure you can see coming</h2>
+      <p>The Wilds announce themselves days ahead, arrive small, and lose. Walls exist so that expanding costs something &mdash; not so that you lose the colony at 2am.</p>
+    </article>
+  </section>
+
+  <p class="footnote">Click a building to inspect it &middot; pick a tool and click the ground to place &middot; select Ring II or III to preview the next wall, then raise it.</p>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------------------------------------------------------------- constants
+  const W = 34, H = 34;            // world in tiles
+  const TW = 26, TH = 13, ZH = 11; // iso tile width, depth, block height
+  const CX = 16, CY = 16;          // castle centre
+  const RINGS = { 1: 7, 2: 11, 3: 14 };
+
+  const cv = document.getElementById("stage");
+  const ctx = cv.getContext("2d");
+  const baked = document.createElement("canvas");
+  const bctx = baked.getContext("2d");
+  let view = { s: 1, ox: 0, oy: 0 };
+
+  // ---------------------------------------------------------------- palette
+  const P = {
+    grass:  ["#8cbe52", "#6b9a3c", "#588030"],
+    wilds:  ["#6e8f46", "#536e33", "#43592a"],
+    rock:   ["#a9afb6", "#868d95", "#6e757c"],
+    sand:   ["#e2ce92", "#c0ac73", "#a3905e"],
+    water:  ["#4fa0c8", "#3d82a6", "#326e8e"],
+    water2: ["#5fb0d6", "#4a91b4", "#3b7a99"],
+    deep:   ["#3d86ad", "#2f6c8e", "#265b78"],
+    stone:  ["#b4bac0", "#939aa1", "#787f86"],
+    timber: ["#b98a5e", "#966b45", "#7c5636"],
+    clay:   ["#c6603b", "#a64b2d", "#8b3c23"],
+    tilled: ["#8a6a4a", "#6e5238", "#5b422c"],
+    wheat:  ["#d8c24e", "#b39f38", "#94832c"],
+    trunk:  ["#7d5a3c", "#65482f", "#523a26"],
+    leafA:  ["#4f8c3a", "#3d6e2c", "#315922"],
+    leafB:  ["#67a544", "#4f8434", "#406b2a"],
+    crate:  ["#c09a62", "#9c7a49", "#816239"],
+    road:   ["#b9a888", "#96876b", "#7c6f57"],
+    linen:  ["#e6dcc0", "#c2b899", "#a49b7f"],
+    tunic:  ["#4d7fa8", "#3c6486", "#31536f"],
+    smock:  ["#6f9c46", "#577c35", "#47662b"],
+    foe:    ["#8779a0", "#6a5d80", "#544968"]
+  };
+  const WET = { water: 1, water2: 1, deep: 1 };
+
+  // ---------------------------------------------------------------- helpers
+  const hmap = new Float32Array(W * H);
+  const tmap = new Array(W * H);
+  const idx = (x, y) => y * W + x;
+
+  function hash(x, y) {
+    const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+  }
+  function vnoise(x, y, f) {
+    const gx = x * f, gy = y * f;
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const fx = gx - x0, fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = hash(x0, y0), b = hash(x0 + 1, y0);
+    const c = hash(x0, y0 + 1), d = hash(x0 + 1, y0 + 1);
+    return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+  }
+
+  // the castle footprint is an octagon: a square with its corners clipped.
+  // the clip scales with the radius, so the shape holds as the ring grows.
+  const cutFor = R => Math.max(2, Math.round(R * 0.6));
+  function inOct(dx, dy, R) {
+    return Math.max(Math.abs(dx), Math.abs(dy)) <= R &&
+           Math.abs(dx) + Math.abs(dy) <= R + cutFor(R);
+  }
+  // the wall is the closed one-tile boundary of that octagon
+  function ringCells(R) {
+    const out = [];
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const dx = x - CX, dy = y - CY;
+        if (!inOct(dx, dy, R)) continue;
+        if (inOct(dx + 1, dy, R) && inOct(dx - 1, dy, R) &&
+            inOct(dx, dy + 1, R) && inOct(dx, dy - 1, R)) continue;
+        out.push({ x, y, dx, dy });
+      }
+    }
+    return out;
+  }
+  const isCorner = (dx, dy, R) =>
+    Math.max(Math.abs(dx), Math.abs(dy)) === R &&
+    Math.abs(dx) + Math.abs(dy) === R + cutFor(R);
+
+  function enclosed(R) {
+    let n = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (inOct(x - CX, y - CY, R - 1)) n++;
+    }
+    return n;
+  }
+  function costOf(R) {
+    const c = ringCells(R).length;
+    return { stone: c * 2, timber: c, cells: c };
+  }
+
+  let ringR = RINGS[1];          // outermost wall
+  let ringsBuilt = [RINGS[1]];   // every wall still standing, inner first
+  let previewR = RINGS[1];
+  let builtRing = 1;
+
+  // ---------------------------------------------------------------- terrain
+  function genTerrain() {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const dx = x - CX, dy = y - CY;
+        const r = Math.hypot(dx, dy) / 19;
+        let h = 3 + vnoise(x, y, 0.16) * 2.6 + vnoise(x, y, 0.42) * 0.9;
+        if (r > 0.78) h -= (r - 0.78) * 30;
+        h = Math.round(h);
+        if (inOct(dx, dy, ringR + 1)) h = 4;          // courtyard is levelled
+        h = Math.max(1, Math.min(8, h));
+        let t = "grass";
+        if (h <= 1) t = r > 1.02 ? "deep" : (hash(x * 5.1, y * 2.3) > 0.72 ? "water2" : "water");
+        else if (h === 2) t = "sand";
+        else if (h >= 7) t = "rock";
+        else if (!inOct(dx, dy, ringR + 3)) t = "wilds";
+        hmap[idx(x, y)] = h;
+        tmap[idx(x, y)] = t;
+      }
+    }
+    for (let x = CX + ringR; x < W; x++) {   // approach road through the gate
+      const i = idx(x, CY);
+      if (!WET[tmap[i]]) { tmap[i] = "road"; hmap[i] = Math.max(3, hmap[i]); }
+    }
+  }
+
+  // ---------------------------------------------------------------- props
+  let props = [];
+  let buildings = [];
+  const cube = (x, y, z, pal, sc, hz) => props.push({ x, y, z, pal, sc: sc || 1, hz: hz || 1 });
+
+  const BUILDINGS = [
+    { x: 15, y: 15, w: 3, d: 3, hgt: 4, wall: "stone", roof: "clay",
+      name: "The Keep", tag: "pool", chain: ["Coin", "Order"],
+      rows: [["Shelters", "11 souls"], ["Ring authority", "III max"]],
+      note: "Where new colonists arrive." },
+    { x: 12, y: 12, w: 2, d: 2, hgt: 2, wall: "timber", roof: "clay",
+      name: "Storehouse", tag: "pool", chain: ["Anything", "Sorted"],
+      rows: [["Capacity", "600"], ["Haulers serving", "4"]],
+      note: "Its filter decides what the pool walks for." },
+    { x: 19, y: 12, w: 2, d: 2, hgt: 2, wall: "timber", roof: "clay",
+      name: "Sawmill", tag: "slot", chain: ["Log", "Plank"],
+      rows: [["Throughput", "6 / min"], ["Worker", "Bera, skill 4"]],
+      note: "Bera is locked here. She will not haul." },
+    { x: 12, y: 19, w: 2, d: 2, hgt: 3, wall: "stone", roof: "clay",
+      name: "Mill", tag: "slot", chain: ["Grain", "Flour"],
+      rows: [["Throughput", "4 / min"], ["Worker", "Odd, skill 2"]],
+      note: "Feeds the bakery across the yard." },
+    { x: 19, y: 19, w: 2, d: 2, hgt: 2, wall: "timber", roof: "clay",
+      name: "Bakery", tag: "slot", chain: ["Flour", "Bread"],
+      rows: [["Throughput", "3 / min"], ["Worker", "Sif, skill 5"]],
+      note: "Field to loaf in two steps. That is the whole chain." },
+    { x: 16, y: 12, w: 1, d: 1, hgt: 1, wall: "stone", roof: null,
+      name: "Well", tag: "pool", chain: ["Water", "Everyone"],
+      rows: [["Draws", "1 hauler"], ["Serves", "Ring I"]],
+      note: "Keep it central or the pool walks all day." }
+  ];
+
+  function farmPlot(x0, y0) {
+    for (let y = y0; y < y0 + 3; y++) {
+      for (let x = x0; x < x0 + 3; x++) {
+        const z = hmap[idx(x, y)];
+        cube(x, y, z, "tilled");
+        if ((x + y) % 2 === 0) cube(x, y, z + 1, "wheat", 0.62, 0.42);
+      }
+    }
+  }
+
+  function genProps() {
+    props = [];
+    buildings = [];
+
+    for (const R of ringsBuilt) {
+      const gate = { x: CX + R, y: CY };
+      for (const c of ringCells(R)) {
+        const z = hmap[idx(c.x, c.y)];
+        const isGate = c.x === gate.x && c.y === gate.y;
+        const tower = isCorner(c.dx, c.dy, R) ||
+                      (c.x === gate.x && Math.abs(c.dy) === 1);
+        if (tower) {
+          for (let k = 0; k < 5; k++) cube(c.x, c.y, z + k, "stone");
+          cube(c.x, c.y, z + 5, "clay", 0.9);
+        } else if (isGate) {
+          cube(c.x, c.y, z + 2, "timber");      // arch over the opening
+          cube(c.x, c.y, z + 3, "stone");
+        } else {
+          for (let k = 0; k < 3; k++) cube(c.x, c.y, z + k, "stone");
+          if ((c.x + c.y) % 2 === 0) cube(c.x, c.y, z + 3, "stone", 0.7, 0.6);
+        }
+      }
+    }
+
+    for (const b of BUILDINGS) {
+      for (let y = b.y; y < b.y + b.d; y++) {
+        for (let x = b.x; x < b.x + b.w; x++) {
+          const z = hmap[idx(x, y)];
+          for (let k = 0; k < b.hgt; k++) cube(x, y, z + k, b.wall);
+          if (b.roof) cube(x, y, z + b.hgt, b.roof, 1.04);
+        }
+      }
+      buildings.push(b);
+    }
+
+    farmPlot(10, 15);
+    farmPlot(20, 15);
+
+    for (let y = 20; y < 22; y++) {          // stockpile of crates
+      for (let x = 15; x < 18; x++) {
+        const z = hmap[idx(x, y)];
+        cube(x, y, z, "crate", 0.9, 0.55);
+        if ((x + y) % 3 !== 0) cube(x, y, z + 0.55, "crate", 0.72, 0.5);
+      }
+    }
+
+    for (let y = 1; y < H - 1; y++) {         // woods outside the wall
+      for (let x = 1; x < W - 1; x++) {
+        const i = idx(x, y);
+        const t = tmap[i];
+        if (t !== "grass" && t !== "wilds") continue;
+        if (inOct(x - CX, y - CY, ringR + 1)) continue;
+        if (hash(x * 3.3, y * 1.7) > 0.86) {
+          const z = hmap[i];
+          cube(x, y, z, "trunk", 0.42, 0.6);
+          cube(x, y, z + 0.6, hash(x, y) > 0.5 ? "leafA" : "leafB", 0.95, 1.05);
+          cube(x, y, z + 1.65, "leafA", 0.6, 0.7);
+        }
+      }
+    }
+
+    // the probe, waiting politely beyond the treeline
+    const fx = Math.min(W - 3, CX + ringR + 3);
+    for (const f of [[fx, CY - 3], [fx + 1, CY - 1], [fx, CY + 1], [fx + 1, CY + 3]]) {
+      if (f[0] >= W - 1 || WET[tmap[idx(f[0], f[1])]]) continue;
+      const z = hmap[idx(f[0], f[1])];
+      cube(f[0], f[1], z, "foe", 0.44, 0.62);
+      cube(f[0], f[1], z + 0.62, "foe", 0.32, 0.3);
+    }
+  }
+
+  // ---------------------------------------------------------------- drawing
+  const project = (x, y, z) => ({
+    ex: (x - y) * TW / 2,
+    ey: (x + y) * TH / 2 - z * ZH
+  });
+
+  function drawBlock(c, x, y, z, pal, sc, hz) {
+    const p = P[pal];
+    const { ex, ey } = project(x, y, z);
+    const hw = (TW / 2) * sc, hh = (TH / 2) * sc, zh = ZH * hz;
+    c.fillStyle = p[0];
+    c.beginPath();
+    c.moveTo(ex, ey - hh); c.lineTo(ex + hw, ey);
+    c.lineTo(ex, ey + hh); c.lineTo(ex - hw, ey);
+    c.closePath(); c.fill();
+    c.fillStyle = p[1];
+    c.beginPath();
+    c.moveTo(ex - hw, ey); c.lineTo(ex, ey + hh);
+    c.lineTo(ex, ey + hh + zh); c.lineTo(ex - hw, ey + zh);
+    c.closePath(); c.fill();
+    c.fillStyle = p[2];
+    c.beginPath();
+    c.moveTo(ex + hw, ey); c.lineTo(ex, ey + hh);
+    c.lineTo(ex, ey + hh + zh); c.lineTo(ex + hw, ey + zh);
+    c.closePath(); c.fill();
+  }
+
+  // one top face plus side skirts down to the exposed neighbour
+  function drawColumn(c, x, y) {
+    const i = idx(x, y);
+    const h = hmap[i];
+    const pal = P[tmap[i]] || P.grass;
+    const { ex, ey } = project(x, y, h);
+    const hw = TW / 2, hh = TH / 2;
+    const dl = Math.max(0, h - (y + 1 < H ? hmap[idx(x, y + 1)] : 0)) * ZH;
+    const dr = Math.max(0, h - (x + 1 < W ? hmap[idx(x + 1, y)] : 0)) * ZH;
+
+    c.fillStyle = pal[0];
+    c.beginPath();
+    c.moveTo(ex, ey - hh); c.lineTo(ex + hw, ey);
+    c.lineTo(ex, ey + hh); c.lineTo(ex - hw, ey);
+    c.closePath(); c.fill();
+
+    if (dl > 0) {
+      c.fillStyle = pal[1];
+      c.beginPath();
+      c.moveTo(ex - hw, ey); c.lineTo(ex, ey + hh);
+      c.lineTo(ex, ey + hh + dl); c.lineTo(ex - hw, ey + dl);
+      c.closePath(); c.fill();
+    }
+    if (dr > 0) {
+      c.fillStyle = pal[2];
+      c.beginPath();
+      c.moveTo(ex + hw, ey); c.lineTo(ex, ey + hh);
+      c.lineTo(ex, ey + hh + dr); c.lineTo(ex + hw, ey + dr);
+      c.closePath(); c.fill();
+    }
+  }
+
+  function bake() {
+    const items = [];
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        items.push({ k: (x + y) * 100 + hmap[idx(x, y)], kind: 0, x, y });
+      }
+    }
+    for (const p of props) items.push({ k: (p.x + p.y) * 100 + p.z + 0.5, kind: 1, p });
+    items.sort((a, b) => a.k - b.k);
+
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.clearRect(0, 0, baked.width, baked.height);
+    bctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);
+    for (const it of items) {
+      if (it.kind === 0) drawColumn(bctx, it.x, it.y);
+      else drawBlock(bctx, it.p.x, it.p.y, it.p.z, it.p.pal, it.p.sc, it.p.hz);
+    }
+  }
+
+  // ---------------------------------------------------------------- colonists
+  const FOLK = [
+    { path: [[13, 13.4], [16.4, 14], [19.4, 13.4], [16.4, 14]], pal: "linen", carry: true, sp: 0.05, t: 0 },
+    { path: [[11.4, 16.4], [13, 13.6], [11.4, 16.4]], pal: "tunic", carry: true, sp: 0.042, t: 1.2 },
+    { path: [[16.4, 20.8], [19.2, 20.4], [16.4, 20.8]], pal: "linen", carry: true, sp: 0.047, t: 2.4 },
+    { path: [[16.4, 18.6], [16.4, 13.2], [16.4, 18.6]], pal: "tunic", carry: false, sp: 0.055, t: 3.1 },
+    { path: [[19.4, 14.3]], pal: "smock", carry: false, sp: 0, t: 0 },
+    { path: [[19.4, 21.3]], pal: "smock", carry: false, sp: 0, t: 0 }
+  ];
+
+  function folkPos(f, time) {
+    if (f.sp === 0 || f.path.length < 2) return f.path[0];
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i < f.path.length - 1; i++) {
+      const a = f.path[i], b = f.path[i + 1];
+      const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      segs.push({ a, b, d }); total += d;
+    }
+    if (total === 0) return f.path[0];
+    let dist = ((time * f.sp + f.t) % 1) * total;
+    for (const s of segs) {
+      if (dist <= s.d) {
+        const u = s.d === 0 ? 0 : dist / s.d;
+        return [s.a[0] + (s.b[0] - s.a[0]) * u, s.a[1] + (s.b[1] - s.a[1]) * u];
+      }
+      dist -= s.d;
+    }
+    return f.path[0];
+  }
+
+  // ---------------------------------------------------------------- overlays
+  let hover = null;
+  let tool = "wall";
+
+  function diamond(c, x, y, z, sc) {
+    const { ex, ey } = project(x, y, z);
+    const hw = (TW / 2) * sc, hh = (TH / 2) * sc;
+    c.beginPath();
+    c.moveTo(ex, ey - hh); c.lineTo(ex + hw, ey);
+    c.lineTo(ex, ey + hh); c.lineTo(ex - hw, ey);
+    c.closePath();
+  }
+
+  function drawGhostRing(c) {
+    if (previewR === ringR) return;
+
+    c.fillStyle = "rgba(143, 191, 82, 0.10)";   // ground you would gain
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const dx = x - CX, dy = y - CY;
+      if (inOct(dx, dy, previewR - 1) && !inOct(dx, dy, ringR + 1)) {
+        diamond(c, x, y, hmap[idx(x, y)], 1);
+        c.fill();
+      }
+    }
+
+    const gate = { x: CX + previewR, y: CY };
+    c.lineWidth = 1.1;
+    for (const cell of ringCells(previewR)) {
+      if (cell.x === gate.x && cell.y === gate.y) continue;
+      const z = hmap[idx(cell.x, cell.y)];
+      const top = isCorner(cell.dx, cell.dy, previewR) ? 5 : 3;
+      c.fillStyle = "rgba(220, 162, 60, 0.17)";
+      c.strokeStyle = "rgba(240, 200, 120, 0.55)";
+      diamond(c, cell.x, cell.y, z + top, 1);
+      c.fill(); c.stroke();
+      const { ex, ey } = project(cell.x, cell.y, z + top);
+      c.strokeStyle = "rgba(240, 200, 120, 0.26)";
+      c.beginPath();
+      c.moveTo(ex - TW / 2, ey); c.lineTo(ex - TW / 2, ey + top * ZH);
+      c.moveTo(ex + TW / 2, ey); c.lineTo(ex + TW / 2, ey + top * ZH);
+      c.moveTo(ex, ey + TH / 2); c.lineTo(ex, ey + TH / 2 + top * ZH);
+      c.stroke();
+    }
+  }
+
+  function draw(time) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(baked, 0, 0);
+    ctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);
+
+    drawGhostRing(ctx);
+
+    if (hover) {
+      ctx.fillStyle = "rgba(242, 236, 217, 0.22)";
+      ctx.strokeStyle = "rgba(242, 236, 217, 0.75)";
+      ctx.lineWidth = 1.2;
+      diamond(ctx, hover.x, hover.y, hmap[idx(hover.x, hover.y)], 1);
+      ctx.fill(); ctx.stroke();
+    }
+
+    const folk = FOLK.map(f => ({ f, p: folkPos(f, time) }));
+    folk.sort((a, b) => (a.p[0] + a.p[1]) - (b.p[0] + b.p[1]));
+    for (const { f, p } of folk) {
+      const z = hmap[idx(Math.round(p[0]), Math.round(p[1]))] || 4;
+      drawBlock(ctx, p[0], p[1], z, f.pal, 0.4, 0.6);
+      drawBlock(ctx, p[0], p[1], z + 0.6, "linen", 0.28, 0.28);
+      if (f.carry) drawBlock(ctx, p[0], p[1], z + 0.92, "crate", 0.34, 0.3);
+    }
+  }
+
+  // ---------------------------------------------------------------- layout
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const r = cv.getBoundingClientRect();
+    cv.width = baked.width = Math.max(1, Math.round(r.width * dpr));
+    cv.height = baked.height = Math.max(1, Math.round(r.height * dpr));
+
+    const worldW = (W + H - 2) * TW / 2 + TW;
+    const worldH = (W + H - 2) * TH / 2 + TH + 13 * ZH;
+    const s = Math.min(cv.width / worldW, cv.height / worldH) * 0.99;
+    const exMid = ((W - 1) * TW / 2 - (H - 1) * TW / 2) / 2;
+    const eyMid = ((W + H - 2) * TH / 2 - 9 * ZH) / 2;
+    view = { s, ox: cv.width / 2 - exMid * s, oy: cv.height / 2 - eyMid * s };
+    bake();
+  }
+
+  function pick(px, py) {
+    const ex = (px - view.ox) / view.s, ey = (py - view.oy) / view.s;
+    let best = null;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = project(x, y, hmap[idx(x, y)]);
+        const dx = Math.abs(ex - p.ex) / (TW / 2);
+        const dy = Math.abs(ey - p.ey) / (TH / 2);
+        if (dx + dy <= 1 && (!best || x + y > best.x + best.y)) best = { x, y };
+      }
+    }
+    return best;
+  }
+
+  // ---------------------------------------------------------------- build rail
+  const TOOLS = [
+    ["wall", "Wall", '<path d="M2 13h18v4H2z"/><path d="M3 6h5v6H3zM12 6h5v6h-5z"/>'],
+    ["tower", "Tower", '<path d="M6 5h2v2h2V5h2v2h2V5h2v12H6z"/>'],
+    ["farm", "Farm", '<path d="M2 15h18v2H2z"/><path d="M5 6c2 1 2 4 2 7H6c0-3 0-6-1-7zM11 5c2 1 2 5 2 8h-1c0-4 0-7-1-8zM16 7c2 1 2 3 2 6h-1c0-3 0-5-1-6z"/>'],
+    ["shop", "Workshop", '<path d="M4 16h14v2H4z"/><path d="M11 4l6 4H5z"/><path d="M7 9h8v6H7z"/>'],
+    ["store", "Store", '<path d="M4 6h14v11H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 11h14v1H4z"/>'],
+    ["road", "Road", '<path d="M3 16h4l3-12h2L9 16h9v2H3z"/>'],
+    ["clear", "Clear", '<path d="M4 5l3-2 11 9-3 4z"/><path d="M2 16h8v2H2z"/>']
+  ];
+
+  const rail = document.querySelector(".rail");
+  for (const [id, label, svg] of TOOLS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tool";
+    b.dataset.tool = id;
+    b.setAttribute("aria-pressed", String(id === tool));
+    b.innerHTML = '<svg viewBox="0 0 22 20" fill="currentColor" aria-hidden="true">' + svg + "</svg>" + label;
+    b.addEventListener("click", () => {
+      tool = id;
+      for (const t of rail.querySelectorAll(".tool")) {
+        t.setAttribute("aria-pressed", String(t.dataset.tool === id));
+      }
+    });
+    rail.appendChild(b);
+  }
+
+  // ---------------------------------------------------------------- inspector
+  document.getElementById("i-meter").innerHTML =
+    "<i class='p'></i>".repeat(6) + "<i class='s'></i>".repeat(5);
+
+  function inspect(b) {
+    document.getElementById("i-name").textContent = b.name;
+    const tag = document.getElementById("i-tag");
+    tag.textContent = b.tag === "slot" ? "Slot" : "Pool";
+    tag.className = "tag " + b.tag;
+    document.getElementById("i-chain").innerHTML =
+      "<span class='chip'>" + b.chain[0] + "</span><span class='arrow'>&rarr;</span>" +
+      "<span class='chip'>" + b.chain[1] + "</span>";
+    document.getElementById("i-rows").innerHTML =
+      b.rows.map(r => "<div class='row'><span>" + r[0] + "</span><b>" + r[1] + "</b></div>").join("") +
+      "<div class='row note'><span>" + b.note + "</span></div>";
+  }
+  inspect(BUILDINGS[2]);
+
+  // ---------------------------------------------------------------- ring UI
+  const ringStat = document.getElementById("ring-stat");
+  const ringName = document.getElementById("ring-name");
+  const commit = document.getElementById("ring-commit");
+  const ROMAN = ["", "I", "II", "III"];
+  let timber = 240, stone = 186;
+
+  function ringUI() {
+    const entry = Object.entries(RINGS).find(([, r]) => r === previewR);
+    const n = entry ? Number(entry[0]) : builtRing;
+    ringName.innerHTML = "Ring <span class='num'>" + ROMAN[n] + "</span>";
+
+    if (previewR === ringR) {
+      ringStat.innerHTML = "<b>" + enclosed(ringR) + "</b> tiles enclosed &middot; <b>" +
+        ringCells(ringR).length + "</b> segments standing";
+      commit.disabled = true;
+      commit.textContent = "Raised";
+    } else {
+      const c = costOf(previewR);
+      const gain = enclosed(previewR) - enclosed(ringR);
+      ringStat.innerHTML = "+<b>" + gain + "</b> tiles &middot; costs <b>" + c.stone +
+        "</b> stone, <b>" + c.timber + "</b> timber";
+      const short = stone < c.stone || timber < c.timber;
+      commit.disabled = short;
+      commit.textContent = short ? "Not enough stone" : "Raise wall";
+    }
+    for (const b of document.querySelectorAll(".ringbtn")) {
+      b.setAttribute("aria-pressed", String(RINGS[b.dataset.ring] === previewR));
+      b.disabled = RINGS[b.dataset.ring] < ringR;
+    }
+    document.getElementById("r-timber").textContent = timber;
+    document.getElementById("r-stone").textContent = stone;
+  }
+
+  for (const b of document.querySelectorAll(".ringbtn")) {
+    b.addEventListener("click", () => { previewR = RINGS[b.dataset.ring]; ringUI(); });
+  }
+
+  commit.addEventListener("click", () => {
+    const c = costOf(previewR);
+    stone -= c.stone;
+    timber -= c.timber;
+    ringR = previewR;
+    ringsBuilt.push(previewR);
+    builtRing = Number(Object.entries(RINGS).find(([, r]) => r === ringR)[0]);
+    genTerrain();
+    genProps();
+    bake();
+    ringUI();
+  });
+
+  // ---------------------------------------------------------------- pointer
+  const readout = document.getElementById("tileread");
+
+  function cellAt(e) {
+    const r = cv.getBoundingClientRect();
+    const dpr = cv.width / r.width;
+    return pick((e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr);
+  }
+
+  cv.addEventListener("mousemove", e => {
+    hover = cellAt(e);
+    if (hover) {
+      const i = idx(hover.x, hover.y);
+      const inside = inOct(hover.x - CX, hover.y - CY, ringR - 1);
+      readout.innerHTML = "<b>" + tmap[i] + "</b> &middot; height " + hmap[i] +
+        " &middot; " + (inside ? "inside the wall" : "the wilds");
+    }
+  });
+  cv.addEventListener("mouseleave", () => {
+    hover = null;
+    readout.textContent = "hover the ground";
+  });
+
+  cv.addEventListener("click", e => {
+    const c = cellAt(e);
+    if (!c) return;
+    const hit = buildings.find(b =>
+      c.x >= b.x && c.x < b.x + b.w && c.y >= b.y && c.y < b.y + b.d);
+    if (hit) { inspect(hit); return; }
+    if (WET[tmap[idx(c.x, c.y)]]) return;
+
+    const z = hmap[idx(c.x, c.y)];
+    if (tool === "wall") {
+      for (let k = 0; k < 3; k++) cube(c.x, c.y, z + k, "stone");
+    } else if (tool === "tower") {
+      for (let k = 0; k < 5; k++) cube(c.x, c.y, z + k, "stone");
+      cube(c.x, c.y, z + 5, "clay", 0.9);
+    } else if (tool === "farm") {
+      cube(c.x, c.y, z, "tilled");
+      cube(c.x, c.y, z + 1, "wheat", 0.62, 0.42);
+    } else if (tool === "shop") {
+      for (let k = 0; k < 2; k++) cube(c.x, c.y, z + k, "timber");
+      cube(c.x, c.y, z + 2, "clay", 1.04);
+    } else if (tool === "store") {
+      cube(c.x, c.y, z, "crate", 0.9, 0.55);
+      cube(c.x, c.y, z + 0.55, "crate", 0.72, 0.5);
+    } else if (tool === "road") {
+      tmap[idx(c.x, c.y)] = "road";
+    } else if (tool === "clear") {
+      props = props.filter(p => !(p.x === c.x && p.y === c.y));
+    }
+    bake();
+  });
+
+  // ---------------------------------------------------------------- boot
+  genTerrain();
+  genProps();
+  resize();
+  ringUI();
+
+  let ro;
+  window.addEventListener("resize", () => { clearTimeout(ro); ro = setTimeout(resize, 120); });
+
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    draw(0);
+  } else {
+    const t0 = performance.now();
+    (function loop(now) {
+      draw((now - t0) / 1000);
+      requestAnimationFrame(loop);
+    })(t0);
+  }
+})();
+</script>

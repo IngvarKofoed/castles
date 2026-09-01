@@ -1,0 +1,1878 @@
+<title>Castles in Three</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Grenze+Gotisch:wght@500;700&family=Grenze:ital,wght@0,400;0,600;1,400&family=Barlow+Semi+Condensed:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #14170f;
+    --ground-2: #191d13;
+    --panel: rgba(26, 31, 19, 0.88);
+    --line: #3a4030;
+    --line-soft: #2a3020;
+    --ink: #f2ecd9;
+    --ink-dim: #b0aa93;
+    --ink-faint: #7e7a68;
+    --gold: #dca23c;
+    --gold-deep: #8c6a26;
+    --rust: #b8503a;
+    --sage: #8fbf52;
+    --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
+    --text: "Grenze", Georgia, serif;
+    --display: "Grenze Gotisch", "Grenze", Georgia, serif;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--text);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: 16px;
+  }
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1;
+    letter-spacing: 0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .wordmark span { color: var(--gold); }
+  .tagline {
+    max-width: 48ch;
+    color: var(--ink-dim);
+    font-size: 16px;
+    margin: 6px 0 0;
+  }
+  .stamp {
+    font-family: var(--ui);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+
+  /* ---------- the game screen ---------- */
+  .screen {
+    position: relative;
+    background: #0f1109;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+  }
+  .stage-hold {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    min-height: 440px;
+    background:
+      radial-gradient(120% 90% at 50% 8%, #3b4a2c 0%, #2b3520 46%, #1b2115 100%);
+  }
+  #stage {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    touch-action: none;
+  }
+  #stage.dragging { cursor: grabbing; }
+
+  .panel {
+    position: absolute;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(3px);
+    font-family: var(--ui);
+  }
+
+  /* resource ribbon */
+  .ribbon {
+    top: 0; left: 0; right: 0;
+    border-width: 0 0 1px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 8px 14px;
+    flex-wrap: wrap;
+  }
+  .ribbon .brand {
+    font-family: var(--display);
+    font-size: 19px;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    margin-right: 4px;
+  }
+  .res {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .res b { font-weight: 600; font-size: 15px; }
+  .res i {
+    width: 9px; height: 9px;
+    border-radius: 1px;
+    display: inline-block;
+    transform: rotate(45deg);
+    align-self: center;
+  }
+  .res u {
+    text-decoration: none;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+  }
+  .ribbon .clock {
+    margin-left: auto;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    font-size: 13px;
+    color: var(--ink-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* build rail */
+  .rail {
+    left: 12px; top: 62px;
+    width: 62px;
+    padding: 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 2px;
+  }
+  .rail-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: center;
+    padding-bottom: 6px;
+  }
+  .tool {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-left: 2px solid transparent;
+    color: var(--ink-dim);
+    font-family: var(--ui);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    padding: 7px 2px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+  }
+  .tool svg { width: 22px; height: 18px; }
+  .tool:hover { color: var(--ink); background: rgba(220, 162, 60, 0.08); }
+  .tool[aria-pressed="true"] {
+    color: var(--gold);
+    background: rgba(220, 162, 60, 0.13);
+    border-left-color: var(--gold);
+  }
+  .tool:focus-visible { outline: 1px solid var(--gold); outline-offset: -1px; }
+
+  /* inspector */
+  .inspector {
+    right: 12px; top: 62px;
+    width: 246px;
+    padding: 12px 14px 14px;
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .insp-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: 8px;
+  }
+  .insp-head h3 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 20px;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  .tag {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .tag.slot { background: rgba(184, 80, 58, 0.18); color: #e08a72; }
+  .tag.pool { background: rgba(143, 191, 82, 0.16); color: var(--sage); }
+
+  .chain {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .chip {
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 3px 7px;
+    color: var(--ink);
+    background: rgba(0, 0, 0, 0.25);
+    white-space: nowrap;
+  }
+  .arrow { color: var(--gold-deep); }
+
+  .rows { display: flex; flex-direction: column; gap: 5px; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .row b { color: var(--ink); font-weight: 600; }
+  .row.note { color: var(--ink-faint); font-style: italic; }
+
+  .labour { border-top: 1px solid var(--line-soft); padding-top: 10px; }
+  .labour h4 {
+    font-family: var(--ui);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 7px;
+  }
+  .meter { height: 6px; display: flex; gap: 2px; margin-bottom: 7px; }
+  .meter i { flex: 1; border-radius: 1px; }
+  .meter i.p { background: var(--sage); }
+  .meter i.s { background: var(--rust); }
+  .legend { font-size: 12px; color: var(--ink-dim); line-height: 1.4; margin: 0; }
+  .legend em { font-style: normal; color: var(--ink); }
+
+  /* wilds readout */
+  .wilds {
+    right: 12px; bottom: 62px;
+    width: 246px;
+    padding: 10px 14px 12px;
+    border-radius: 2px;
+    border-left: 2px solid var(--rust);
+  }
+  .wilds h4 {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 500;
+    margin: 0 0 3px;
+  }
+  .wilds p {
+    margin: 0;
+    font-family: var(--ui);
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    line-height: 1.45;
+  }
+  .wilds .calm {
+    color: var(--gold);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 10.5px;
+  }
+
+  /* ring bar */
+  .ringbar {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 12px;
+    padding: 9px 14px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .ringbar .name {
+    font-family: var(--display);
+    font-size: 18px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .ringbar .name .num {
+    font-family: var(--ui);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+  }
+  .rings { display: flex; gap: 4px; }
+  .ringbtn {
+    appearance: none;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    font-family: var(--ui);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    padding: 4px 9px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .ringbtn[aria-pressed="true"] { color: var(--gold); border-color: var(--gold-deep); }
+  .ringbtn:disabled { opacity: 0.35; cursor: default; }
+  .ringbtn:focus-visible { outline: 1px solid var(--gold); outline-offset: 1px; }
+  .commit {
+    appearance: none;
+    background: var(--gold);
+    border: 1px solid var(--gold);
+    color: #17190f;
+    font-family: var(--ui);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .commit:disabled {
+    background: transparent;
+    color: var(--ink-faint);
+    border-color: var(--line);
+    cursor: default;
+  }
+  .commit:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
+  .ringstat {
+    font-family: var(--ui);
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .ringstat b { color: var(--ink); font-weight: 600; }
+
+  /* tile readout + view hint */
+  .tileread {
+    left: 86px; bottom: 12px;
+    padding: 6px 10px;
+    border-radius: 2px;
+    font-family: var(--ui);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .tileread b { color: var(--ink); font-weight: 600; }
+  .viewhint {
+    left: 86px; top: 62px;
+    padding: 5px 9px;
+    border-radius: 2px;
+    font-family: var(--ui);
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* time of day */
+  .daybar {
+    left: 86px; bottom: 46px;
+    padding: 6px 10px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .daybar label {
+    font-family: var(--ui);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .daybar input {
+    width: 108px;
+    accent-color: var(--gold);
+    cursor: pointer;
+  }
+  .daybar input:focus-visible { outline: 1px solid var(--gold); outline-offset: 2px; }
+  .daybar output {
+    font-family: var(--ui);
+    font-size: 12px;
+    color: var(--ink-dim);
+    min-width: 52px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- pillars ---------- */
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+  }
+  .pillar {
+    background: var(--ground-2);
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .pillar .eyebrow {
+    font-family: var(--ui);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gold-deep);
+  }
+  .pillar h2 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 22px;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .pillar p { margin: 0; color: var(--ink-dim); font-size: 15px; }
+
+  .footnote {
+    font-family: var(--ui);
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+    max-width: 78ch;
+    margin: 0;
+  }
+
+  @media (max-width: 900px) {
+    .stage-hold { aspect-ratio: 4 / 3; }
+    .rail { flex-direction: row; width: auto; left: 12px; right: 12px; overflow-x: auto; }
+    .rail-label { display: none; }
+    .tool { border-left: 0; border-bottom: 2px solid transparent; min-width: 54px; }
+    .tool[aria-pressed="true"] { border-left-color: transparent; border-bottom-color: var(--gold); }
+    .inspector, .wilds { position: static; width: auto; border-width: 1px 0 0; backdrop-filter: none; }
+    .ringbar { position: static; transform: none; border-width: 1px 0 0; }
+    .tileread, .viewhint, .daybar { display: none; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <h1 class="wordmark">Cas<span>t</span>les</h1>
+      <p class="tagline">The same quiet keep, lit properly: soft directional sun, sky bounce, contact shading in the crevices, and a haze that lets the woods fall away.</p>
+    </div>
+    <div class="stamp">Three.js mockup &middot; not playable</div>
+  </header>
+
+  <div class="screen">
+    <div class="stage-hold">
+      <canvas id="stage"></canvas>
+
+      <div class="panel ribbon">
+        <span class="brand">Castles</span>
+        <span class="res"><i style="background:#b98a5e"></i><b id="r-timber">240</b><u>timber</u></span>
+        <span class="res"><i style="background:#b4bac0"></i><b id="r-stone">186</b><u>stone</u></span>
+        <span class="res"><i style="background:#d8c24e"></i><b>95</b><u>grain</u></span>
+        <span class="res"><i style="background:#c6603b"></i><b>41</b><u>bread</u></span>
+        <span class="res"><i style="background:#dca23c"></i><b>60</b><u>coin</u></span>
+        <span class="clock"><span>Day 12</span><span>Spring</span><span>11 souls</span></span>
+      </div>
+
+      <nav class="panel rail" aria-label="Build tools">
+        <span class="rail-label">Build</span>
+      </nav>
+
+      <div class="panel viewhint">Drag to orbit &middot; scroll to zoom</div>
+
+      <aside class="panel inspector" aria-live="polite">
+        <div class="insp-head">
+          <h3 id="i-name">Sawmill</h3>
+          <span class="tag slot" id="i-tag">Slot</span>
+        </div>
+        <div class="chain" id="i-chain"></div>
+        <div class="rows" id="i-rows"></div>
+        <div class="labour">
+          <h4>Labour</h4>
+          <div class="meter" id="i-meter" role="img" aria-label="Six of eleven colonists in the shared pool, five locked to workshop slots"></div>
+          <p class="legend"><em>6 in the pool</em> &mdash; hauling and building, switching freely.<br><em>5 in slots</em> &mdash; locked to a workshop until you pull them out.</p>
+        </div>
+      </aside>
+
+      <aside class="panel wilds">
+        <span class="calm">The Wilds &middot; restless</span>
+        <h4>A probe, around day 14</h4>
+        <p>Four of them, from the east treeline. Ring I holds this comfortably. Nothing is coming for your bakery.</p>
+      </aside>
+
+      <div class="panel daybar">
+        <label for="sun">Sun</label>
+        <input type="range" id="sun" min="0" max="100" value="62" aria-describedby="sunout">
+        <output id="sunout">afternoon</output>
+      </div>
+
+      <div class="panel ringbar">
+        <span class="name" id="ring-name">Ring I</span>
+        <div class="rings" role="group" aria-label="Wall rings">
+          <button class="ringbtn" type="button" data-ring="1" aria-pressed="true">I</button>
+          <button class="ringbtn" type="button" data-ring="2" aria-pressed="false">II</button>
+          <button class="ringbtn" type="button" data-ring="3" aria-pressed="false">III</button>
+        </div>
+        <span class="ringstat" id="ring-stat"></span>
+        <button class="commit" type="button" id="ring-commit" disabled>Raise wall</button>
+      </div>
+
+      <div class="panel tileread" id="tileread">hover the ground</div>
+    </div>
+  </div>
+
+  <section class="pillars">
+    <article class="pillar">
+      <span class="eyebrow">Look</span>
+      <h2>Light does the shading</h2>
+      <p>The flat version painted three fixed tones per block. Here one warm directional sun, a cool sky bounce and soft shadow maps separate every face, so the same palette reads rounder and warmer.</p>
+    </article>
+    <article class="pillar">
+      <span class="eyebrow">Shader</span>
+      <h2>Crevices get darker</h2>
+      <p>A small injection into the Lambert shader dims each block toward its base and tints low ground warm-dark. That fake contact shading is most of the cosy, and it costs nothing.</p>
+    </article>
+    <article class="pillar">
+      <span class="eyebrow">Payoff</span>
+      <h2>The camera comes loose</h2>
+      <p>Orbit the keep, watch the shadows swing with the sun slider, and see the ring you are about to raise from any angle. None of that was possible in the painted version.</p>
+    </article>
+  </section>
+
+  <p class="footnote">Drag to orbit &middot; scroll to zoom &middot; click a building to inspect it &middot; pick a tool and click the ground to place &middot; preview Ring II or III, then raise it.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.1/three.min.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  if (!window.THREE) {
+    document.getElementById("tileread").textContent = "three.js failed to load";
+    return;
+  }
+
+  // ---------------------------------------------------------------- constants
+  const W = 34, H = 34;          // world in tiles
+  const BH = 0.5;                // block height in world units
+  const CX = 16, CY = 16;        // castle centre
+  const RINGS = { 1: 7, 2: 11, 3: 14 };
+
+  // one colour per material now; the lights do the face shading
+  const C = {
+    grass:  0x7ec043, grassB: 0x8ecc4f, wilds:  0x5d8b36, rock:   0x939aa1,
+    sand:   0xe3c983, seabed: 0x3c87ab, foam:   0xbdd8d3, reed:   0x63913a,
+    stone:  0x9c9b8d, stoneWarm: 0xa69b83, stoneMoss: 0x83906b,
+    timber: 0xa9713f, door:   0x67452a, clay:   0xc55430, clayB:  0xa73f22,
+    tilled: 0x785838, dirt:   0xa38a64, wheat:  0xd8bf3c,
+    trunk:  0x6a4a2e, birch:  0xc9c0a4, leafA:  0x3c7d28, leafB:  0x529936,
+    leafC:  0x74b23a, tuft:   0x4e8a2b, boulder: 0x868d93,
+    crate:  0xb08a56, sack:   0xd6c79b, road:   0xb0a07e, linen:  0xe3d8ba,
+    pole:   0x7a5a3c, banner: 0xc4443a, bannerB: 0xd8a03c,
+    flowerA: 0xe8e2d0, flowerB: 0xe0b845, flowerC: 0xc9738f,
+    sheep:  0xe6e0cf, sheepHead: 0x4a4238, sheepLeg: 0x3f3931,
+    hen:    0xefe7d8, henRust: 0xc07a3c, comb:   0xc2453a, beak:   0xd9a83c,
+    deer:   0xa8703c, deerPale: 0xd8c8a8, antler: 0xd2c4a4, bird:   0x4c4a52,
+    tunic:  0x3f79ab, smock:  0x5f9438, wool:   0xc4763f, foe:    0x7f719a
+  };
+  const TERRAIN_COLOUR = {
+    grass: C.grass, wilds: C.wilds, rock: C.rock, sand: C.sand,
+    road: C.road, dirt: C.dirt,
+    water: C.seabed, water2: C.seabed, deep: C.seabed
+  };
+  const WET = { water: 1, water2: 1, deep: 1 };
+  // materials that take a per-block colour wobble, so nothing reads as poured concrete
+  const JITTER = {
+    grass: 0.14, grassB: 0.14, wilds: 0.14, rock: 0.10, sand: 0.09, dirt: 0.10,
+    stone: 0.09, stoneWarm: 0.09, stoneMoss: 0.11, timber: 0.10, clay: 0.09,
+    clayB: 0.09, tilled: 0.10, crate: 0.11, sack: 0.08, trunk: 0.12,
+    leafA: 0.13, leafB: 0.13, leafC: 0.13, tuft: 0.14, boulder: 0.10, road: 0.09
+  };
+  const rnd = (x, y, salt) => hash(x * 1.37 + salt * 7.13, y * 2.11 - salt * 3.7);
+
+  // ---------------------------------------------------------------- world data
+  const hmap = new Float32Array(W * H);
+  const tmap = new Array(W * H);
+  const idx = (x, y) => y * W + x;
+
+  function hash(x, y) {
+    const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+  }
+  function vnoise(x, y, f) {
+    const gx = x * f, gy = y * f;
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const fx = gx - x0, fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = hash(x0, y0), b = hash(x0 + 1, y0);
+    const c = hash(x0, y0 + 1), d = hash(x0 + 1, y0 + 1);
+    return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+  }
+
+  const cutFor = R => Math.max(2, Math.round(R * 0.6));
+  function inOct(dx, dy, R) {
+    return Math.max(Math.abs(dx), Math.abs(dy)) <= R &&
+           Math.abs(dx) + Math.abs(dy) <= R + cutFor(R);
+  }
+  function ringCells(R) {
+    const out = [];
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const dx = x - CX, dy = y - CY;
+        if (!inOct(dx, dy, R)) continue;
+        if (inOct(dx + 1, dy, R) && inOct(dx - 1, dy, R) &&
+            inOct(dx, dy + 1, R) && inOct(dx, dy - 1, R)) continue;
+        out.push({ x, y, dx, dy });
+      }
+    }
+    return out;
+  }
+  const isCorner = (dx, dy, R) =>
+    Math.max(Math.abs(dx), Math.abs(dy)) === R &&
+    Math.abs(dx) + Math.abs(dy) === R + cutFor(R);
+
+  function enclosed(R) {
+    let n = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (inOct(x - CX, y - CY, R - 1)) n++;
+    }
+    return n;
+  }
+  function costOf(R) {
+    const c = ringCells(R).length;
+    return { stone: c * 2, timber: c, cells: c };
+  }
+
+  let ringR = RINGS[1];
+  let ringsBuilt = [RINGS[1]];
+  let previewR = RINGS[1];
+  let builtRing = 1;
+
+  function genTerrain() {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const dx = x - CX, dy = y - CY;
+        const r = Math.hypot(dx, dy) / 19;
+        let h = 3 + vnoise(x, y, 0.16) * 2.6 + vnoise(x, y, 0.42) * 0.9;
+        if (r > 0.78) h -= (r - 0.78) * 30;
+        h = Math.round(h);
+        if (inOct(dx, dy, ringR + 1)) h = 4;        // courtyard is levelled
+        h = Math.max(1, Math.min(8, h));
+        let t = "grass";
+        if (h <= 1) t = r > 1.02 ? "deep" : (hash(x * 5.1, y * 2.3) > 0.72 ? "water2" : "water");
+        else if (h === 2) t = "sand";
+        else if (h >= 7) t = "rock";
+        else if (!inOct(dx, dy, ringR + 3)) t = "wilds";
+        hmap[idx(x, y)] = h;
+        tmap[idx(x, y)] = t;
+      }
+    }
+    for (let x = CX + ringR; x < W; x++) {   // approach road through the gate
+      const i = idx(x, CY);
+      if (!WET[tmap[i]]) { tmap[i] = "road"; hmap[i] = Math.max(3, hmap[i]); }
+    }
+
+    // paths worn into the yard by everyone walking the same lines
+    const wear = (x, y) => {
+      if (x < 0 || x >= W || y < 0 || y >= H) return;
+      const i = idx(x, y);
+      if (!WET[tmap[i]] && inOct(x - CX, y - CY, ringR - 1)) tmap[i] = "dirt";
+    };
+    for (let x = CX - 1; x <= CX + ringR - 1; x++) wear(x, CY);
+    for (let y = CY - 4; y <= CY + 4; y++) wear(CX - 4, y);
+    for (let x = CX - 4; x <= CX; x++) wear(x, CY + 4);
+    for (let y = CY; y <= CY + 4; y++) wear(CX + 3, y);
+    for (let y = CY - 4; y <= CY; y++) wear(CX - 1, y);
+  }
+
+  // ---------------------------------------------------------------- props
+  let props = [];        // cubes: tile coords may be fractional for trim pieces
+  let glows = [];        // unlit warm blocks: windows and lamps
+  let smokers = [];      // chimney mouths that puff
+  let buildings = [];
+
+  // sc scales x and z together; slab() takes them separately for beams and rails
+  const cube = (x, y, z, mat, sc, hz, rot) =>
+    props.push({ x, y, z, mat, sx: sc || 1, sz: sc || 1, hz: hz || 1, rot: rot || 0 });
+  const slab = (x, y, z, mat, sx, hz, sz, rot) =>
+    props.push({ x, y, z, mat, sx: sx, sz: sz, hz: hz || 1, rot: rot || 0 });
+  const lamp = (x, y, z, sc, hz) => glows.push({ x, y, z, sx: sc, sz: sc, hz: hz });
+
+  const BUILDINGS = [
+    { x: 15, y: 15, w: 3, d: 3, hgt: 4, wall: "stone", roof: "clay", chimney: 1,
+      name: "The Keep", tag: "pool", chain: ["Coin", "Order"],
+      rows: [["Shelters", "11 souls"], ["Ring authority", "III max"]],
+      note: "Where new colonists arrive." },
+    { x: 12, y: 12, w: 2, d: 2, hgt: 2, wall: "timber", roof: "clayB",
+      name: "Storehouse", tag: "pool", chain: ["Anything", "Sorted"],
+      rows: [["Capacity", "600"], ["Haulers serving", "4"]],
+      note: "Its filter decides what the pool walks for." },
+    { x: 19, y: 12, w: 2, d: 2, hgt: 2, wall: "timber", roof: "clay", chimney: 1,
+      name: "Sawmill", tag: "slot", chain: ["Log", "Plank"],
+      rows: [["Throughput", "6 / min"], ["Worker", "Bera, skill 4"]],
+      note: "Bera is locked here. She will not haul." },
+    { x: 12, y: 19, w: 2, d: 2, hgt: 3, wall: "stone", roof: "clayB", chimney: 1,
+      name: "Mill", tag: "slot", chain: ["Grain", "Flour"],
+      rows: [["Throughput", "4 / min"], ["Worker", "Odd, skill 2"]],
+      note: "Feeds the bakery across the yard." },
+    { x: 19, y: 19, w: 2, d: 2, hgt: 2, wall: "timber", roof: "clay", chimney: 1,
+      name: "Bakery", tag: "slot", chain: ["Flour", "Bread"],
+      rows: [["Throughput", "3 / min"], ["Worker", "Sif, skill 5"]],
+      note: "Field to loaf in two steps. That is the whole chain." },
+    { x: 16, y: 12, w: 1, d: 1, hgt: 1, wall: "stone", roof: null,
+      name: "Well", tag: "pool", chain: ["Water", "Everyone"],
+      rows: [["Draws", "1 hauler"], ["Serves", "Ring I"]],
+      note: "Keep it central or the pool walks all day." }
+  ];
+
+  function farmPlot(x0, y0) {
+    for (let y = y0; y < y0 + 3; y++) {
+      for (let x = x0; x < x0 + 3; x++) {
+        const z = hmap[idx(x, y)];
+        cube(x, y, z, "tilled", 1, 0.16);
+        const g = rnd(x, y, 7);
+        if (g > 0.2) {
+          cube(x, y, z + 0.16, "wheat", 0.54, 0.3 + g * 0.4, (g - 0.5) * 0.22);
+        }
+      }
+    }
+    const sx = x0 + 1, sy = y0 + 2, z = hmap[idx(sx, sy)];   // scarecrow
+    cube(sx + 0.4, sy - 0.35, z, "pole", 0.09, 1.35);
+    slab(sx + 0.4, sy - 0.35, z + 0.95, "pole", 0.62, 0.08, 0.08, 0.15);
+    cube(sx + 0.4, sy - 0.35, z + 1.3, "sack", 0.3, 0.3, 0.3);
+  }
+
+  function fence(x, y, z) {
+    cube(x, y, z, "pole", 0.11, 0.62);
+  }
+
+  function genProps() {
+    props = [];
+    glows = [];
+    smokers = [];
+    buildings = [];
+
+    // ---- walls: weathered courses, a wall-walk lip, buttresses, banners
+    for (const R of ringsBuilt) {
+      const gate = { x: CX + R, y: CY };
+      for (const c of ringCells(R)) {
+        const z = hmap[idx(c.x, c.y)];
+        const isGate = c.x === gate.x && c.y === gate.y;
+        const tower = isCorner(c.dx, c.dy, R) ||
+                      (c.x === gate.x && Math.abs(c.dy) === 1);
+        const w = rnd(c.x, c.y, 3);
+        const mat = w > 0.78 ? "stoneMoss" : (w > 0.4 ? "stoneWarm" : "stone");
+
+        if (tower) {
+          cube(c.x, c.y, z, mat, 1, 4);
+          cube(c.x, c.y, z + 4, "stoneWarm", 1.16, 0.4);        // corbel course
+          cube(c.x, c.y, z + 4.4, mat, 0.98, 0.7);
+          cube(c.x, c.y, z + 5.1, "clay", 1.06, 0.7);           // cap
+          cube(c.x, c.y, z + 5.8, "clay", 0.5, 0.4);
+          if (rnd(c.x, c.y, 9) > 0.55) {                        // banner
+            cube(c.x, c.y, z + 6.2, "pole", 0.09, 1.3);
+            slab(c.x + 0.3, c.y, z + 6.6, rnd(c.x, c.y, 11) > 0.5 ? "banner" : "bannerB",
+                 0.5, 0.62, 0.1);
+          }
+          lamp(c.x, c.y + 0.5, z + 3.4, 0.16, 0.24);            // watch lamp
+        } else if (isGate) {
+          cube(c.x, c.y, z + 2, "timber", 1, 1);                // arch beam
+          cube(c.x, c.y, z + 3, mat, 1, 0.8);
+          cube(c.x, c.y, z + 3.8, "stoneWarm", 1.12, 0.24);
+          lamp(c.x + 0.52, c.y - 0.34, z + 1.6, 0.17, 0.26);
+          lamp(c.x + 0.52, c.y + 0.34, z + 1.6, 0.17, 0.26);
+        } else {
+          cube(c.x, c.y, z, mat, 1, 3);
+          cube(c.x, c.y, z + 3, "stoneWarm", 1.09, 0.2);        // wall-walk lip
+          if ((c.x + c.y) % 2 === 0) cube(c.x, c.y, z + 3.2, mat, 0.7, 0.55);
+          if (w > 0.7) cube(c.x, c.y, z, "stoneMoss", 1.04, 0.14);  // damp footing
+          if (rnd(c.x, c.y, 5) > 0.86) {                        // buttress
+            const ox = c.dx === R ? 0.55 : c.dx === -R ? -0.55 : 0;
+            const oy = ox !== 0 ? 0 : (c.dy === R ? 0.55 : -0.55);
+            cube(c.x + ox, c.y + oy, z, mat, 0.46, 2);
+          }
+        }
+      }
+    }
+
+    // ---- buildings: ridges, doors, lit windows, chimneys
+    for (const b of BUILDINGS) {
+      const base = hmap[idx(b.x, b.y)];
+      for (let y = b.y; y < b.y + b.d; y++) {
+        for (let x = b.x; x < b.x + b.w; x++) {
+          const z = hmap[idx(x, y)];
+          cube(x, y, z, b.wall, 1, b.hgt);
+          if (b.wall === "timber") {                     // exposed corner posts
+            cube(x - 0.44, y - 0.44, z, "pole", 0.14, b.hgt);
+          }
+        }
+      }
+      // one roof per building, stepped: per-cell roofs overlap and their
+      // shaded undersides show through as dark seams
+      if (b.roof) {
+        const mx = b.x + (b.w - 1) / 2, my = b.y + (b.d - 1) / 2;
+        const rw = b.w + 0.32, rd = b.d + 0.32;
+        slab(mx, my, base + b.hgt, b.roof, rw, 0.5, rd);
+        slab(mx, my, base + b.hgt + 0.5, b.roof, rw * 0.62, 0.34, rd * 0.62);
+        const rz = base + b.hgt + 0.84;                  // ridge beam
+        if (b.w >= b.d) slab(mx, my, rz, "timber", rw * 0.66, 0.12, 0.18);
+        else slab(mx, my, rz, "timber", 0.18, 0.12, rd * 0.66);
+      }
+
+      const dx0 = b.x + Math.floor(b.w / 2), dy0 = b.y + b.d - 1;
+      cube(dx0, dy0 + 0.5, hmap[idx(dx0, dy0)], "door", 0.44, 1.05);   // door
+
+      for (let x = b.x; x < b.x + b.w; x++) {            // south windows
+        if (x === dx0 && b.hgt <= 2) continue;
+        lamp(x, dy0 + 0.52, hmap[idx(x, dy0)] + b.hgt - 0.85, 0.3, 0.34);
+      }
+      for (let y = b.y; y < b.y + b.d; y++) {            // east windows
+        lamp(b.x + b.w - 1 + 0.52, y, hmap[idx(b.x + b.w - 1, y)] + b.hgt - 0.85, 0.3, 0.34);
+      }
+
+      if (b.chimney) {
+        const cz = base + b.hgt + 0.9;
+        cube(b.x + 0.3, b.y + 0.3, cz, "stoneWarm", 0.32, 1.1);
+        cube(b.x + 0.3, b.y + 0.3, cz + 1.1, "stoneMoss", 0.4, 0.18);
+        smokers.push({ x: b.x + 0.3, y: b.y + 0.3, z: cz + 1.3 });
+      }
+      buildings.push(b);
+    }
+
+    // ---- the well gets a winch roof and a bucket
+    {
+      const wz = hmap[idx(16, 12)] + 1;
+      cube(15.68, 12, wz, "pole", 0.13, 0.95);
+      cube(16.32, 12, wz, "pole", 0.13, 0.95);
+      cube(16, 12, wz + 0.95, "clayB", 1.12, 0.3);
+      slab(16, 12, wz + 0.72, "timber", 0.9, 0.12, 0.12);
+      cube(16, 12.28, wz + 0.36, "crate", 0.26, 0.26, 0.2);
+    }
+
+    farmPlot(10, 15);
+    farmPlot(20, 15);
+
+    // ---- stockpile: mixed crates, sacks and plank stacks, none quite square
+    for (let y = 20; y < 22; y++) {
+      for (let x = 15; x < 18; x++) {
+        const z = hmap[idx(x, y)];
+        const k = rnd(x, y, 13);
+        const mat = k > 0.66 ? "sack" : (k > 0.33 ? "crate" : "timber");
+        cube(x, y, z, mat, 0.82, 0.44, (k - 0.5) * 0.3);
+        if (k > 0.38) cube(x + (k - 0.5) * 0.14, y - 0.05, z + 0.44, mat, 0.64, 0.38, (0.5 - k) * 0.4);
+      }
+    }
+
+    // ---- yard clutter that says who works where
+    const sawZ = hmap[idx(21, 12)];
+    for (let i = 0; i < 3; i++) {                        // log pile by the sawmill
+      slab(21.4, 11.4 + i * 0.06, sawZ + i * 0.27, "trunk", 0.26, 0.26, 1.5, 0.04 * i);
+    }
+    cube(18.4, 14.3, hmap[idx(18, 14)], "trunk", 0.52, 0.3);       // stumps
+    cube(21.5, 14.4, hmap[idx(21, 14)], "trunk", 0.44, 0.26, 0.4);
+    cube(11.4, 21.4, hmap[idx(11, 21)], "sack", 0.4, 0.42, 0.3);   // flour by the mill
+    cube(11.9, 21.5, hmap[idx(11, 21)], "sack", 0.34, 0.36, -0.2);
+    cube(21.4, 20.4, hmap[idx(21, 20)], "crate", 0.42, 0.4, 0.24); // bread by the bakery
+    cube(21.5, 19.7, hmap[idx(21, 19)], "crate", 0.36, 0.34, -0.3);
+
+    // ---- sheep pen north of the well
+    for (let x = 13; x <= 15; x++) { fence(x, 9.6, hmap[idx(x, 10)]); fence(x, 11.5, hmap[idx(x, 11)]); }
+    for (let y = 10; y <= 11; y++) { fence(12.6, y, hmap[idx(13, y)]); fence(15.45, y, hmap[idx(15, y)]); }
+    for (let x = 13; x <= 15; x++) {
+      slab(x, 9.6, hmap[idx(x, 10)] + 0.42, "pole", 1.0, 0.07, 0.07);
+      slab(x, 11.5, hmap[idx(x, 11)] + 0.42, "pole", 1.0, 0.07, 0.07);
+    }
+    // a feed trough; the sheep themselves wander (see critters below)
+    slab(14.2, 11.15, hmap[idx(14, 11)], "timber", 0.9, 0.18, 0.26);
+
+    // ---- scatter: trees, bushes, tufts, flowers, boulders, surf, reeds
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = idx(x, y);
+        const t = tmap[i];
+        const z = hmap[i];
+        const inside = inOct(x - CX, y - CY, ringR + 1);
+
+        if (t === "grass" || t === "wilds" || t === "dirt") {
+          const f = rnd(x, y, 21);
+          if (!inside && hash(x * 3.3, y * 1.7) > 0.855) {
+            const v = rnd(x, y, 41);
+            const rot = (v - 0.5) * 0.55;
+            if (v > 0.7) {                                  // tall pine
+              cube(x, y, z, "trunk", 0.24, 1.15, rot);
+              cube(x, y, z + 1.15, "leafA", 0.9, 1.05, rot);
+              cube(x, y, z + 2.2, "leafB", 0.62, 0.85, rot);
+              cube(x, y, z + 3.05, "leafA", 0.32, 0.55, rot);
+            } else if (v > 0.3) {                           // round tree
+              cube(x, y, z, v > 0.52 ? "trunk" : "birch", 0.28, 0.95, rot);
+              cube(x, y, z + 0.95, v > 0.46 ? "leafB" : "leafC", 1.0, 1.35, rot);
+              cube(x + 0.1, y - 0.08, z + 2.3, "leafA", 0.58, 0.62, -rot);
+            } else {                                        // bush
+              cube(x, y, z, "leafB", 0.68, 0.5, rot);
+              cube(x + 0.2, y - 0.16, z, "leafC", 0.46, 0.38, -rot);
+            }
+          } else if (t !== "dirt") {
+            if (f > 0.93) {
+              const petal = f > 0.975 ? "flowerA" : (f > 0.955 ? "flowerB" : "flowerC");
+              cube(x + (f - 0.95) * 3, y + 0.22, z, petal, 0.15, 0.26, f * 6);
+              cube(x + (f - 0.95) * 3, y + 0.22, z, "tuft", 0.1, 0.16);
+            } else if (f > 0.76) {
+              cube(x - 0.18, y - 0.14, z, "tuft", 0.28, 0.15, f * 5);
+            }
+          }
+          if (t === "wilds" && f < 0.022) {          // boulders, sparingly
+            cube(x, y, z, "boulder", 0.34 + f * 6, 0.3 + f * 4, f * 40);
+            cube(x + 0.3, y + 0.22, z, "boulder", 0.22, 0.18, f * 17);
+          }
+        }
+
+        if (WET[t]) {                                       // surf and reeds
+          let shore = false;
+          for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + d[0], ny = y + d[1];
+            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+            if (!WET[tmap[idx(nx, ny)]]) shore = true;
+          }
+          if (shore && rnd(x, y, 29) > 0.22) {          // broken surf line
+            cube(x, y, z, "foam", 0.86, 0.2 + rnd(x, y, 37) * 0.14);
+            if (rnd(x, y, 31) > 0.66) cube(x + 0.2, y - 0.18, z + 0.28, "reed", 0.11, 0.6, rnd(x, y, 33) * 5);
+          }
+        }
+      }
+    }
+
+    // ---- the probe, at the treeline
+    const fx = Math.min(W - 3, CX + ringR + 3);
+    for (const f of [[fx, CY - 3], [fx + 1, CY - 1], [fx, CY + 1], [fx + 1, CY + 3]]) {
+      if (f[0] >= W - 1 || WET[tmap[idx(f[0], f[1])]]) continue;
+      const z = hmap[idx(f[0], f[1])];
+      cube(f[0], f[1], z, "foe", 0.4, 1);
+      cube(f[0], f[1], z + 1, "foe", 0.3, 0.55);
+      cube(f[0] + 0.34, f[1], z + 0.2, "pole", 0.08, 1.1, 0.2);   // spear
+    }
+  }
+
+  // ---------------------------------------------------------------- three setup
+  const cv = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  // ortho camera sits a fixed distance back, so fog range is tuned around it
+  const FOG = new THREE.Color(0x4c5f38);
+  scene.fog = new THREE.Fog(FOG, 52, 96);
+
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.5, 220);
+
+  // lights: warm sun, cool sky bounce, a whisper of fill
+  const sun = new THREE.DirectionalLight(0xfff1cf, 3.2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 90;
+  sun.shadow.camera.left = -24;
+  sun.shadow.camera.right = 24;
+  sun.shadow.camera.top = 24;
+  sun.shadow.camera.bottom = -24;
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.035;
+  scene.add(sun);
+  scene.add(sun.target);
+
+  const sky = new THREE.HemisphereLight(0xa9cdf2, 0x6d8a3c, 1.15);
+  scene.add(sky);
+  const fill = new THREE.AmbientLight(0xffe9c9, 0.45);
+  scene.add(fill);
+
+  // ---------------------------------------------------------------- shaders
+  // Fake contact shading: dim each block toward its base, tint low ground
+  // warm-dark. This is most of the "cosy" and it costs one multiply.
+  const COZY_VERT_HEAD = `
+    varying float vBlockY;
+    varying float vWorldY;
+  `;
+  const COZY_VERT_BODY = `
+    #include <begin_vertex>
+    vBlockY = position.y + 0.5;
+    #ifdef USE_INSTANCING
+      vWorldY = ( instanceMatrix * vec4( transformed, 1.0 ) ).y;
+    #else
+      vWorldY = transformed.y;
+    #endif
+  `;
+  const COZY_FRAG_HEAD = `
+    varying float vBlockY;
+    varying float vWorldY;
+  `;
+  const COZY_FRAG_BODY = `
+    float ao = mix( 0.79, 1.0, clamp( vBlockY, 0.0, 1.0 ) );
+    float lift = clamp( ( vWorldY + 0.4 ) / 3.4, 0.0, 1.0 );
+    vec3 cosy = mix( vec3( 0.94, 0.88, 0.78 ), vec3( 1.03, 1.02, 1.0 ), lift );
+    gl_FragColor.rgb *= ao * cosy;
+    #include <fog_fragment>
+  `;
+
+  function cozify(material) {
+    material.onBeforeCompile = shader => {
+      if (!shader.vertexShader.includes("#include <begin_vertex>") ||
+          !shader.fragmentShader.includes("#include <fog_fragment>")) {
+        console.warn("Castles: shader anchor missing, contact shading skipped");
+        return;
+      }
+      shader.vertexShader = COZY_VERT_HEAD + shader.vertexShader.replace(
+        "#include <begin_vertex>", COZY_VERT_BODY);
+      shader.fragmentShader = COZY_FRAG_HEAD + shader.fragmentShader.replace(
+        "#include <fog_fragment>", COZY_FRAG_BODY);
+    };
+    material.customProgramCacheKey = () => "cosy";
+    return material;
+  }
+
+  const solidMat = cozify(new THREE.MeshLambertMaterial({ vertexColors: false }));
+
+  // water: a Lambert surface with the wave folded into its diffuse colour,
+  // so it still takes the sun, the sky bounce and the fog.
+  const waveTime = { value: 0 };
+  const waterMat = new THREE.MeshLambertMaterial({
+    color: 0x54a8cf, transparent: true, opacity: 0.85, depthWrite: false
+  });
+  waterMat.onBeforeCompile = shader => {
+    shader.uniforms.uTime = waveTime;
+    shader.vertexShader = `
+      uniform float uTime;
+      varying float vWave;
+    ` + shader.vertexShader.replace("#include <begin_vertex>", `
+      #include <begin_vertex>
+      #ifdef USE_INSTANCING
+        vec4 wpos = instanceMatrix * vec4( transformed, 1.0 );
+      #else
+        vec4 wpos = vec4( transformed, 1.0 );
+      #endif
+      float w = sin( wpos.x * 1.7 + uTime * 1.10 ) * 0.34
+              + sin( wpos.z * 1.9 - uTime * 0.80 ) * 0.34
+              + sin( ( wpos.x + wpos.z ) * 1.15 + uTime * 0.6 ) * 0.32;
+      vWave = w;
+      transformed.y += w * 0.05;
+    `);
+    shader.fragmentShader = `
+      varying float vWave;
+    ` + shader.fragmentShader.replace("#include <color_fragment>", `
+      #include <color_fragment>
+      float crest = smoothstep( -0.9, 1.0, vWave );
+      diffuseColor.rgb = mix( diffuseColor.rgb * 0.86, diffuseColor.rgb * 1.14, crest );
+    `);
+  };
+
+  const BOX = new THREE.BoxGeometry(1, 1, 1);
+
+  // ---------------------------------------------------------------- meshes
+  let terrainMesh = null, propMesh = null, ghostMesh = null, ghostWire = null;
+  let glowMesh = null, smokeMesh = null;
+  const terrainTile = [];   // instanceId -> {x, y}
+  const propTile = [];
+  const M = new THREE.Matrix4();
+  const COL = new THREE.Color();
+  const Q = new THREE.Quaternion();
+  const V = new THREE.Vector3();
+  const S = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
+
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xffce7a });
+  const smokeMat = new THREE.MeshBasicMaterial({
+    color: 0xcfd0c2, transparent: true, opacity: 0.32, depthWrite: false
+  });
+  const SMOKE_PALE = new THREE.Color(0xc3cdb2);
+  const SMOKE_COL = new THREE.Color();
+  const PUFFS = 5;
+
+  function tint(hex, key, x, y, ao) {
+    COL.setHex(hex);
+    const amt = JITTER[key];
+    if (amt) COL.multiplyScalar(1 - amt * 0.5 + hash(x * 1.7, y * 2.9) * amt);
+    if (ao !== undefined) COL.multiplyScalar(ao);
+    return COL;
+  }
+
+  // cheap baked occlusion: a tile sitting below its neighbours goes darker
+  function tileAO(x, y) {
+    const h = hmap[idx(x, y)];
+    let occ = 0;
+    for (const d of [[1, 0, 0.06], [-1, 0, 0.06], [0, 1, 0.06], [0, -1, 0.06],
+                     [1, 1, 0.032], [-1, -1, 0.032], [1, -1, 0.032], [-1, 1, 0.032]]) {
+      const nx = x + d[0], ny = y + d[1];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const rise = hmap[idx(nx, ny)] - h;
+      if (rise > 0) occ += Math.min(rise, 3) * d[2];
+    }
+    return 1 - Math.min(0.32, occ);
+  }
+
+  function buildTerrain() {
+    if (terrainMesh) {
+      scene.remove(terrainMesh);
+      terrainMesh.dispose();
+    }
+    terrainTile.length = 0;
+    terrainMesh = new THREE.InstancedMesh(BOX, solidMat, W * H);
+    terrainMesh.castShadow = true;
+    terrainMesh.receiveShadow = true;
+    let i = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const h = hmap[idx(x, y)];
+        const t = tmap[idx(x, y)];
+        const tall = h * BH;
+        M.makeScale(1, tall, 1);
+        M.setPosition(x - CX, tall / 2, y - CY);
+        terrainMesh.setMatrixAt(i, M);
+        const shade = tint(TERRAIN_COLOUR[t] || C.grass, t, x, y, WET[t] ? 1 : tileAO(x, y));
+        terrainMesh.setColorAt(i, shade);
+        terrainTile[i] = { x, y };
+        i++;
+      }
+    }
+    terrainMesh.count = i;
+    terrainMesh.instanceMatrix.needsUpdate = true;
+    if (terrainMesh.instanceColor) terrainMesh.instanceColor.needsUpdate = true;
+    scene.add(terrainMesh);
+  }
+
+  function buildProps() {
+    if (propMesh) {
+      scene.remove(propMesh);
+      propMesh.dispose();
+    }
+    propTile.length = 0;
+    propMesh = new THREE.InstancedMesh(BOX, solidMat, Math.max(1, props.length));
+    propMesh.castShadow = true;
+    propMesh.receiveShadow = true;
+    let i = 0;
+    for (const p of props) {
+      const tall = p.hz * BH;
+      Q.setFromAxisAngle(UP, p.rot);
+      M.compose(
+        V.set(p.x - CX, p.z * BH + tall / 2, p.y - CY),
+        Q,
+        S.set(p.sx, tall, p.sz)
+      );
+      propMesh.setMatrixAt(i, M);
+      propMesh.setColorAt(i, tint(C[p.mat], p.mat, p.x, p.y));
+      propTile[i] = { x: Math.round(p.x), y: Math.round(p.y) };
+      i++;
+    }
+    propMesh.count = i;
+    propMesh.instanceMatrix.needsUpdate = true;
+    if (propMesh.instanceColor) propMesh.instanceColor.needsUpdate = true;
+    scene.add(propMesh);
+
+    buildGlows();
+    buildSmoke();
+  }
+
+  // windows and lamps: unlit blocks, so they read as light rather than surface
+  function buildGlows() {
+    if (glowMesh) {
+      scene.remove(glowMesh);
+      glowMesh.dispose();
+    }
+    glowMesh = new THREE.InstancedMesh(BOX, glowMat, Math.max(1, glows.length));
+    glows.forEach((g, i) => {
+      const tall = g.hz * BH;
+      M.makeScale(g.sx, tall, g.sz);
+      M.setPosition(g.x - CX, g.z * BH + tall / 2, g.y - CY);
+      glowMesh.setMatrixAt(i, M);
+    });
+    glowMesh.count = glows.length;
+    glowMesh.instanceMatrix.needsUpdate = true;
+    scene.add(glowMesh);
+  }
+
+  function buildSmoke() {
+    if (smokeMesh) {
+      scene.remove(smokeMesh);
+      smokeMesh.dispose();
+    }
+    smokeMesh = new THREE.InstancedMesh(BOX, smokeMat, Math.max(1, smokers.length * PUFFS));
+    smokeMesh.count = smokers.length * PUFFS;
+    smokeMesh.frustumCulled = false;
+    scene.add(smokeMesh);
+  }
+
+  // water: one thin instance per wet tile, so it never overhangs the island
+  let waterMesh = null;
+
+  function buildWater() {
+    if (waterMesh) {
+      scene.remove(waterMesh);
+      waterMesh.dispose();
+    }
+    const wet = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (WET[tmap[idx(x, y)]]) wet.push({ x, y });
+    }
+    waterMesh = new THREE.InstancedMesh(BOX, waterMat, Math.max(1, wet.length));
+    wet.forEach((w, i) => {
+      M.makeScale(1, 0.06, 1);
+      M.setPosition(w.x - CX, hmap[idx(w.x, w.y)] * BH + 0.1, w.y - CY);
+      waterMesh.setMatrixAt(i, M);
+    });
+    waterMesh.count = wet.length;
+    waterMesh.instanceMatrix.needsUpdate = true;
+    scene.add(waterMesh);
+  }
+
+  // ---------------------------------------------------------------- ghost ring
+  const ghostMat = new THREE.MeshBasicMaterial({
+    color: 0xdca23c, transparent: true, opacity: 0.2,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+  const ghostWireMat = new THREE.MeshBasicMaterial({
+    color: 0xf3d190, wireframe: true, transparent: true, opacity: 0.55, depthWrite: false
+  });
+  const gainMat = new THREE.MeshBasicMaterial({
+    color: 0x8fbf52, transparent: true, opacity: 0.16, depthWrite: false
+  });
+  let gainMesh = null;
+
+  function clearGhost() {
+    for (const m of [ghostMesh, ghostWire, gainMesh]) {
+      if (m) { scene.remove(m); m.dispose(); }
+    }
+    ghostMesh = ghostWire = gainMesh = null;
+  }
+
+  function buildGhost() {
+    clearGhost();
+    if (previewR === ringR) return;
+
+    const cells = ringCells(previewR).filter(c => !(c.x === CX + previewR && c.y === CY));
+    ghostMesh = new THREE.InstancedMesh(BOX, ghostMat, cells.length);
+    ghostWire = new THREE.InstancedMesh(BOX, ghostWireMat, cells.length);
+    cells.forEach((c, i) => {
+      const z = hmap[idx(c.x, c.y)];
+      const blocks = isCorner(c.dx, c.dy, previewR) ? 5 : 3;
+      const tall = blocks * BH;
+      M.makeScale(1, tall, 1);
+      M.setPosition(c.x - CX, z * BH + tall / 2, c.y - CY);
+      ghostMesh.setMatrixAt(i, M);
+      ghostWire.setMatrixAt(i, M);
+    });
+    ghostMesh.instanceMatrix.needsUpdate = true;
+    ghostWire.instanceMatrix.needsUpdate = true;
+    scene.add(ghostMesh);
+    scene.add(ghostWire);
+
+    const gain = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const dx = x - CX, dy = y - CY;
+      if (inOct(dx, dy, previewR - 1) && !inOct(dx, dy, ringR + 1)) gain.push({ x, y });
+    }
+    gainMesh = new THREE.InstancedMesh(BOX, gainMat, Math.max(1, gain.length));
+    gain.forEach((g, i) => {
+      M.makeScale(0.98, 0.06, 0.98);
+      M.setPosition(g.x - CX, hmap[idx(g.x, g.y)] * BH + 0.04, g.y - CY);
+      gainMesh.setMatrixAt(i, M);
+    });
+    gainMesh.count = gain.length;
+    gainMesh.instanceMatrix.needsUpdate = true;
+    scene.add(gainMesh);
+  }
+
+  // ---------------------------------------------------------------- hover marker
+  const hoverMat = new THREE.MeshBasicMaterial({
+    color: 0xf2ecd9, transparent: true, opacity: 0.3, depthWrite: false
+  });
+  const hoverMesh = new THREE.Mesh(new THREE.BoxGeometry(1.01, 0.07, 1.01), hoverMat);
+  hoverMesh.visible = false;
+  scene.add(hoverMesh);
+
+  // ---------------------------------------------------------------- colonists
+  const FOLK = [
+    { path: [[13, 13.4], [16.4, 14], [19.4, 13.4], [16.4, 14]], pal: "wool", carry: true, sp: 0.05, t: 0 },
+    { path: [[11.4, 16.4], [13, 13.6], [11.4, 16.4]], pal: "tunic", carry: true, sp: 0.042, t: 1.2 },
+    { path: [[16.4, 20.8], [19.2, 20.4], [16.4, 20.8]], pal: "wool", carry: true, sp: 0.047, t: 2.4 },
+    { path: [[16.4, 18.6], [16.4, 13.2], [16.4, 18.6]], pal: "tunic", carry: false, sp: 0.055, t: 3.1 },
+    { path: [[19.4, 14.3]], pal: "smock", carry: false, sp: 0, t: 0 },
+    { path: [[19.4, 21.3]], pal: "smock", carry: false, sp: 0, t: 0 }
+  ];
+
+  const folkGroups = FOLK.map(f => {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(BOX, cozify(new THREE.MeshLambertMaterial({ color: C[f.pal] })));
+    body.scale.set(0.44, 0.5, 0.44);
+    body.position.y = 0.25;
+    body.castShadow = true;
+    g.add(body);
+    const head = new THREE.Mesh(BOX, cozify(new THREE.MeshLambertMaterial({ color: C.linen })));
+    head.scale.set(0.32, 0.26, 0.32);
+    head.position.y = 0.63;
+    head.castShadow = true;
+    g.add(head);
+    if (f.carry) {
+      const box = new THREE.Mesh(BOX, cozify(new THREE.MeshLambertMaterial({ color: C.crate })));
+      box.scale.set(0.32, 0.26, 0.32);
+      box.position.y = 0.92;
+      box.castShadow = true;
+      g.add(box);
+    }
+    scene.add(g);
+    return g;
+  });
+
+  function folkPos(f, time) {
+    if (f.sp === 0 || f.path.length < 2) return f.path[0];
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i < f.path.length - 1; i++) {
+      const a = f.path[i], b = f.path[i + 1];
+      const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      segs.push({ a, b, d }); total += d;
+    }
+    if (total === 0) return f.path[0];
+    let dist = ((time * f.sp + f.t) % 1) * total;
+    for (const s of segs) {
+      if (dist <= s.d) {
+        const u = s.d === 0 ? 0 : dist / s.d;
+        return [s.a[0] + (s.b[0] - s.a[0]) * u, s.a[1] + (s.b[1] - s.a[1]) * u];
+      }
+      dist -= s.d;
+    }
+    return f.path[0];
+  }
+
+  // ---------------------------------------------------------------- critters
+  // Each animal wanders inside a home radius: walk to a target, graze a while,
+  // pick another. Legs swing while walking, heads dip while grazing.
+  const matCache = new Map();
+  function critterMat(hex) {
+    if (!matCache.has(hex)) {
+      matCache.set(hex, cozify(new THREE.MeshLambertMaterial({ color: hex })));
+    }
+    return matCache.get(hex);
+  }
+
+  const clampi = (v, lo, hi) => v < lo ? lo : (v > hi ? hi : v);
+
+  function part(g, hex, sx, sy, sz, x, y, z) {
+    const m = new THREE.Mesh(BOX, critterMat(hex));
+    m.scale.set(sx, sy, sz);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  }
+
+  // every model faces +z, so heading is atan2(dx, dy)
+  function buildCritter(c) {
+    const g = new THREE.Group();
+    c.legs = [];
+    c.legZ = [];
+
+    if (c.kind === "sheep") {
+      part(g, C.sheep, 0.5, 0.42, 0.66, 0, 0.4, 0);
+      part(g, C.sheep, 0.34, 0.3, 0.2, 0, 0.56, 0.3);            // shoulder wool
+      c.head = part(g, C.sheepHead, 0.24, 0.22, 0.24, 0, 0.5, 0.42);
+      part(g, C.sheep, 0.2, 0.16, 0.12, 0, 0.46, -0.36);         // tail
+      for (const o of [[-0.17, 0.24], [0.17, 0.24], [-0.17, -0.22], [0.17, -0.22]]) {
+        c.legs.push(part(g, C.sheepLeg, 0.1, 0.32, 0.1, o[0], 0.16, o[1]));
+        c.legZ.push(o[1]);
+      }
+    } else if (c.kind === "hen") {
+      const body = c.rust ? C.henRust : C.hen;
+      part(g, body, 0.24, 0.22, 0.3, 0, 0.18, 0);
+      part(g, body, 0.14, 0.16, 0.12, 0, 0.26, -0.2);            // tail
+      c.head = part(g, body, 0.15, 0.15, 0.15, 0, 0.34, 0.12);
+      part(g, C.comb, 0.07, 0.07, 0.07, 0, 0.44, 0.12);
+      part(g, C.beak, 0.06, 0.06, 0.08, 0, 0.33, 0.22);
+      for (const o of [[-0.07, 0.02], [0.07, 0.02]]) {
+        c.legs.push(part(g, C.beak, 0.05, 0.14, 0.05, o[0], 0.07, o[1]));
+        c.legZ.push(o[1]);
+      }
+    } else {
+      part(g, C.deer, 0.44, 0.44, 0.82, 0, 0.5, 0);
+      part(g, C.deerPale, 0.2, 0.14, 0.14, 0, 0.6, -0.44);       // rump patch
+      part(g, C.deer, 0.24, 0.34, 0.24, 0, 0.74, 0.34);          // neck
+      c.head = part(g, C.deer, 0.22, 0.2, 0.3, 0, 0.9, 0.46);
+      if (c.antlers) {
+        part(g, C.antler, 0.06, 0.26, 0.06, -0.09, 1.06, 0.42);
+        part(g, C.antler, 0.06, 0.26, 0.06, 0.09, 1.06, 0.42);
+        part(g, C.antler, 0.14, 0.06, 0.06, -0.14, 1.16, 0.42);
+        part(g, C.antler, 0.14, 0.06, 0.06, 0.14, 1.16, 0.42);
+      }
+      for (const o of [[-0.16, 0.3], [0.16, 0.3], [-0.16, -0.28], [0.16, -0.28]]) {
+        c.legs.push(part(g, C.deer, 0.09, 0.4, 0.09, o[0], 0.2, o[1]));
+        c.legZ.push(o[1]);
+      }
+    }
+    c.headY = c.head.position.y;
+    scene.add(g);
+    return g;
+  }
+
+  const critters = [];
+  function addCritter(kind, hx, hy, r, opts) {
+    const c = Object.assign({
+      kind, hx, hy, r, x: hx, y: hy, tx: hx, ty: hy,
+      speed: 0.4, pause: [1.5, 5], wait: Math.random() * 3,
+      face: Math.random() * 6.28, phase: Math.random() * 6.28, step: 8
+    }, opts || {});
+    c.group = buildCritter(c);
+    pickRoam(c);
+    critters.push(c);
+  }
+
+  function seedCritters() {
+    for (let i = 0; i < 3; i++) {                 // penned flock
+      addCritter("sheep", 14.1, 10.5, 0.95, { speed: 0.26, pause: [2, 6], step: 7 });
+    }
+    for (let i = 0; i < 2; i++) {                 // two loose in the west yard
+      addCritter("sheep", 10.6, 12.6, 1.5, { speed: 0.28, pause: [2, 7], step: 7 });
+    }
+    for (let i = 0; i < 5; i++) {                 // hens by the storehouse run
+      addCritter("hen", 18.5, 16.4, 1.5, {
+        speed: 0.8, pause: [0.3, 1.5], step: 15, rust: i % 2 === 0
+      });
+    }
+    addCritter("deer", 25, 21, 3.2, { speed: 0.6, pause: [2, 6], step: 9, antlers: true });
+    addCritter("deer", 9.5, 23.5, 3.0, { speed: 0.6, pause: [2, 6], step: 9 });
+    addCritter("deer", 24, 9.5, 2.8, { speed: 0.55, pause: [3, 7], step: 9 });
+  }
+
+  function pickRoam(c) {
+    for (let k = 0; k < 10; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.sqrt(Math.random()) * c.r;
+      const tx = c.hx + Math.cos(a) * rr, ty = c.hy + Math.sin(a) * rr;
+      const gx = Math.round(tx), gy = Math.round(ty);
+      if (gx < 1 || gx >= W - 1 || gy < 1 || gy >= H - 1) continue;
+      if (WET[tmap[idx(gx, gy)]]) continue;
+      if (c.kind === "deer" && inOct(gx - CX, gy - CY, ringR + 1)) continue;
+      c.tx = tx; c.ty = ty;
+      return;
+    }
+    c.tx = c.hx; c.ty = c.hy;
+  }
+
+  // raising a wall would swallow the deer, so move their range back out
+  function rehomeCritters() {
+    for (const c of critters) {
+      if (c.kind !== "deer") continue;
+      if (!inOct(Math.round(c.hx) - CX, Math.round(c.hy) - CY, ringR + 3)) continue;
+      const a = Math.atan2(c.hy - CY, c.hx - CX);
+      const d = Math.min(ringR + 4, 15);
+      c.hx = clampi(CX + Math.cos(a) * d, 2, W - 3);
+      c.hy = clampi(CY + Math.sin(a) * d, 2, H - 3);
+      c.x = c.hx; c.y = c.hy;
+      pickRoam(c);
+    }
+  }
+
+  function updateCritters(dt, time) {
+    for (const c of critters) {
+      let bob = 0;
+      if (c.wait > 0) {
+        c.wait -= dt;
+        const dip = c.kind === "hen" ? 0.07 : 0.13;   // graze / peck
+        c.head.position.y = c.headY - dip * (0.5 + 0.5 * Math.sin(time * (c.kind === "hen" ? 6 : 1.7) + c.phase));
+        if (c.wait <= 0) pickRoam(c);
+      } else {
+        const dx = c.tx - c.x, dy = c.ty - c.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 0.07) {
+          c.wait = c.pause[0] + Math.random() * (c.pause[1] - c.pause[0]);
+        } else {
+          const move = Math.min(d, c.speed * dt);
+          c.x += (dx / d) * move;
+          c.y += (dy / d) * move;
+          c.face = Math.atan2(dx, dy);
+          c.head.position.y = c.headY;
+          const sw = Math.sin(time * c.step + c.phase) * 0.07;
+          for (let i = 0; i < c.legs.length; i++) {
+            c.legs[i].position.z = c.legZ[i] + (i % 2 === 0 ? sw : -sw);
+          }
+          bob = Math.abs(Math.sin(time * c.step * 0.5 + c.phase)) * 0.025;
+        }
+      }
+      const h = hmap[idx(clampi(Math.round(c.x), 0, W - 1), clampi(Math.round(c.y), 0, H - 1))] || 4;
+      c.group.position.set(c.x - CX, h * BH + bob, c.y - CY);
+      c.group.rotation.y = c.face;
+    }
+  }
+
+  // ---------------------------------------------------------------- birds
+  const birds = [
+    { r: 7.5, h: 9.0, sp: 0.20, ph: 0.0 },
+    { r: 10.5, h: 10.5, sp: -0.15, ph: 2.1 },
+    { r: 6.0, h: 8.0, sp: 0.26, ph: 4.3 }
+  ].map(b => {
+    const g = new THREE.Group();
+    part(g, C.bird, 0.18, 0.14, 0.3, 0, 0, 0);
+    const wl = new THREE.Group(), wr = new THREE.Group();
+    part(wl, C.bird, 0.3, 0.05, 0.16, 0.17, 0, 0);
+    part(wr, C.bird, 0.3, 0.05, 0.16, -0.17, 0, 0);
+    g.add(wl); g.add(wr);
+    scene.add(g);
+    return Object.assign(b, { group: g, wl, wr });
+  });
+
+  function updateBirds(time) {
+    for (const b of birds) {
+      const a = time * b.sp + b.ph;
+      b.group.position.set(Math.cos(a) * b.r, b.h, Math.sin(a) * b.r);
+      b.group.rotation.y = -a + Math.PI / 2;
+      const flap = Math.sin(time * 7 + b.ph) * 0.6;
+      b.wl.rotation.z = -flap;
+      b.wr.rotation.z = flap;
+    }
+  }
+
+  // ---------------------------------------------------------------- camera rig
+  const CAM_DIST = 56;
+  let az = Math.PI * 0.28, el = 0.66, frustum = 30;
+
+  function placeCamera() {
+    const r = cv.clientWidth / Math.max(1, cv.clientHeight);
+    const half = frustum / 2;
+    camera.left = -half * r;
+    camera.right = half * r;
+    camera.top = half;
+    camera.bottom = -half;
+    const d = CAM_DIST;
+    camera.position.set(
+      Math.cos(az) * Math.cos(el) * d,
+      Math.sin(el) * d,
+      Math.sin(az) * Math.cos(el) * d
+    );
+    camera.lookAt(0, 1.2, 0);
+    camera.updateProjectionMatrix();
+  }
+
+  function placeSun(t) {                    // t: 0 morning -> 1 evening
+    const a = Math.PI * (0.18 + t * 0.64);
+    const height = 0.3 + Math.sin(t * Math.PI) * 0.7;
+    sun.position.set(Math.cos(a) * 40, 13 + height * 16, Math.sin(a) * 32 + 6);
+    sun.target.position.set(0, 0, 0);
+    const warmth = 1 - Math.sin(t * Math.PI);          // warmer at the ends
+    sun.color.setHSL(0.11 - warmth * 0.03, 0.28 + warmth * 0.32, 0.8);
+    sun.intensity = 2.9 + Math.sin(t * Math.PI) * 1.5;
+    sky.intensity = 1.05 + Math.sin(t * Math.PI) * 0.55;
+  }
+
+  function resize() {
+    const r = cv.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false);
+    placeCamera();
+  }
+
+  // ---------------------------------------------------------------- picking
+  const ray = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+
+  function pickTile(e) {
+    const r = cv.getBoundingClientRect();
+    ndc.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+    ndc.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+    ray.setFromCamera(ndc, camera);
+    const targets = [terrainMesh, propMesh].filter(Boolean);
+    const hits = ray.intersectObjects(targets, false);
+    if (!hits.length) return null;
+    const hit = hits[0];
+    const table = hit.object === terrainMesh ? terrainTile : propTile;
+    return table[hit.instanceId] || null;
+  }
+
+  // ---------------------------------------------------------------- build rail
+  let tool = "wall";
+  const TOOLS = [
+    ["wall", "Wall", '<path d="M2 13h18v4H2z"/><path d="M3 6h5v6H3zM12 6h5v6h-5z"/>'],
+    ["tower", "Tower", '<path d="M6 5h2v2h2V5h2v2h2V5h2v12H6z"/>'],
+    ["farm", "Farm", '<path d="M2 15h18v2H2z"/><path d="M5 6c2 1 2 4 2 7H6c0-3 0-6-1-7zM11 5c2 1 2 5 2 8h-1c0-4 0-7-1-8zM16 7c2 1 2 3 2 6h-1c0-3 0-5-1-6z"/>'],
+    ["shop", "Workshop", '<path d="M4 16h14v2H4z"/><path d="M11 4l6 4H5z"/><path d="M7 9h8v6H7z"/>'],
+    ["store", "Store", '<path d="M4 6h14v11H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 11h14v1H4z"/>'],
+    ["road", "Road", '<path d="M3 16h4l3-12h2L9 16h9v2H3z"/>'],
+    ["clear", "Clear", '<path d="M4 5l3-2 11 9-3 4z"/><path d="M2 16h8v2H2z"/>']
+  ];
+
+  const rail = document.querySelector(".rail");
+  for (const [id, label, svg] of TOOLS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tool";
+    b.dataset.tool = id;
+    b.setAttribute("aria-pressed", String(id === tool));
+    b.innerHTML = '<svg viewBox="0 0 22 20" fill="currentColor" aria-hidden="true">' + svg + "</svg>" + label;
+    b.addEventListener("click", () => {
+      tool = id;
+      for (const t of rail.querySelectorAll(".tool")) {
+        t.setAttribute("aria-pressed", String(t.dataset.tool === id));
+      }
+    });
+    rail.appendChild(b);
+  }
+
+  // ---------------------------------------------------------------- inspector
+  document.getElementById("i-meter").innerHTML =
+    "<i class='p'></i>".repeat(6) + "<i class='s'></i>".repeat(5);
+
+  function inspect(b) {
+    document.getElementById("i-name").textContent = b.name;
+    const tag = document.getElementById("i-tag");
+    tag.textContent = b.tag === "slot" ? "Slot" : "Pool";
+    tag.className = "tag " + b.tag;
+    document.getElementById("i-chain").innerHTML =
+      "<span class='chip'>" + b.chain[0] + "</span><span class='arrow'>&rarr;</span>" +
+      "<span class='chip'>" + b.chain[1] + "</span>";
+    document.getElementById("i-rows").innerHTML =
+      b.rows.map(r => "<div class='row'><span>" + r[0] + "</span><b>" + r[1] + "</b></div>").join("") +
+      "<div class='row note'><span>" + b.note + "</span></div>";
+  }
+  inspect(BUILDINGS[2]);
+
+  // ---------------------------------------------------------------- ring UI
+  const ringStat = document.getElementById("ring-stat");
+  const ringName = document.getElementById("ring-name");
+  const commit = document.getElementById("ring-commit");
+  const ROMAN = ["", "I", "II", "III"];
+  let timber = 240, stone = 186;
+
+  function ringUI() {
+    const entry = Object.entries(RINGS).find(([, r]) => r === previewR);
+    const n = entry ? Number(entry[0]) : builtRing;
+    ringName.innerHTML = "Ring <span class='num'>" + ROMAN[n] + "</span>";
+
+    if (previewR === ringR) {
+      ringStat.innerHTML = "<b>" + enclosed(ringR) + "</b> tiles enclosed &middot; <b>" +
+        ringCells(ringR).length + "</b> segments standing";
+      commit.disabled = true;
+      commit.textContent = "Raised";
+    } else {
+      const c = costOf(previewR);
+      const gain = enclosed(previewR) - enclosed(ringR);
+      ringStat.innerHTML = "+<b>" + gain + "</b> tiles &middot; costs <b>" + c.stone +
+        "</b> stone, <b>" + c.timber + "</b> timber";
+      const short = stone < c.stone || timber < c.timber;
+      commit.disabled = short;
+      commit.textContent = short ? "Not enough stone" : "Raise wall";
+    }
+    for (const b of document.querySelectorAll(".ringbtn")) {
+      b.setAttribute("aria-pressed", String(RINGS[b.dataset.ring] === previewR));
+      b.disabled = RINGS[b.dataset.ring] < ringR;
+    }
+    document.getElementById("r-timber").textContent = timber;
+    document.getElementById("r-stone").textContent = stone;
+  }
+
+  for (const b of document.querySelectorAll(".ringbtn")) {
+    b.addEventListener("click", () => {
+      previewR = RINGS[b.dataset.ring];
+      buildGhost();
+      ringUI();
+    });
+  }
+
+  commit.addEventListener("click", () => {
+    const c = costOf(previewR);
+    stone -= c.stone;
+    timber -= c.timber;
+    ringR = previewR;
+    ringsBuilt.push(previewR);
+    builtRing = Number(Object.entries(RINGS).find(([, r]) => r === ringR)[0]);
+    genTerrain();
+    genProps();
+    buildTerrain();
+    buildProps();
+    buildWater();
+    rehomeCritters();
+    clearGhost();
+    ringUI();
+  });
+
+  // ---------------------------------------------------------------- pointer
+  const readout = document.getElementById("tileread");
+  let drag = null;
+
+  cv.addEventListener("pointerdown", e => {
+    drag = { x: e.clientX, y: e.clientY, moved: 0, id: e.pointerId };
+    cv.setPointerCapture(e.pointerId);
+    cv.classList.add("dragging");
+  });
+
+  cv.addEventListener("pointermove", e => {
+    if (drag) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      az -= dx * 0.007;
+      el = Math.max(0.22, Math.min(1.32, el + dy * 0.005));
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      placeCamera();
+      hoverMesh.visible = false;
+      return;
+    }
+    const c = pickTile(e);
+    if (!c) { hoverMesh.visible = false; return; }
+    hoverMesh.visible = true;
+    hoverMesh.position.set(c.x - CX, hmap[idx(c.x, c.y)] * BH + 0.035, c.y - CY);
+    const inside = inOct(c.x - CX, c.y - CY, ringR - 1);
+    readout.innerHTML = "<b>" + tmap[idx(c.x, c.y)] + "</b> &middot; height " +
+      hmap[idx(c.x, c.y)] + " &middot; " + (inside ? "inside the wall" : "the wilds");
+  });
+
+  cv.addEventListener("pointerup", e => {
+    const wasDrag = drag && drag.moved > 6;
+    if (drag) cv.releasePointerCapture(drag.id);
+    drag = null;
+    cv.classList.remove("dragging");
+    if (wasDrag) return;
+
+    const c = pickTile(e);
+    if (!c) return;
+    const hit = buildings.find(b =>
+      c.x >= b.x && c.x < b.x + b.w && c.y >= b.y && c.y < b.y + b.d);
+    if (hit) { inspect(hit); return; }
+    if (WET[tmap[idx(c.x, c.y)]]) return;
+
+    const z = hmap[idx(c.x, c.y)];
+    if (tool === "wall") cube(c.x, c.y, z, "stone", 1, 3);
+    else if (tool === "tower") {
+      cube(c.x, c.y, z, "stone", 1, 5);
+      cube(c.x, c.y, z + 5, "clay", 1.12, 0.9);
+    } else if (tool === "farm") {
+      cube(c.x, c.y, z, "tilled", 1, 0.18);
+      cube(c.x, c.y, z + 0.18, "wheat", 0.6, 0.5);
+    } else if (tool === "shop") {
+      cube(c.x, c.y, z, "timber", 1, 2);
+      cube(c.x, c.y, z + 2, "clay", 1.1, 0.75);
+    } else if (tool === "store") {
+      cube(c.x, c.y, z, "crate", 0.86, 0.5);
+      cube(c.x, c.y, z + 0.5, "crate", 0.68, 0.44);
+    } else if (tool === "road") {
+      tmap[idx(c.x, c.y)] = "road";
+      buildTerrain();
+      return;
+    } else if (tool === "clear") {
+      props = props.filter(p => !(p.x === c.x && p.y === c.y));
+    }
+    buildProps();
+  });
+
+  cv.addEventListener("pointerleave", () => {
+    hoverMesh.visible = false;
+    readout.textContent = "hover the ground";
+  });
+
+  cv.addEventListener("wheel", e => {
+    e.preventDefault();
+    frustum = Math.max(13, Math.min(46, frustum * (1 + e.deltaY * 0.0011)));
+    placeCamera();
+  }, { passive: false });
+
+  // sun slider
+  const sunSlider = document.getElementById("sun");
+  const sunOut = document.getElementById("sunout");
+  const SUN_WORDS = [[0.18, "dawn"], [0.36, "morning"], [0.58, "midday"],
+                     [0.78, "afternoon"], [1.01, "evening"]];
+  function sunFromSlider() {
+    const t = sunSlider.value / 100;
+    placeSun(t);
+    const dusk = 1 - Math.sin(t * Math.PI);        // 0 at midday, 1 at the ends
+    glowMat.color.setHex(0xffce7a).multiplyScalar(0.4 + dusk * 0.6);
+    sunOut.textContent = (SUN_WORDS.find(w => t < w[0]) || SUN_WORDS[4])[1];
+  }
+  sunSlider.addEventListener("input", sunFromSlider);
+
+  // ---------------------------------------------------------------- boot
+  genTerrain();
+  genProps();
+  buildTerrain();
+  buildProps();
+  buildWater();
+  seedCritters();
+  ringUI();
+  sunFromSlider();
+  resize();
+
+  let ro;
+  window.addEventListener("resize", () => { clearTimeout(ro); ro = setTimeout(resize, 120); });
+
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const t0 = performance.now();
+
+  let last = 0;
+  function frame(now) {
+    const time = still ? 0 : (now - t0) / 1000;
+    const dt = still ? 0 : Math.min(0.1, Math.max(0, time - last));
+    last = time;
+    waveTime.value = time;
+    updateCritters(dt, time);
+    updateBirds(time);
+    FOLK.forEach((f, i) => {
+      const p = folkPos(f, time);
+      const h = hmap[idx(Math.round(p[0]), Math.round(p[1]))] || 4;
+      folkGroups[i].position.set(p[0] - CX, h * BH, p[1] - CY);
+    });
+    if (smokeMesh && smokers.length) {
+      for (let si = 0; si < smokers.length; si++) {
+        const src = smokers[si];
+        for (let k = 0; k < PUFFS; k++) {
+          const u = ((time * 0.26) + k / PUFFS + si * 0.13) % 1;
+          const sc = 0.13 + u * 0.42;
+          M.makeScale(sc, sc, sc);
+          M.setPosition(
+            src.x - CX + Math.sin(time * 0.6 + k * 1.3) * u * 0.55,
+            src.z * BH + u * 2.7,
+            src.y - CY + Math.cos(time * 0.45 + k * 1.9) * u * 0.45
+          );
+          const i = si * PUFFS + k;
+          smokeMesh.setMatrixAt(i, M);
+          SMOKE_COL.setHex(0xcfd0c2).lerp(SMOKE_PALE, u);
+          smokeMesh.setColorAt(i, SMOKE_COL);
+        }
+      }
+      smokeMesh.instanceMatrix.needsUpdate = true;
+      if (smokeMesh.instanceColor) smokeMesh.instanceColor.needsUpdate = true;
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
