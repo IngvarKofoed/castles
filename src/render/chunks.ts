@@ -1,7 +1,7 @@
-import { BufferAttribute, BufferGeometry, Mesh, type Material, type Scene } from "three";
+import { BufferAttribute, BufferGeometry, Mesh, type Material, type Object3D, type Scene as ThreeScene } from "three";
 import { chunkCoords, chunkCount } from "../sim/world/chunks";
-import type { World } from "../sim/world/world";
-import { meshChunk, meshWaterChunk, type ChunkGeometry, type WaterGeometry } from "./mesher";
+import { buildings, chopLayer, type Sim } from "../sim/know";
+import { meshChunk, meshWaterChunk, type ChunkGeometry, type Scene, type WaterGeometry } from "./mesher";
 
 /**
  * Owns one terrain Mesh per chunk (and one water mesh per chunk that has wet
@@ -9,27 +9,39 @@ import { meshChunk, meshWaterChunk, type ChunkGeometry, type WaterGeometry } fro
  * copy of the sim's chunkVersion array and rebuilds chunks whose versions
  * moved — which on first sync is all of them, since generation leaves every
  * version at 1 and nothing has been seen yet.
+ *
+ * Trees and buildings bake into these meshes, so felling a tree or finishing a
+ * building only shows up because the sim bumped that chunk's version.
  */
 export class ChunkRenderer {
   private readonly lastSeen: Uint32Array;
   private readonly terrain: (Mesh | null)[];
   private readonly water: (Mesh | null)[];
+  /** Cached `pickTargets`, invalidated whenever a chunk mesh is replaced —
+   *  the getter is read on every pointer move. */
+  private targets: Object3D[] | null = null;
 
   constructor(
-    private readonly scene: Scene,
-    private readonly world: World,
+    private readonly scene: ThreeScene,
+    private readonly sim: Sim,
     private readonly terrainMaterial: Material,
     private readonly waterMaterial: Material,
   ) {
-    const n = chunkCount(world.size);
+    const n = chunkCount(sim.world.size);
     this.lastSeen = new Uint32Array(n);
     this.terrain = new Array<Mesh | null>(n).fill(null);
     this.water = new Array<Mesh | null>(n).fill(null);
   }
 
+  /** The meshes picking raycasts against. */
+  get pickTargets(): Object3D[] {
+    this.targets ??= this.terrain.filter((m): m is Mesh => m !== null);
+    return this.targets;
+  }
+
   /** Rebuild every chunk whose sim-side version moved. Per-chunk, never per-world. */
   sync(): void {
-    const versions = this.world.chunkVersion;
+    const versions = this.sim.world.chunkVersion;
     for (let c = 0; c < versions.length; c++) {
       if (versions[c] === this.lastSeen[c]) continue;
       this.rebuild(c);
@@ -38,12 +50,15 @@ export class ChunkRenderer {
   }
 
   private rebuild(c: number): void {
-    const { cx, cy } = chunkCoords(c, this.world.size);
+    this.targets = null;
+    const world = this.sim.world;
+    const { cx, cy } = chunkCoords(c, world.size);
+    const input: Scene = { world, buildings: buildings(this.sim), chopMap: chopLayer(this.sim) };
 
-    const terrainGeom = toGeometry(meshChunk(this.world, cx, cy));
+    const terrainGeom = toGeometry(meshChunk(input, cx, cy));
     this.terrain[c] = this.replace(this.terrain[c], terrainGeom, this.terrainMaterial, true);
 
-    const waterData = meshWaterChunk(this.world, cx, cy);
+    const waterData = meshWaterChunk(input, cx, cy);
     this.water[c] = this.replace(
       this.water[c],
       waterData ? toWaterGeometry(waterData) : null,

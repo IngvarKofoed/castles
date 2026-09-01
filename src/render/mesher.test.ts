@@ -1,16 +1,43 @@
 import { describe, expect, it } from "vitest";
+import { BuildingState, type Building } from "../sim/know";
 import { Terrain, type TerrainValue, type World } from "../sim/world/world";
-import { BH, WATER_SURFACE_OFFSET, meshChunk, meshWaterChunk, type ChunkGeometry } from "./mesher";
+import { BH, WATER_SURFACE_OFFSET, meshChunk, meshWaterChunk, type ChunkGeometry, type Scene } from "./mesher";
 
-function makeWorld(size: number, heights: number[], terrain?: TerrainValue[]): World {
+/** A bare scene: hand-built terrain, no trees, no buildings. */
+function makeWorld(size: number, heights: number[], terrain?: TerrainValue[]): Scene {
   if (heights.length !== size * size) throw new Error("bad fixture");
-  return {
+  const world: World = {
     size,
     seed: 7,
     hmap: Uint8Array.from(heights),
     tmap: terrain ? Uint8Array.from(terrain) : new Uint8Array(size * size).fill(Terrain.Grass),
+    treeMap: new Uint8Array(size * size),
     chunkVersion: new Uint32Array(1).fill(1),
   };
+  return { world, buildings: [], chopMap: new Uint8Array(size * size) };
+}
+
+function withTree(scene: Scene, x: number, y: number): Scene {
+  scene.world.treeMap[y * scene.world.size + x] = 1;
+  return scene;
+}
+
+function withBuilding(scene: Scene, b: Partial<Building> & { x: number; y: number }): Scene {
+  const building: Building = {
+    id: 1,
+    kind: 0,
+    w: 2,
+    h: 2,
+    state: BuildingState.Active,
+    progress: 0,
+    reservedIncoming: 0,
+    acceptLog: 1,
+    acceptPlank: 1,
+    worker: -1,
+    millProgress: -1,
+    ...b,
+  };
+  return { world: scene.world, buildings: [building], chopMap: scene.chopMap };
 }
 
 const quadCount = (g: { indices: Uint32Array }): number => g.indices.length / 6;
@@ -100,6 +127,94 @@ describe("meshChunk", () => {
     // side of the step, so it has no +X face there.
     const none = verticesWhere(west, (px, _py, pz, nx) => nx === 1 && px === 16 && pz >= 5 && pz <= 6);
     expect(none.length).toBe(0);
+  });
+});
+
+describe("props bake into the chunk", () => {
+  it("adds tree geometry above the tile it stands on", () => {
+    const bare = meshChunk(makeWorld(2, [2, 1, 1, 1]), 0, 0);
+    const wooded = meshChunk(withTree(makeWorld(2, [2, 1, 1, 1]), 0, 0), 0, 0);
+    expect(quadCount(wooded)).toBeGreaterThan(quadCount(bare));
+
+    // Every added vertex sits above the tile's ground and over its footprint.
+    const above = verticesWhere(wooded, (_px, py) => py > 2 * BH);
+    expect(above.length).toBeGreaterThan(0);
+    for (const v of above) {
+      expect(wooded.positions[v * 3]).toBeGreaterThan(-0.5);
+      expect(wooded.positions[v * 3]).toBeLessThan(1.5);
+    }
+  });
+
+  it("gives every prop box aBlockY 0 at its base and 1 at its top", () => {
+    const g = meshChunk(withTree(makeWorld(2, [2, 1, 1, 1]), 0, 0), 0, 0);
+    for (let v = 0; v < g.blockY.length; v++) {
+      expect(g.blockY[v] === 0 || g.blockY[v] === 1 || (g.blockY[v] > 0 && g.blockY[v] < 1)).toBe(true);
+    }
+  });
+
+  it("shifts a designated tree's canopy toward gold, leaving its trunk alone", () => {
+    // The base diamond is the precise mark; this tint is what carries it at
+    // distance. Measured rather than eyeballed: a 15% shift is easy to mistake
+    // for the three-green canopy variation the trees already have.
+    const plain = makeWorld(2, [2, 1, 1, 1]);
+    withTree(plain, 0, 0);
+    const marked = makeWorld(2, [2, 1, 1, 1]);
+    withTree(marked, 0, 0);
+    marked.chopMap[0] = 1;
+
+    const a = meshChunk(plain, 0, 0);
+    const b = meshChunk(marked, 0, 0);
+    // Same geometry either way — only colour moves.
+    expect(b.positions).toEqual(a.positions);
+    expect(b.indices).toEqual(a.indices);
+
+    // Every changed vertex gets warmer: more red, and a higher red-to-green
+    // ratio. Not "less blue" — the leaf greens are *darker* in blue than gold
+    // is (`leafA` #3c7d28 has b=40 against gold's b=60), so a shift toward
+    // gold raises blue too. Warmth is the invariant; per-channel direction
+    // is not.
+    let changed = 0;
+    for (let v = 0; v < a.colors.length / 3; v++) {
+      const [ar, ag, ab] = [a.colors[v * 3], a.colors[v * 3 + 1], a.colors[v * 3 + 2]];
+      const [br, bg, bb] = [b.colors[v * 3], b.colors[v * 3 + 1], b.colors[v * 3 + 2]];
+      if (ar === br && ag === bg && ab === bb) continue;
+      changed++;
+      expect(br).toBeGreaterThan(ar);
+      expect(br / bg).toBeGreaterThan(ar / ag);
+    }
+    expect(changed).toBeGreaterThan(0);
+
+    // The trunk keeps its wood colour: some of the tree's vertices are
+    // untouched, so the shift reads as leaves rather than a painted post.
+    expect(changed).toBeLessThan(a.colors.length / 3);
+  });
+
+  it("emits a building once, from the chunk owning its origin tile", () => {
+    const heights = new Array(32 * 32).fill(3);
+    // Origin in the west chunk, footprint straddling the x=16 seam.
+    const scene = withBuilding(makeWorld(32, heights), { x: 15, y: 4 });
+    const west = meshChunk(scene, 0, 0);
+    const east = meshChunk(scene, 1, 0);
+
+    const overBuilding = (g: ChunkGeometry): number =>
+      verticesWhere(g, (px, py, pz) => py > 3 * BH + 0.01 && px >= 14 && px <= 18 && pz >= 3 && pz <= 7).length;
+    expect(overBuilding(west)).toBeGreaterThan(0);
+    expect(overBuilding(east)).toBe(0);
+  });
+
+  it("redraws a building at each step of blueprint → building → active", () => {
+    const heights = new Array(32 * 32).fill(3);
+    const bare = quadCount(meshChunk(makeWorld(32, heights), 0, 0));
+    const counts = [BuildingState.Blueprint, BuildingState.Building, BuildingState.Active].map((state) =>
+      quadCount(meshChunk(withBuilding(makeWorld(32, heights), { x: 4, y: 4, state }), 0, 0)),
+    );
+    // Every state is a distinct silhouette, and every one is more than bare
+    // ground. Under construction is not the largest: it carries the marker
+    // stakes *and* the half-built shape, and the stakes come down when it's
+    // finished.
+    expect(new Set(counts).size).toBe(3);
+    for (const c of counts) expect(c).toBeGreaterThan(bare);
+    expect(counts[1]).toBeGreaterThan(counts[0]);
   });
 });
 

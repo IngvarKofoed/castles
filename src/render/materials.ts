@@ -44,7 +44,7 @@ const COZY_FRAG_BODY = `
   #include <fog_fragment>
 `;
 
-function cozify(material: MeshLambertMaterial): MeshLambertMaterial {
+export function cozify(material: MeshLambertMaterial): MeshLambertMaterial {
   material.onBeforeCompile = (shader) => {
     if (
       !shader.vertexShader.includes("#include <begin_vertex>") ||
@@ -64,6 +64,22 @@ function cozify(material: MeshLambertMaterial): MeshLambertMaterial {
 
 /** Terrain: Lambert with baked per-tile vertex colors plus contact shading. */
 export function createTerrainMaterial(): MeshLambertMaterial {
+  return cozify(new MeshLambertMaterial({ vertexColors: true }));
+}
+
+/**
+ * The dynamic layer's material: one instanced mesh whose per-instance colour
+ * picks the log/plank/tunic tone, sharing the terrain's contact shading so a
+ * colonist doesn't read as cut out of a different game.
+ *
+ * `vertexColors: true` is load-bearing and not decorative. three's
+ * `color_fragment` chunk only multiplies `vColor` into the diffuse under
+ * `USE_COLOR`, which `vertexColors` is what defines — an InstancedMesh's
+ * `instanceColor` alone reaches `vColor` in the vertex stage and is then
+ * thrown away in the fragment stage. The geometry therefore has to carry a
+ * white `color` attribute too, or the missing attribute defaults to black.
+ */
+export function createMoverMaterial(): MeshLambertMaterial {
   return cozify(new MeshLambertMaterial({ vertexColors: true }));
 }
 

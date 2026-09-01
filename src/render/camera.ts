@@ -23,6 +23,11 @@ const EL_MAX = 1.32;
 // The mockup's 13–46 frustum is a keyhole at this scale (tuned by eye).
 const FRUSTUM_MIN = 13;
 const FRUSTUM_MAX = 120;
+// Opening zoom. `2026-09-01-bootstrap-world` set this to 90 because 60 "opened
+// on featureless grass" — that premise is gone now that the map has woods, a
+// clearing and five colonists standing in it, and at 90 a colonist is a
+// five-pixel speck. 46 frames the colony and the land it has to expand into.
+const FRUSTUM_DEFAULT = 46;
 const LOOK_HEIGHT = 1.2;
 // Panning crosses about one screen-height of ground per second.
 const PAN_RATE = 0.9;
@@ -40,7 +45,7 @@ export class CameraRig {
 
   private az = Math.PI * 0.28;
   private el = 0.66;
-  private frustum = 90;
+  private frustum = FRUSTUM_DEFAULT;
   private readonly held = new Set<string>();
   private readonly forward = new Vector3();
   private readonly right = new Vector3();
@@ -51,6 +56,14 @@ export class CameraRig {
     private readonly worldSize: number,
     /** Told the view shape whenever the rig places itself — zoom AND orbit move it. */
     private readonly onView: (frustum: number, elevation: number) => void,
+    /**
+     * Asked before a drag starts whether the orbit may have it. While a build
+     * or chop tool is active the left-drag belongs to that tool — a chop
+     * marquee and a camera orbit cannot share one gesture. Defaults to always
+     * yes, so with no tool selected the orbit behaves exactly as before.
+     * Zoom and WASD pan are never suspended; only the drag is.
+     */
+    private readonly canOrbit: () => boolean = () => true,
   ) {
     this.focus = new Vector3(worldSize / 2, LOOK_HEIGHT, worldSize / 2);
     this.bind();
@@ -107,6 +120,7 @@ export class CameraRig {
     // keep feeding it deltas, which spins the camera wildly.
     cv.addEventListener("pointerdown", (e) => {
       if (drag) return;
+      if (!this.canOrbit()) return;
       drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
       cv.setPointerCapture(e.pointerId);
       cv.classList.add("dragging");

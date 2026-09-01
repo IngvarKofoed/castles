@@ -19,6 +19,10 @@ context in `docs/ARCHITECTURE.md`.
   applied at tick boundaries.
 - **Plain DOM.** No UI framework — adding one is an architecture change:
   update `docs/ARCHITECTURE.md` first.
+- **Every visual token comes from `docs/STYLEGUIDE.md`.** Read it before
+  any UI work and copy its palette, type, and component recipes — never
+  invent colors, fonts, or new component shapes. The live reference mock is
+  linked at its top.
 
 ## Testing
 

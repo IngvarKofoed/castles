@@ -23,6 +23,9 @@ changes it. Broader context in `docs/ARCHITECTURE.md`.
   never trigger a whole-world rebuild.
 - **Before renderer work, read the "Gotchas" section of
   `docs/ARCHITECTURE.md`** — all eight cost real time once already.
+- **In-world overlay colors follow `docs/STYLEGUIDE.md`'s overlay
+  grammar** — sage for valid placement, rust for invalid, gold for
+  designation; never alarm red.
 
 ## Testing
 

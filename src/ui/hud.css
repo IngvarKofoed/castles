@@ -1,0 +1,402 @@
+/*
+ * The HUD, in the language of docs/STYLEGUIDE.md.
+ *
+ * Every value here is copied from that guide — palette, type scale, panel
+ * anatomy, button and meter recipes. Nothing visual is invented per session:
+ * if something needs a token this file doesn't have, the guide is what gets
+ * updated first.
+ *
+ * The tone rule that shapes all of it: nothing flashes, bounces or glows, and
+ * the world is the hero — panels hug the edges and the centre belongs to the
+ * game.
+ */
+
+:root {
+  --ground: #14170f;
+  --panel: rgba(26, 31, 19, 0.88);
+  --line: #3a4030;
+  --line-soft: #2a3020;
+  --ink: #f2ecd9;
+  --ink-dim: #b0aa93;
+  --ink-faint: #7e7a68;
+  --gold: #dca23c;
+  --gold-deep: #8c6a26;
+  --sage: #8fbf52;
+  --rust: #b8503a;
+  --rust-ink: #e08a72;
+  --timber: #a9713f;
+  --plank: #d0b078;
+  --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
+  --display: "Grenze Gotisch", "Grenze", Georgia, serif;
+}
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--ink);
+  font-family: var(--ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+#hud .panel {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+
+/* ---------- ribbon ---------- */
+
+.ribbon {
+  top: 0;
+  left: 0;
+  right: 0;
+  border-width: 0 0 1px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 14px;
+  flex-wrap: wrap;
+}
+.ribbon .brand {
+  font-family: var(--display);
+  font-size: 19px;
+  letter-spacing: 0.02em;
+  margin-right: 4px;
+}
+.res {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.res b {
+  font-weight: 600;
+  font-size: 15px;
+}
+.res i {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  display: inline-block;
+  transform: rotate(45deg);
+  align-self: center;
+}
+.res u {
+  text-decoration: none;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+}
+.divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line-soft);
+}
+.clock {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ink-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* speed group — the ribbon's one gold element */
+.speed {
+  display: flex;
+  gap: 4px;
+}
+.speedbtn {
+  appearance: none;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  padding: 4px 9px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.speedbtn[aria-pressed="true"] {
+  color: var(--gold);
+  border-color: var(--gold-deep);
+}
+.speedbtn:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: 1px;
+}
+
+/* ---------- build rail ---------- */
+
+.rail {
+  left: 12px;
+  top: 62px;
+  width: 62px;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 2px;
+}
+.rail-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: center;
+  padding-bottom: 6px;
+}
+.tool {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: var(--ink-dim);
+  font-family: var(--ui);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  padding: 7px 2px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  transition:
+    color 0.12s,
+    background 0.12s;
+}
+.tool svg {
+  width: 22px;
+  height: 18px;
+}
+.tool:hover {
+  color: var(--ink);
+  background: rgba(220, 162, 60, 0.08);
+}
+.tool[aria-pressed="true"] {
+  color: var(--gold);
+  background: rgba(220, 162, 60, 0.13);
+  border-left-color: var(--gold);
+}
+.tool:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: -1px;
+}
+.tool .cost {
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+}
+
+/* ---------- inspector ---------- */
+
+.inspector {
+  right: 12px;
+  top: 62px;
+  width: 246px;
+  padding: 12px 14px 14px;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.insp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 8px;
+}
+.insp-head h3 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 20px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+.tag {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.tag.slot {
+  background: rgba(184, 80, 58, 0.18);
+  color: var(--rust-ink);
+}
+.tag.pool {
+  background: rgba(143, 191, 82, 0.16);
+  color: var(--sage);
+}
+.tag.blueprint {
+  background: rgba(126, 122, 104, 0.18);
+  color: var(--ink-dim);
+}
+
+.chain {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 3px 7px;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+.arrow {
+  color: var(--gold-deep);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.row b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.row.note {
+  color: var(--ink-faint);
+  font-style: italic;
+  display: block;
+}
+
+.meter {
+  height: 6px;
+  background: var(--line-soft);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--gold);
+}
+
+.action {
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  font-family: var(--ui);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.action:hover {
+  background: rgba(220, 162, 60, 0.08);
+}
+.action:active {
+  background: rgba(220, 162, 60, 0.16);
+}
+.action:disabled {
+  border-color: var(--line);
+  color: var(--ink-faint);
+  cursor: default;
+  background: transparent;
+}
+.action:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---------- labour panel ---------- */
+
+.labour {
+  right: 12px;
+  bottom: 12px;
+  width: 246px;
+  padding: 10px 14px 12px;
+  border-radius: 2px;
+}
+.labour h4 {
+  font-family: var(--ui);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 7px;
+}
+.labour .meter {
+  display: flex;
+  gap: 2px;
+  background: none;
+  margin-bottom: 7px;
+}
+.labour .meter i {
+  flex: 1;
+  border-radius: 1px;
+}
+.labour .meter i.p {
+  background: var(--sage);
+}
+.labour .meter i.s {
+  background: var(--rust);
+}
+.legend {
+  font-size: 12px;
+  color: var(--ink-dim);
+  line-height: 1.4;
+  margin: 0;
+}
+.legend em {
+  font-style: normal;
+  color: var(--ink);
+}
+
+/* ---------- selection marquee ---------- */
+
+/*
+ * The drag-box for area tools, per docs/STYLEGUIDE.md's overlay grammar:
+ * 1px gold border over a 1px `ground` keyline, a fill lighter than the
+ * designation's because this can cover half the screen, square corners and
+ * solid lines. Never dashed, never animated — marching ants are motion, and
+ * nothing in this game moves that isn't physically moving.
+ *
+ * The keyline is a box-shadow on both sides of the border rather than a second
+ * element, so the gold reads over bright grass and dark wood alike.
+ */
+.marquee {
+  position: absolute;
+  border: 1px solid var(--gold);
+  background: rgba(220, 162, 60, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(20, 23, 15, 0.55),
+    inset 0 0 0 1px rgba(20, 23, 15, 0.55);
+  pointer-events: none;
+}
+
+[hidden] {
+  display: none !important;
+}
