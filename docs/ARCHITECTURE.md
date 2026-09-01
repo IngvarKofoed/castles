@@ -70,7 +70,7 @@ src/
     threats/      orcs, trolls, schedules, notice / attack / flee
     know/         the knowledge model — what the player may see
     save/         snapshot, versioning, migrations
-  render/         three.js — chunked instancing, materials, shaders
+  render/         three.js — chunked meshing, materials, shaders
   ui/             HUD, build menus, overlays (plain DOM)
   app/            bootstrap, main loop, sim ↔ render ↔ ui wiring
 assets/           content data: buildings, recipes, monster kinds, palettes
@@ -87,7 +87,7 @@ is already nearly that format.
 - The mockups are 34 × 34; the real game wants **a lot larger** — 256 × 256
   is the working target, with a correspondingly larger starting castle. The
   numbers are tunable; the consequence is not: the world is **chunked**
-  (16 × 16 tiles), so terrain rebuilds, render instancing, and dirty-marking
+  (16 × 16 tiles), so terrain rebuilds, render meshing, and dirty-marking
   are per-chunk, never whole-world. The mockups' bake-once-blit-forever
   trick does not survive a map this size; its successor is bake-per-chunk,
   rebuild only what changed.
@@ -127,7 +127,7 @@ is already nearly that format.
 
 1. **Bootstrap.** Vite + TS + Vitest; port the (currently duplicated) world
    generator into `sim/world` with tests; port the mockup3d renderer into
-   `render/` on chunked instancing. Playable result: a large empty world you
+   `render/` on chunked meshing. Playable result: a large empty world you
    can orbit.
 2. **Tick + labour.** The fixed tick, the sim store, pool/slot workers, the
    task queue, filtered-storage hauling. First because every later system

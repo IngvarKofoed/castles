@@ -1,6 +1,6 @@
 # Castles — render
 
-The three.js renderer: chunked instanced meshes, materials, and the shader
+The three.js renderer: chunked merged voxel meshes, materials, and the shader
 injections carried over from the mockups. It draws sim state; it never
 changes it. Broader context in `docs/ARCHITECTURE.md`.
 

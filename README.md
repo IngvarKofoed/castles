@@ -4,17 +4,30 @@ A low-stress voxel colony builder: short production chains, a wall ring you push
 outward for more room, and a telegraphed threat from the woods that gives the
 wall a reason to exist.
 
-Two visual mockups, both single self-contained HTML files with no build step.
-Open one in a browser, or serve the folder:
+## Run
 
 ```sh
-python3 -m http.server 8791    # then open http://localhost:8791/mockup3d.html
+npm install
+npm run dev        # a generated 256×256 island: drag to orbit, WASD to pan, scroll to zoom
+npm test           # sim + mesher tests
+npm run lint       # includes the src/sim purity boundary
+```
+
+Seeds are shareable: `?seed=42` always generates the same world.
+
+## Mockups
+
+Two visual mockups in [`mockups/`](mockups/), both single self-contained HTML
+files with no build step. Open one in a browser, or serve the folder:
+
+```sh
+python3 -m http.server 8791    # then open http://localhost:8791/mockups/mockup3d.html
 ```
 
 | File | What it is |
 | --- | --- |
-| `mockup3d.html` | three.js: lit, shadowed, orbitable, animals and smoke. The current look. |
-| `mockup.html` | the earlier painted 2D canvas version. Zero dependencies, one fixed camera. |
+| `mockups/mockup3d.html` | three.js: lit, shadowed, orbitable, animals and smoke. The current look. |
+| `mockups/mockup.html` | the earlier painted 2D canvas version. Zero dependencies, one fixed camera. |
 
 Both mockups: click a building to inspect it, pick a tool and click the ground to
 place, preview Ring II or III and raise it. The 3D one adds drag-to-orbit,

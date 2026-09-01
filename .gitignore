@@ -2,3 +2,5 @@ node_modules/
 dist/
 .claude/worktrees/
 .DS_Store
+src/version.ts
+.playwright-mcp/
