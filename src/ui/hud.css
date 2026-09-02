@@ -397,6 +397,193 @@
   pointer-events: none;
 }
 
+/* ---------- centre modal: the menu ---------- */
+
+/*
+ * The one panel allowed in the centre of the screen (docs/STYLEGUIDE.md,
+ * "Centre modal"). Everywhere else the world is the hero and panels hug the
+ * edges; this earns the middle because the game is paused behind it, so there
+ * is no world to be in the way of.
+ *
+ * Same moss-glass anatomy as the edge panels, one size up: 320px instead of
+ * 246px, because the saves list carries three actions per row.
+ */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 23, 15, 0.55);
+  font-family: var(--ui);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+.menu {
+  width: 320px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  backdrop-filter: blur(3px);
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.menu h3 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 20px;
+  margin: 0;
+  letter-spacing: 0.01em;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 8px;
+}
+.menu h4 {
+  font-family: var(--ui);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0;
+}
+.menu .field {
+  display: flex;
+  gap: 6px;
+}
+.menu input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink);
+  font-family: var(--ui);
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.menu input[type="text"]::placeholder {
+  color: var(--ink-faint);
+}
+.menu input[type="text"]:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: 1px;
+}
+
+/* The saves list. One gold element per region, so rows get secondary buttons
+ * and the gold belongs to Save — the action that is player intent. */
+.saves {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.save {
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  padding: 7px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.save-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.save-head b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.save-head span {
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.save-sub {
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.save-acts {
+  display: flex;
+  gap: 6px;
+}
+.mini {
+  appearance: none;
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink-dim);
+  font-family: var(--ui);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+.mini:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.25);
+}
+.mini:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+.mini:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
+}
+.mini.armed {
+  color: var(--rust-ink);
+  border-color: var(--rust);
+}
+.menu .action:disabled {
+  border-color: var(--line);
+  color: var(--ink-faint);
+  cursor: default;
+}
+.menu .tail {
+  display: flex;
+  gap: 6px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+}
+
+/* ---------- blocking notice ---------- */
+
+.notice {
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.notice h3 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 20px;
+  margin: 0;
+}
+.notice p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-dim);
+  line-height: 1.45;
+}
+
 [hidden] {
   display: none !important;
 }

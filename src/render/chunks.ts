@@ -39,6 +39,28 @@ export class ChunkRenderer {
     return this.targets;
   }
 
+  /**
+   * Drop every mesh this renderer owns. Called when a load replaces the sim
+   * under it: the `Sim` was captured at construction, so the renderer is
+   * rebuilt rather than re-pointed.
+   *
+   * The materials are *not* disposed — they are created once by the app and
+   * shared across every session, so disposing them here would leave the next
+   * session drawing with a destroyed program.
+   */
+  dispose(): void {
+    for (const list of [this.terrain, this.water]) {
+      for (let c = 0; c < list.length; c++) {
+        const mesh = list[c];
+        if (!mesh) continue;
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+        list[c] = null;
+      }
+    }
+    this.targets = null;
+  }
+
   /** Rebuild every chunk whose sim-side version moved. Per-chunk, never per-world. */
   sync(): void {
     const versions = this.sim.world.chunkVersion;

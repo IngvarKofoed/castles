@@ -115,9 +115,15 @@ is already nearly that format.
   plus named manual slots with metadata (colony name, in-game day,
   population) for the load screen.
 - **Export/import:** the same bytes as a downloadable `.castles` file the
-  player owns; import is just load. When the desktop wrap happens, IndexedDB
-  is swapped for real files behind the same interface — `sim/save/` talks to
-  a storage interface precisely so that swap stays boring.
+  player owns; import is just load.
+- **Where the halves live.** `sim/save/` owns the *pure* half — `encode`,
+  `decode`, `SAVE_VERSION`, the migrations ladder — and nothing else;
+  IndexedDB, the download anchor, the file picker, timestamps and the
+  single-instance lock all sit in `app/storage.ts` behind a `SaveStorage`
+  interface, because they are precisely the browser APIs the boundary bans.
+  When the desktop wrap happens, that one file is replaced and the codec is
+  untouched — which is what keeps the swap boring
+  (`docs/specs/2026-09-01-persistence.md`).
 - **Versioning policy:** the schema version is an integer, and loading an
   old save runs it through append-only migrations tested against fixture
   saves. Pre-1.0 the escape hatch is allowed — breaking saves is fine, but

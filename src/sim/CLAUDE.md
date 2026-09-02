@@ -16,9 +16,14 @@ Contents: `world/`, `labour/`, `economy/`, `walls/`, `threats/`, `know/`,
 
 ## Hard rules — the boundary is the architecture
 
-- **No DOM, no three.js, no browser APIs.** Nothing in `src/sim/` may import
-  from `src/render/`, `src/ui/`, `src/app/`, or `three`. If an edit needs a
-  browser API, the edit belongs outside `sim/`.
+- **No DOM or rendering APIs.** Nothing in `src/sim/` may
+  import from `src/render/`, `src/ui/`, `src/app/`, or `three`, and nothing
+  here may touch `document`, `window`, `navigator`, storage, or the network.
+  Globals that are part of the *JavaScript runtime* rather than the browser —
+  `CompressionStream`, `TextEncoder` — are allowed: `save/codec.ts` uses them
+  and stays a plain Vitest unit test because of it. The test is not "does a
+  browser have it" but "would a headless runtime": if an edit needs a
+  document, a canvas, a window or a clock, the edit belongs outside `sim/`.
 - **No `Math.random`, no `Date.now`.** All randomness comes from the sim's
   single seeded PRNG; all time is the tick counter. Same seed + same commands
   must produce the same colony — a change that breaks that is wrong even if

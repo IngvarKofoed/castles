@@ -27,6 +27,10 @@ export interface HudPorts {
   send(command: Command): void;
   setSpeed(speed: number): void;
   getSpeed(): number;
+  /** Open or close the menu. The menu outlives any one sim, so the HUD only
+   *  ever asks — it never owns the panel. */
+  toggleMenu(): void;
+  menuOpen(): boolean;
 }
 
 const SPEEDS: readonly { label: string; value: number; title: string }[] = [
@@ -60,6 +64,15 @@ export class Hud {
   private readonly labourMeter: HTMLElement;
   private readonly labourLegend: HTMLElement;
   private readonly marquee: HTMLElement;
+  private readonly menuButton = el("button", {
+    class: "speedbtn",
+    type: "button",
+    title: "Menu — save, load, export",
+    "aria-pressed": "false",
+  }) as HTMLButtonElement;
+  /** Kept so `dispose` can take it off `window` again — a load builds a new
+   *  HUD, and an undead one would keep eating Escape presses forever. */
+  private readonly onKeyDown: (e: KeyboardEvent) => void;
 
   private tool_: Tool = { kind: "none" };
   private selected = -1;
@@ -88,16 +101,55 @@ export class Hud {
     this.root.append(this.marquee);
 
     document.body.append(this.root);
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") this.clear();
-    });
+    this.onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") this.escape();
+    };
+    window.addEventListener("keydown", this.onKeyDown);
+  }
+
+  /**
+   * Take the HUD off the page. A load replaces the whole sim-bound stack, and
+   * this HUD captured the old `Sim` at construction — so it has to go, window
+   * listener and all, or its Escape handler keeps firing over the new game's.
+   */
+  dispose(): void {
+    window.removeEventListener("keydown", this.onKeyDown);
+    this.root.remove();
   }
 
   get tool(): Tool {
     return this.tool_;
   }
 
-  /** Clear the active tool and any selection — Escape, or a right-click. */
+  /**
+   * The Escape ladder: **one rung per press**, in this one place.
+   *
+   * An open menu closes; else an active tool is dropped; else a selection is
+   * cleared; else the menu opens. The menu is checked first rather than last
+   * so that a selection left standing behind an open panel cannot swallow the
+   * press that was meant to close it.
+   *
+   * Abandoning an in-flight drag is not a rung — `app/main.ts` owns that
+   * gesture state and cancels it on the same press.
+   */
+  escape(): void {
+    if (this.ports.menuOpen()) {
+      this.ports.toggleMenu();
+      return;
+    }
+    if (this.tool_.kind !== "none") {
+      this.setTool({ kind: "none" });
+      this.hideMarquee();
+      return;
+    }
+    if (this.selected >= 0) {
+      this.selected = -1;
+      return;
+    }
+    this.ports.toggleMenu();
+  }
+
+  /** Clear the active tool and any selection — a right-click. */
   clear(): void {
     this.setTool({ kind: "none" });
     this.selected = -1;
@@ -139,6 +191,7 @@ export class Hud {
     for (const b of this.speedButtons) {
       b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === speed));
     }
+    this.menuButton.setAttribute("aria-pressed", String(this.ports.menuOpen()));
 
     this.updateLabour(r.folk, r.pool);
     this.updateInspector();
@@ -174,6 +227,16 @@ export class Hud {
     clock.append(speed);
     this.res.day = el("span", {}, "Day 1");
     clock.append(this.res.day);
+
+    // The Menu button always works: with a tool active it drops the tool and
+    // opens, so the player never has to guess why a click did nothing.
+    this.menuButton.textContent = "Menu";
+    this.menuButton.addEventListener("click", () => {
+      if (!this.ports.menuOpen()) this.clear();
+      this.ports.toggleMenu();
+    });
+    clock.append(this.menuButton);
+
     ribbon.append(clock);
     return ribbon;
   }

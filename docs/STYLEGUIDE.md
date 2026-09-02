@@ -76,6 +76,35 @@ right edge. Padding `12px 14px 14px`, vertical gap 12px, radius 2px.
 - **Resource icons**: 9px squares rotated 45°, filled with the resource's
   color.
 
+## Centre modal
+
+**The one panel allowed in the middle of the screen**, and a deliberate,
+named exception to the "panels hug the edges, the centre belongs to the game"
+rule above. It earns the middle because **the game is paused behind it** —
+there is no world in the way — so anything that wants the centre has to pause
+first, or it does not get it.
+
+- **Scrim**: `rgba(20, 23, 15, 0.55)` full-viewport, centring its panel.
+  Clicking the scrim closes; clicking the panel does not.
+- **Panel**: the standard anatomy at 320px instead of 246px — wide enough for
+  a list row carrying three actions — `max-height: 80vh` and scrolling
+  inside. Same fill, hairline border, 2px radius, blur.
+- **Sections**: a display 20px title with the usual `line-soft` rule under
+  it, then 10px caps section heads (`Save this colony`, `Saved colonies`).
+- **One gold element still holds.** Save is the gold action; every other
+  control — the per-row Load / Export / Delete, Import, New colony — is the
+  secondary recipe (`line` border, ink-dim text, 11px caps).
+- **Destructive actions are guarded by a second click, never a dialog.** The
+  button re-labels itself in place (`Really — click again`, `Sure?`) and
+  takes the rust text colour while armed, then reverts on its own after ten
+  seconds. A modal on top of a modal is not this game's voice.
+- **Errors are the panel's italic faint note row.** No toasts, no alerts, no
+  colour change anywhere else — a save that will not load says so in one
+  quiet line and the game behind it is untouched.
+
+Escape runs one ladder, one rung per press: active tool → selection → menu.
+The same key closes the modal, so the way out is always the way in.
+
 ## In-world overlay grammar
 
 Drawn by `src/render/`, same vocabulary as the panels:

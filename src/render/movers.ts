@@ -181,7 +181,7 @@ export class MoverRenderer {
   private readonly ghostEdge: Layer;
 
   constructor(
-    scene: Scene,
+    private readonly scene: Scene,
     private readonly sim: Sim,
   ) {
     this.solids = solidLayer(scene, MAX_COLONISTS * 3 + MAX_ITEMS);
@@ -195,6 +195,21 @@ export class MoverRenderer {
     this.ghostKeyline = overlayLayer(scene, 256, KEYLINE, 0.5);
     this.ghostFill = overlayLayer(scene, 64, SAGE, 0.22);
     this.ghostEdge = overlayLayer(scene, 256, SAGE, 0.85);
+  }
+
+  /**
+   * Drop every layer this renderer owns — a load rebuilds the whole sim-bound
+   * stack around the decoded store.
+   *
+   * Each layer made its own material, so those go; `BOX` and `FLAT` are shared
+   * module-level geometries and deliberately do not.
+   */
+  dispose(): void {
+    for (const l of this.layers) {
+      this.scene.remove(l.mesh);
+      (l.mesh.material as { dispose(): void }).dispose();
+      l.mesh.dispose();
+    }
   }
 
   /**
