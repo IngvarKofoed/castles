@@ -18,12 +18,14 @@ import {
   chopLayer,
   colonists,
   footprint,
+  insideLayer,
   items,
+  razeLayer,
   BUILDING_DEFS,
   type BuildingKindValue,
   type Sim,
 } from "../sim/know";
-import { tileIndex } from "../sim/world/world";
+import { WORLD_SIZE, tileIndex } from "../sim/world/world";
 import { createMoverMaterial } from "./materials";
 import { OVERLAY, PROP } from "./palette";
 import { BH } from "./props";
@@ -77,6 +79,14 @@ const { gold: GOLD, sage: SAGE, rust: RUST, keyline: KEYLINE } = OVERLAY;
 const BORDER = 0.11;
 const GRID_LINE = 0.05;
 const MARK_LINE = 0.08;
+/**
+ * The enclosure boundary. Dialed by eye against real grass at the opening
+ * zoom: 0.07 measured as a hairline that read as dark rather than as sage,
+ * because the keyline under it is wider than the sage on top of it. At 0.11 —
+ * the same weight as a placement ghost's border — the sage wins and the
+ * keyline goes back to being what it is for.
+ */
+const INSIDE_LINE = 0.11;
 
 /**
  * Every overlay line sits on a dark keyline in the styleguide's `ground`
@@ -99,6 +109,22 @@ const CLOTH = [PROP.tunic, PROP.wool, PROP.smock];
 const MAX_COLONISTS = 64;
 const MAX_ITEMS = 1024;
 const MAX_OVERLAY = 8192;
+/**
+ * The enclosure wash is one plate per enclosed tile, so its ceiling is the
+ * biggest colony the wash can cover whole — a ~128×128 enclosure. Past that
+ * the fill goes partial while the boundary line, which is what the player
+ * actually reads, stays complete: the boundary gets its own layers for exactly
+ * that reason.
+ */
+const MAX_INSIDE = 16384;
+const MAX_BOUNDARY = 4096;
+/**
+ * A wall drag is an L, so its two legs together reach at most twice a map edge
+ * — and each tile draws four bars. Sized for the whole L: a cap that only
+ * covered one leg would silently drop the far end of the very overlay the
+ * player is aiming with.
+ */
+const MAX_RUN = 2 * WORLD_SIZE;
 
 interface Layer {
   mesh: InstancedMesh;
@@ -163,13 +189,23 @@ const BODY = { w: 0.44, h: 0.5, y: 0 };
 const HEAD = { w: 0.32, h: 0.26, y: 0.5 };
 const CARRY = { w: 0.32, h: 0.26, y: 0.8 };
 
-/** What the placement tool is hovering, if anything. */
-export interface Ghost {
-  kind: BuildingKindValue;
+/** One tile of a placement preview, and whether it may actually be placed. */
+export interface GhostTile {
   x: number;
   y: number;
   valid: boolean;
 }
+
+/**
+ * What the placement tool is aiming at.
+ *
+ * A building ghost is one footprint with a single verdict; a wall ghost is a
+ * *run*, and its tiles are judged one by one — a bad tile in the middle of a
+ * drag ghosts rust and is skipped on release rather than killing the run.
+ */
+export type Ghost =
+  | { kind: "building"; building: BuildingKindValue; x: number; y: number; valid: boolean }
+  | { kind: "wall"; tiles: readonly GhostTile[] };
 
 export class MoverRenderer {
   private readonly solids: Layer;
@@ -179,6 +215,11 @@ export class MoverRenderer {
   private readonly ghostKeyline: Layer;
   private readonly ghostFill: Layer;
   private readonly ghostEdge: Layer;
+  private readonly badFill: Layer;
+  private readonly badEdge: Layer;
+  private readonly insideFill: Layer;
+  private readonly insideKeyline: Layer;
+  private readonly insideEdge: Layer;
 
   constructor(
     private readonly scene: Scene,
@@ -192,9 +233,23 @@ export class MoverRenderer {
     // A drag-box over a wood can mark thousands of trees, and a shared layer
     // would run out of instances on the designations and silently drop the
     // ghost's outline — the one overlay the player is actively aiming with.
-    this.ghostKeyline = overlayLayer(scene, 256, KEYLINE, 0.5);
-    this.ghostFill = overlayLayer(scene, 64, SAGE, 0.22);
-    this.ghostEdge = overlayLayer(scene, 256, SAGE, 0.85);
+    this.ghostKeyline = overlayLayer(scene, MAX_RUN * 4 + 4, KEYLINE, 0.5);
+    this.ghostFill = overlayLayer(scene, MAX_RUN, SAGE, 0.22);
+    this.ghostEdge = overlayLayer(scene, MAX_RUN * 4 + 4, SAGE, 0.85);
+    // Valid and invalid are separate layers rather than one layer whose
+    // material colour gets rewritten per frame, because a wall run shows both
+    // at once — one material can only be one colour.
+    this.badFill = overlayLayer(scene, MAX_RUN, RUST, 0.22);
+    this.badEdge = overlayLayer(scene, MAX_RUN * 4 + 4, RUST, 0.85);
+    // Enclosure: boundary-first. The styleguide's own measurement is that a
+    // faint sage fill alone is invisible against grass, so the line carries
+    // the read and the wash only says which side of it is inside.
+    // 0.14 is where the wash first registers as a tint against grass without
+    // reading as a colour the ground has been given — dialed by eye, and
+    // deliberately still too weak to carry the read on its own.
+    this.insideFill = overlayLayer(scene, MAX_INSIDE, SAGE, 0.14);
+    this.insideKeyline = overlayLayer(scene, MAX_BOUNDARY, KEYLINE, 0.5);
+    this.insideEdge = overlayLayer(scene, MAX_BOUNDARY, SAGE, 0.85);
   }
 
   /**
@@ -216,11 +271,12 @@ export class MoverRenderer {
    * Draw one frame. `alpha` is the leftover tick fraction from the app loop —
    * 0 at the tick just simulated, approaching 1 at the next.
    */
-  sync(alpha: number, ghost: Ghost | null): void {
+  sync(alpha: number, ghost: Ghost | null, showEnclosure = false): void {
     for (const l of this.layers) l.used = 0;
     this.drawColonists(alpha);
     this.drawGoods();
     this.drawDesignations();
+    if (showEnclosure) this.drawEnclosure();
     if (ghost) this.drawGhost(ghost);
     for (const l of this.layers) {
       l.mesh.count = l.used;
@@ -238,6 +294,11 @@ export class MoverRenderer {
       this.ghostKeyline,
       this.ghostFill,
       this.ghostEdge,
+      this.badFill,
+      this.badEdge,
+      this.insideFill,
+      this.insideKeyline,
+      this.insideEdge,
     ];
   }
 
@@ -324,22 +385,25 @@ export class MoverRenderer {
   }
 
   /**
-   * Gold outline over a faint gold fill on the ground tile a marked tree
-   * stands on — at its base, around the trunk, not capping its crown.
+   * Gold outline over a faint gold fill on the ground tile a marked thing
+   * stands on — at its base, not capping it. Trees marked for felling and wall
+   * segments marked for dismantling share the mark: both are the same
+   * statement of player intent, and both carry it at distance by tinting the
+   * baked object itself (props.ts).
    *
-   * The canopy does hide the back half of the diamond at these camera angles,
-   * and that is fine: the front half reads, and the tree's own gold-shifted
-   * canopy (props.ts) carries the mark at distances where the base is lost.
-   * A cap floating above the crown solved the occlusion but read as a box
-   * hanging in mid-air, which is worse than a partly hidden mark.
+   * The canopy does hide the back half of a tree's diamond at these camera
+   * angles, and that is fine: the front half reads. A cap floating above the
+   * crown solved the occlusion but read as a box hanging in mid-air, which is
+   * worse than a partly hidden mark.
    */
   private drawDesignations(): void {
     const size = this.sim.world.size;
-    // Walks the layer rather than `designations()`: that helper builds a fresh
-    // array of every marked tile, and this runs once a frame.
-    const marks = chopLayer(this.sim);
-    for (let i = 0; i < marks.length; i++) {
-      if (!marks[i]) continue;
+    // Walks the layers rather than a helper that builds a fresh array of every
+    // marked tile: this runs once a frame.
+    const chop = chopLayer(this.sim);
+    const raze = razeLayer(this.sim);
+    for (let i = 0; i < chop.length; i++) {
+      if (!chop[i] && !raze[i]) continue;
       const x = i % size;
       const y = (i - x) / size;
       const top = this.groundY(x, y) + 0.02;
@@ -349,23 +413,74 @@ export class MoverRenderer {
   }
 
   /**
-   * The placement ghost: sage when the footprint is legal, rust when it is
-   * not — never alarm red. The footprint's own grid lines are drawn per tile
-   * and the border reads heavier because the outer edge is thicker.
+   * Enclosure, shown only while a wall-family tool is held: a keylined sage
+   * line traced along the inside edge of the enclosing wall, over a very faint
+   * interior wash. No permanent tint anywhere — the world stays the hero
+   * (docs/STYLEGUIDE.md, Tone).
+   *
+   * Boundary-first because the styleguide's own measurement says so: sage and
+   * grass are within a few percent of each other, so a faint fill alone is
+   * invisible and only the keylined line survives the terrain. The line is
+   * assembled per tile — a bar on every side whose neighbour is *not* enclosed
+   * — which traces any shape the player drew without knowing anything about
+   * the wall graph.
+   */
+  private drawEnclosure(): void {
+    const size = this.sim.world.size;
+    const inside = insideLayer(this.sim);
+    for (let i = 0; i < inside.length; i++) {
+      if (!inside[i]) continue;
+      const x = i % size;
+      const y = (i - x) / size;
+      const top = this.groundY(x, y) + 0.015;
+      plate(this.insideFill, x, y, top);
+      if (y === 0 || !inside[i - size]) this.boundary(x, y, top, 0, -1);
+      if (y === size - 1 || !inside[i + size]) this.boundary(x, y, top, 0, 1);
+      if (x === 0 || !inside[i - 1]) this.boundary(x, y, top, -1, 0);
+      if (x === size - 1 || !inside[i + 1]) this.boundary(x, y, top, 1, 0);
+    }
+  }
+
+  /** One bar hugging the (dx, dy) edge of tile (x, y), from the inside. */
+  private boundary(x: number, y: number, top: number, dx: number, dy: number): void {
+    const t = INSIDE_LINE;
+    const w = dx === 0 ? 1 : t;
+    const h = dy === 0 ? 1 : t;
+    const cx = x + (dx === 0 ? 0.5 : dx > 0 ? 1 - t / 2 : t / 2);
+    const cy = y + (dy === 0 ? 0.5 : dy > 0 ? 1 - t / 2 : t / 2);
+    const grow = KEYLINE_GROWTH;
+    put(this.insideKeyline, cx, top, cy, dx === 0 ? w : w + grow, 0.02, dy === 0 ? h : h + grow, 0);
+    put(this.insideEdge, cx, top + 0.01, cy, w, 0.02, h, 0);
+  }
+
+  /**
+   * The placement ghost: sage where it may be placed, rust where it may not —
+   * never alarm red. A building draws its footprint's grid lines per tile with
+   * a heavier outer border; a wall run draws one keylined tile per segment,
+   * each with its own verdict, because the run is judged segment by segment.
    */
   private drawGhost(ghost: Ghost): void {
-    const colour = ghost.valid ? SAGE : RUST;
-    (this.ghostFill.mesh.material as MeshBasicMaterial).color.setHex(colour);
-    (this.ghostEdge.mesh.material as MeshBasicMaterial).color.setHex(colour);
-    const def = BUILDING_DEFS[ghost.kind];
+    if (ghost.kind === "wall") {
+      for (const tile of ghost.tiles) {
+        const top = this.groundY(tile.x, tile.y) + 0.03;
+        const fill = tile.valid ? this.ghostFill : this.badFill;
+        const edge = tile.valid ? this.ghostEdge : this.badEdge;
+        plate(fill, tile.x, tile.y, top);
+        this.edge(this.ghostKeyline, edge, { x: tile.x, y: tile.y, w: 1, h: 1 }, top + 0.01, BORDER);
+      }
+      return;
+    }
+    const fill = ghost.valid ? this.ghostFill : this.badFill;
+    const edge = ghost.valid ? this.ghostEdge : this.badEdge;
+    const def = BUILDING_DEFS[ghost.building];
     const area = { x: ghost.x, y: ghost.y, w: def.w, h: def.h };
     for (const [tx, ty] of footprint(area)) {
       const top = this.groundY(tx, ty) + 0.03;
-      plate(this.ghostFill, tx, ty, top);
-      this.edge(this.ghostKeyline, this.ghostEdge, { x: tx, y: ty, w: 1, h: 1 }, top + 0.01, GRID_LINE);
+      plate(fill, tx, ty, top);
+      this.edge(this.ghostKeyline, edge, { x: tx, y: ty, w: 1, h: 1 }, top + 0.01, GRID_LINE);
     }
     // The footprint's outer border, heavier than the interior grid lines.
-    this.edge(this.ghostKeyline, this.ghostEdge, area, this.groundY(area.x, area.y) + 0.06, BORDER);
+    this.edge(this.ghostKeyline, edge, area, this.groundY(area.x, area.y) + 0.06, BORDER);
   }
 }
 

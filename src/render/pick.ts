@@ -1,5 +1,5 @@
 import { Raycaster, Vector2, Vector3, type Camera, type Object3D } from "three";
-import { chopLayer, treeLayer, type Sim } from "../sim/know";
+import { WallState, chopLayer, razeLayer, treeLayer, wallLayer, type Sim } from "../sim/know";
 import { tileIndex } from "../sim/world/world";
 import { BH } from "./props";
 
@@ -42,15 +42,37 @@ const PROJECT = new Vector3();
  * unprojection would not.
  */
 export function treeTilesInRect(sim: Sim, camera: Camera, canvas: HTMLCanvasElement, rect: Rect): number[] {
-  const bounds = canvas.getBoundingClientRect();
-  const world = sim.world;
   const trees = treeLayer(sim);
   const marked = chopLayer(sim);
+  return tilesInRect(sim, camera, canvas, rect, (i) => trees[i] === 1 && !marked[i]);
+}
+
+/**
+ * Every wall segment whose tile projects inside a screen rectangle, already
+ * raze-marked tiles excluded — the chop marquee's selection rule, applied to
+ * the dismantle tool. Blueprints are included: tearing up a line you have just
+ * drawn is the commonest raze there is.
+ */
+export function wallTilesInRect(sim: Sim, camera: Camera, canvas: HTMLCanvasElement, rect: Rect): number[] {
+  const walls = wallLayer(sim);
+  const marked = razeLayer(sim);
+  return tilesInRect(sim, camera, canvas, rect, (i) => walls[i] !== WallState.None && !marked[i]);
+}
+
+function tilesInRect(
+  sim: Sim,
+  camera: Camera,
+  canvas: HTMLCanvasElement,
+  rect: Rect,
+  include: (i: number) => boolean,
+): number[] {
+  const bounds = canvas.getBoundingClientRect();
+  const world = sim.world;
   const size = world.size;
   const out: number[] = [];
 
-  for (let i = 0; i < trees.length; i++) {
-    if (!trees[i] || marked[i]) continue;
+  for (let i = 0; i < size * size; i++) {
+    if (!include(i)) continue;
     const x = i % size;
     const y = (i - x) / size;
     PROJECT.set(x + 0.5, world.hmap[i] * BH, y + 0.5).project(camera);
@@ -61,6 +83,61 @@ export function treeTilesInRect(sim: Sim, camera: Camera, canvas: HTMLCanvasElem
     const sy = bounds.top + ((1 - PROJECT.y) / 2) * bounds.height;
     if (sx < rect.left || sx > rect.right || sy < rect.top || sy > rect.bottom) continue;
     out.push(tileIndex(x, y, size));
+  }
+  return out;
+}
+
+/**
+ * The tiles a wall drag covers: an **L** of two axis-aligned legs.
+ *
+ * Leg one runs along the dominant axis from the press tile to the cursor's
+ * extent on that axis; leg two runs perpendicular from that corner tile to the
+ * cursor tile. A cursor sitting on the dominant axis leaves the second leg
+ * empty, which is why a plain straight run is simply the degenerate case and
+ * nothing about it changed when this grew a corner.
+ *
+ * The corner tile belongs to leg one and is never repeated — leg two starts one
+ * step past it — so the caller gets each tile once and can hand the whole thing
+ * to a single place-wall command.
+ *
+ * The edge rules, pinned because they are all reachable in the hand: a press
+ * that never left its tile is one segment, a perfect diagonal breaks to
+ * horizontal **for the first leg** (the tie decides which leg leads, not
+ * whether there is a second one), the far end clamps to the map, a drag that
+ * starts off-map is empty, and the axis is re-evaluated on every move — so the
+ * L may flip which way it turns while the drag is held.
+ */
+export function wallRun(
+  from: readonly [number, number],
+  to: readonly [number, number],
+  size: number,
+): [number, number][] {
+  const [ax, ay] = from;
+  if (ax < 0 || ay < 0 || ax >= size || ay >= size) return [];
+  const bx = Math.max(0, Math.min(size - 1, to[0]));
+  const by = Math.max(0, Math.min(size - 1, to[1]));
+  const out: [number, number][] = [];
+  const xStep = bx >= ax ? 1 : -1;
+  const yStep = by >= ay ? 1 : -1;
+
+  if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
+    for (let x = ax; ; x += xStep) {
+      out.push([x, ay]);
+      if (x === bx) break;
+    }
+    for (let y = ay; y !== by; ) {
+      y += yStep;
+      out.push([bx, y]);
+    }
+  } else {
+    for (let y = ay; ; y += yStep) {
+      out.push([ax, y]);
+      if (y === by) break;
+    }
+    for (let x = ax; x !== bx; ) {
+      x += xStep;
+      out.push([x, by]);
+    }
   }
   return out;
 }

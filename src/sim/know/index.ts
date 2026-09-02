@@ -26,7 +26,10 @@ import {
   SAWMILL_INPUT_CAP,
   SAWMILL_OUTPUT_CAP,
   STOCKPILE_PER_TILE,
+  WALL_LOG_COST,
 } from "../tuning";
+import { WallState, canPlaceWall, razeMarked, wallAt } from "../walls";
+import { enclosedLand } from "../walls/enclosure";
 
 /**
  * What the player is allowed to know.
@@ -43,6 +46,8 @@ import {
 export type { Building, Colonist, Item, Sim };
 export { BuildingKind, BuildingState, ItemType, Loc, BUILDING_DEFS, defOf, footprint, workTile, canPlace };
 export type { BuildingKindValue };
+export { WallState, canPlaceWall, wallAt };
+export { WALL_LOG_COST };
 
 export function colonists(sim: Sim): readonly Colonist[] {
   return sim.colonists;
@@ -68,6 +73,12 @@ export interface Readout {
   pool: number;
   slots: number;
   day: number;
+  /**
+   * Enclosed *land* tiles — the game's progress bar (docs/CONCEPT.md: land is
+   * grabbed bite by bite). Water inside the wall is inside and deliberately
+   * uncounted; so is the ground under the wall itself, which is not buildable.
+   */
+  enclosed: number;
 }
 
 export function readout(sim: Sim): Readout {
@@ -92,6 +103,7 @@ export function readout(sim: Sim): Readout {
     pool,
     slots: sim.colonists.length - pool,
     day: Math.floor(sim.tick / DAY_TICKS) + 1,
+    enclosed: enclosedLand(sim),
   };
 }
 
@@ -118,6 +130,39 @@ export function chopLayer(sim: Sim): Uint8Array {
 
 export function treeLayer(sim: Sim): Uint8Array {
   return sim.world.treeMap;
+}
+
+export function wallLayer(sim: Sim): Uint8Array {
+  return sim.wallMap;
+}
+
+export function razeLayer(sim: Sim): Uint8Array {
+  return sim.razeMap;
+}
+
+/**
+ * The enclosure layer, and the single-tile question threats will ask of it
+ * from step 4. Nothing about inside/outside is hidden from the player — it is
+ * read off the map by looking, per CONCEPT — so this is an identity projection
+ * like the rest of this module.
+ */
+export function insideLayer(sim: Sim): Uint8Array {
+  return sim.insideMap;
+}
+
+export function isInside(sim: Sim, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= sim.world.size || y >= sim.world.size) return false;
+  return sim.insideMap[y * sim.world.size + x] === 1;
+}
+
+/** Is this tile marked for dismantling? `sim/walls` owns the bounds rule. */
+export function isRazeMarked(sim: Sim, x: number, y: number): boolean {
+  return razeMarked(sim, x, y);
+}
+
+/** Does this tile hold a wall of any kind — blueprint, palisade or gate? */
+export function hasWall(sim: Sim, x: number, y: number): boolean {
+  return wallAt(sim, x, y) !== WallState.None;
 }
 
 /** Everything the inspector panel shows about one building. */

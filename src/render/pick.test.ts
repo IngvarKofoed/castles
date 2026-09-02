@@ -1,8 +1,9 @@
 import { OrthographicCamera, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
+import { WallState } from "../sim/know";
 import { createSim } from "../sim/store";
 import { tileIndex } from "../sim/world/world";
-import { rectFrom, rectSpan, treeTilesInRect } from "./pick";
+import { rectFrom, rectSpan, treeTilesInRect, wallRun, wallTilesInRect } from "./pick";
 
 /** A canvas stub: `treeTilesInRect` only ever asks for the bounding rect. */
 function canvasStub(width = 800, height = 600): HTMLCanvasElement {
@@ -30,6 +31,101 @@ describe("rect helpers", () => {
 
   it("measures the drag's diagonal, so the click slop is direction-free", () => {
     expect(rectSpan({ left: 0, top: 0, right: 3, bottom: 4 })).toBe(5);
+  });
+});
+
+describe("wallRun", () => {
+  const SIZE = 256;
+
+  it("turns a corner: leg one along the dominant axis, leg two perpendicular", () => {
+    // The corner tile belongs to leg one and is not repeated.
+    expect(wallRun([5, 5], [8, 7], SIZE)).toEqual([
+      [5, 5], [6, 5], [7, 5], [8, 5],
+      [8, 6], [8, 7],
+    ]);
+    expect(wallRun([5, 5], [6, 8], SIZE)).toEqual([
+      [5, 5], [5, 6], [5, 7], [5, 8],
+      [6, 8],
+    ]);
+  });
+
+  it("stays a straight run when the cursor is on the dominant axis", () => {
+    // The degenerate L — an empty second leg — which is why nothing about a
+    // straight drag changed when the gesture grew a corner.
+    expect(wallRun([5, 5], [8, 5], SIZE)).toEqual([[5, 5], [6, 5], [7, 5], [8, 5]]);
+    expect(wallRun([5, 5], [5, 8], SIZE)).toEqual([[5, 5], [5, 6], [5, 7], [5, 8]]);
+  });
+
+  it("turns in every direction, forwards and backwards", () => {
+    expect(wallRun([5, 5], [3, 5], SIZE)).toEqual([[5, 5], [4, 5], [3, 5]]);
+    expect(wallRun([5, 5], [5, 3], SIZE)).toEqual([[5, 5], [5, 4], [5, 3]]);
+    expect(wallRun([5, 5], [2, 3], SIZE)).toEqual([
+      [5, 5], [4, 5], [3, 5], [2, 5],
+      [2, 4], [2, 3],
+    ]);
+    expect(wallRun([5, 5], [3, 2], SIZE)).toEqual([
+      [5, 5], [5, 4], [5, 3], [5, 2],
+      [4, 2], [3, 2],
+    ]);
+  });
+
+  it("breaks a perfect diagonal to horizontal — for the first leg", () => {
+    // Pinned rather than left to chance: the axis is re-picked on every move,
+    // so the tie has to resolve the same way each time or the preview flickers.
+    // The tie decides which leg *leads*; it does not suppress the second one.
+    expect(wallRun([5, 5], [7, 7], SIZE)).toEqual([
+      [5, 5], [6, 5], [7, 5],
+      [7, 6], [7, 7],
+    ]);
+  });
+
+  it("visits every tile exactly once, however it turns", () => {
+    for (const to of [[9, 12], [12, 9], [1, 1], [5, 20], [20, 5], [7, 7]] as const) {
+      const tiles = wallRun([7, 9], to, SIZE);
+      const keys = tiles.map(([x, y]) => `${x},${y}`);
+      expect(new Set(keys).size, `${to}`).toBe(keys.length);
+      // And it really is an L: every tile shares a row or a column with the
+      // press tile or with the cursor tile.
+      for (const [x, y] of tiles) {
+        expect(x === 7 || y === 9 || x === to[0] || y === to[1], `${x},${y}`).toBe(true);
+      }
+    }
+  });
+
+  it("places a single segment when the drag never left its tile", () => {
+    expect(wallRun([5, 5], [5, 5], SIZE)).toEqual([[5, 5]]);
+  });
+
+  it("clamps the far end to the map, and refuses a start off it", () => {
+    expect(wallRun([254, 5], [999, 5], SIZE)).toEqual([[254, 5], [255, 5]]);
+    expect(wallRun([2, 5], [-99, 5], SIZE)).toEqual([[2, 5], [1, 5], [0, 5]]);
+    expect(wallRun([-1, 5], [5, 5], SIZE)).toEqual([]);
+    expect(wallRun([5, 256], [5, 5], SIZE)).toEqual([]);
+    // Clamping applies to the turn as well as the reach.
+    expect(wallRun([254, 1], [999, -99], SIZE)).toEqual([[254, 1], [255, 1], [255, 0]]);
+  });
+});
+
+describe("wallTilesInRect", () => {
+  it("returns only wall tiles, skipping ones already marked", () => {
+    const sim = createSim(20260901);
+    const size = sim.world.size;
+    const centre = Math.floor(size / 2);
+    const camera = topDownCamera(centre, 40);
+    const canvas = canvasStub();
+    const all = { left: 0, top: 0, right: 800, bottom: 600 };
+
+    expect(wallTilesInRect(sim, camera, canvas, all)).toEqual([]);
+
+    // A blueprint counts: tearing up a line you just drew is the commonest
+    // raze there is.
+    sim.wallMap[tileIndex(centre, centre, size)] = WallState.PalisadeBp;
+    sim.wallMap[tileIndex(centre + 1, centre, size)] = WallState.Palisade;
+    const found = wallTilesInRect(sim, camera, canvas, all);
+    expect(found).toHaveLength(2);
+
+    for (const i of found) sim.razeMap[i] = 1;
+    expect(wallTilesInRect(sim, camera, canvas, all)).toEqual([]);
   });
 });
 

@@ -221,7 +221,56 @@ describe("the migrations ladder", () => {
     }
   });
 
-  it("is empty while SAVE_VERSION is 1 — nothing older exists yet", () => {
-    if (SAVE_VERSION === 1) expect(Object.keys(MIGRATIONS)).toHaveLength(0);
+  it("gives a v1 state the wall layers, sized to the save's own world", () => {
+    // The rung reads the size off the file, not off `WORLD_SIZE`: a migration
+    // describes the save it is handed, not the build reading it.
+    const migrated = MIGRATIONS[1]({ world: { size: 8 }, tick: 3 }) as Record<string, unknown>;
+    for (const key of ["wallMap", "razeMap", "insideMap"] as const) {
+      expect(migrated[key]).toBeInstanceOf(Uint8Array);
+      expect((migrated[key] as Uint8Array).length).toBe(64);
+    }
+    expect(migrated.enclosureDirty).toBe(0);
+    expect(migrated.tick).toBe(3);
+  });
+
+  it("leaves a nonsense v1 state to be refused rather than guessing a size", () => {
+    const migrated = MIGRATIONS[1]({ world: { size: "big" } }) as Record<string, unknown>;
+    expect((migrated.wallMap as Uint8Array).length).toBe(0);
+  });
+});
+
+describe("enclosure on load", () => {
+  /**
+   * `insideMap` is derived, so a load recomputes it instead of trusting the
+   * file — which is what makes a migrated save (whose layer has never had a
+   * fill run over it) and a hand-edited one self-consistent. Proved by saving
+   * a store whose layer is deliberately a lie.
+   */
+  it("recomputes insideMap rather than trusting what the save claimed", async () => {
+    const sim = playedSim(20);
+    sim.insideMap.fill(1);
+    const loaded = await decode(await encode(sim, APP));
+    // No walls in this colony, so nothing is enclosed at all.
+    expect([...loaded.insideMap].some((v) => v === 1)).toBe(false);
+  });
+
+  it("encloses a ring that was saved mid-play, and counts its ground", async () => {
+    const sim = playedSim(20);
+    const size = sim.world.size;
+    const c = Math.floor(size / 2);
+    for (let d = -4; d <= 4; d++) {
+      for (const [x, y] of [
+        [c + d, c - 4],
+        [c + d, c + 4],
+        [c - 4, c + d],
+        [c + 4, c + d],
+      ]) {
+        sim.wallMap[y * size + x] = 2; // WallState.Palisade
+      }
+    }
+    sim.insideMap.fill(0);
+    const loaded = await decode(await encode(sim, APP));
+    expect(loaded.insideMap[c * size + c]).toBe(1);
+    expect([...loaded.insideMap].reduce((n, v) => n + v, 0)).toBe(7 * 7);
   });
 });

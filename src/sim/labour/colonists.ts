@@ -1,7 +1,17 @@
 import { buildingAt, defOf, footprint, workTile } from "../buildings";
-import { carryItem, dropTile, groundItem, itemTile, removeItem, spawnItem, storeItem } from "../items";
+import {
+  carryItem,
+  dropTile,
+  groundItem,
+  groundItemsAt,
+  itemTile,
+  removeItem,
+  spawnItem,
+  storeItem,
+} from "../items";
 import {
   adjacentToBuilding,
+  adjacentToTile,
   escapePath,
   findPath,
   occupancy,
@@ -15,7 +25,6 @@ import {
   Loc,
   Phase,
   TaskKind,
-  TASK_KIND_COUNT,
   findBuilding,
   findItem,
   findTask,
@@ -25,7 +34,17 @@ import {
   type Sim,
   type Task,
 } from "../store";
-import { BUILD_TICKS, CHOP_TICKS, WALK_TILES_PER_TICK } from "../tuning";
+import {
+  BUILD_TICKS,
+  CHOP_TICKS,
+  GATE_BUILD_TICKS,
+  RAZE_TICKS,
+  TASK_PRIORITY,
+  WALK_TILES_PER_TICK,
+  WALL_BUILD_TICKS,
+} from "../tuning";
+import { WallState, builtForm, isBlueprint, isBuilt, isWalkable } from "../walls";
+import { markEnclosureStale } from "../walls/enclosure";
 import { markChunkDirty, tileIndex } from "../world/world";
 import { abandonTask, finishTask, releaseTask } from "./tasks";
 
@@ -63,7 +82,10 @@ function stepSlotWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
   }
   if (c.inside) return;
   if (c.path.length > c.step) {
-    walk(sim, c);
+    // A slot worker whose route is blocked and cannot be re-planned simply
+    // loses its path; the goal is recomputed from the building below on the
+    // next tick, so there is nothing to hand back.
+    walk(sim, occ, c);
     return;
   }
   if (atStation(c, b)) {
@@ -71,7 +93,7 @@ function stepSlotWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
     return;
   }
   const [wx, wy] = workTile(b);
-  const goals = passable(sim.world, occ, wx, wy)
+  const goals = passable(sim.world, sim.wallMap, occ, wx, wy)
     ? reachTile(sim, occ, wx, wy)
     : adjacentToBuilding(sim, occ, b);
   const path = findPath(sim, occ, Math.floor(c.x), Math.floor(c.y), goals);
@@ -130,7 +152,7 @@ export function leaveBuilding(sim: Sim, c: Colonist, b: Building): void {
   const occ = occupancy(sim);
   const [wx, wy] = workTile(b);
   const spot =
-    passable(sim.world, occ, wx, wy) ? ([wx, wy] as [number, number])
+    passable(sim.world, sim.wallMap, occ, wx, wy) ? ([wx, wy] as [number, number])
     : dropTile(sim, occ, b.x, b.y);
   if (!spot) return;
   c.x = spot[0] + 0.5;
@@ -143,7 +165,7 @@ function stepPoolWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
   if (c.task < 0) {
     // Nothing claimed: either finish walking clear of something, or look for work.
     if (c.path.length > c.step) {
-      walk(sim, c);
+      walk(sim, occ, c);
       return;
     }
     if (!claim(sim, occ, c)) return;
@@ -154,22 +176,48 @@ function stepPoolWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
     return;
   }
   if (c.path.length > c.step) {
-    walk(sim, c);
     // Arrival is acted on next tick, so a colonist is never seen mid-tile
-    // doing work.
+    // doing work. A route with no way round its blockage hands the errand
+    // back, cargo and all, exactly as an eviction does.
+    if (walk(sim, occ, c)) stepAside(sim, occ, c, Math.floor(c.x), Math.floor(c.y));
     return;
   }
   act(sim, occ, c, task);
 }
 
-/** Advance along the route by one tick's worth of walking. */
-function walk(sim: Sim, c: Colonist): void {
+/**
+ * Advance along the route by one tick's worth of walking.
+ *
+ * A route is planned once and then followed, so ground can stop being walkable
+ * underneath it — a palisade segment finishing across it is the common case now
+ * that blueprints are walkable and every route is free to cross a drawn run.
+ * Stepping onto the next tile is therefore gated on it still being passable,
+ * and a stale route is re-planned to the same destination rather than
+ * abandoned: the route went stale, the errand usually did not. This is the
+ * "repath when a step is blocked" rule `docs/specs/2026-09-01-tick-and-labour.md`
+ * asks for; without it a walker strolls straight through standing wall.
+ *
+ * Returns true only when there is genuinely no way round, which is the
+ * caller's cue to hand the task back.
+ */
+function walk(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   const size = sim.world.size;
+  // Someone standing on ground that is *already* impassable is walking an
+  // escape route, and those deliberately cut through blocked tiles (see
+  // `escapePath`). Only a walker on legal ground is held to a legal route.
+  const escaping = !passable(sim.world, sim.wallMap, occ, Math.floor(c.x), Math.floor(c.y));
   let budget = WALK_TILES_PER_TICK;
   while (budget > 0 && c.step < c.path.length) {
     const tile = c.path[c.step];
     const tx = tile % size;
     const ty = (tile - tx) / size;
+    if (!escaping && !passable(sim.world, sim.wallMap, occ, tx, ty)) {
+      const goal = c.path[c.path.length - 1];
+      const around = findPath(sim, occ, Math.floor(c.x), Math.floor(c.y), new Set([goal]));
+      c.path = around ?? [];
+      c.step = 0;
+      return around === null;
+    }
     const dx = tx + 0.5 - c.x;
     const dy = ty + 0.5 - c.y;
     const dist = Math.hypot(dx, dy);
@@ -189,6 +237,7 @@ function walk(sim: Sim, c: Colonist): void {
     c.path = [];
     c.step = 0;
   }
+  return false;
 }
 
 /**
@@ -199,7 +248,7 @@ function walk(sim: Sim, c: Colonist): void {
 function claim(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   const cx = Math.floor(c.x);
   const cy = Math.floor(c.y);
-  for (let kind = 0; kind < TASK_KIND_COUNT; kind++) {
+  for (const kind of TASK_PRIORITY) {
     let best: Task | null = null;
     let bestD = Infinity;
     for (const t of sim.tasks) {
@@ -224,11 +273,13 @@ function claim(sim: Sim, occ: Occupancy, c: Colonist): boolean {
 
 /** Where a task's work begins, for distance ranking. */
 function taskAnchor(sim: Sim, t: Task): [number, number] | null {
-  if (t.kind === TaskKind.Chop) return [t.x, t.y];
+  if (t.kind === TaskKind.Chop || t.kind === TaskKind.Raze) return [t.x, t.y];
   if (t.kind === TaskKind.Build) {
     const b = findBuilding(sim, t.building);
     return b ? [b.x, b.y] : null;
   }
+  // Build-wall included: its first leg is the walk to its log, so the log is
+  // what the distance ranking should measure.
   const item = findItem(sim, t.item);
   return item ? itemTile(sim, item) : null;
 }
@@ -244,12 +295,23 @@ function start(sim: Sim, occ: Occupancy, c: Colonist, task: Task): boolean {
   c.path = path;
   c.step = 0;
   c.work = 0;
-  c.phase = task.kind === TaskKind.Chop || task.kind === TaskKind.Build ? Phase.ToTarget : Phase.ToSource;
+  // Everything that starts by fetching something walks to the source first;
+  // the rest walk straight at their target. Build-wall fetches a log, so it is
+  // in the first group even though its target is a tile.
+  c.phase = fetchesFirst(task.kind) ? Phase.ToSource : Phase.ToTarget;
   return true;
+}
+
+function fetchesFirst(kind: number): boolean {
+  return kind === TaskKind.HaulToSite ||
+    kind === TaskKind.HaulToInput ||
+    kind === TaskKind.HaulToStore ||
+    kind === TaskKind.BuildWall;
 }
 
 function firstGoal(sim: Sim, occ: Occupancy, task: Task): Set<number> | null {
   if (task.kind === TaskKind.Chop) return reachTile(sim, occ, task.x, task.y);
+  if (task.kind === TaskKind.Raze) return adjacentToTile(sim, occ, task.x, task.y);
   if (task.kind === TaskKind.Build) {
     const b = findBuilding(sim, task.building);
     return b ? adjacentToBuilding(sim, occ, b) : null;
@@ -274,6 +336,10 @@ function act(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
       return actChop(sim, occ, c, task);
     case TaskKind.Build:
       return actBuild(sim, occ, c, task);
+    case TaskKind.BuildWall:
+      return actBuildWall(sim, occ, c, task);
+    case TaskKind.Raze:
+      return actRaze(sim, occ, c, task);
     default:
       return actHaul(sim, occ, c, task);
   }
@@ -321,6 +387,105 @@ function actBuild(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
     if (item.loc === Loc.Stored && item.holder === b.id) removeItem(sim, item.id);
   }
   for (const [x, y] of footprint(b)) markChunkDirty(sim.world, x, y);
+  clearWorker(c);
+  finishTask(sim, task);
+}
+
+/**
+ * Raise one wall segment: fetch the log, carry it to a tile beside the
+ * segment, work — **still carrying it** — and consume it at the completion
+ * instant, not on arrival.
+ *
+ * Consuming last is the load-bearing decision. Every interruption path the
+ * colony already has — `abandonTask`, the `staff` command taking the builder,
+ * `evictFromFootprint` — drops a carried item where the colonist stands, so a
+ * cancelled segment refunds its log for free and **no delivery ledger exists**.
+ * Don't introduce one: it would have to be kept in step with all three.
+ */
+function actBuildWall(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
+  const i = tileIndex(task.x, task.y, sim.world.size);
+  if (!isBlueprint(sim.wallMap[i])) {
+    // Razed, or built by somebody else, while this one was walking.
+    abandonTask(sim, occ, task);
+    return;
+  }
+
+  if (c.phase === Phase.ToSource) {
+    const item = findItem(sim, task.item);
+    if (!item) {
+      abandonTask(sim, occ, task);
+      return;
+    }
+    const at = itemTile(sim, item);
+    if (at) faceTile(c, at[0], at[1]);
+    carryItem(item, c.id);
+    c.carrying = item.id;
+    const path = findPath(sim, occ, Math.floor(c.x), Math.floor(c.y), adjacentToTile(sim, occ, task.x, task.y));
+    if (!path) {
+      // Picked it up and now cannot get to the segment: put it down and let
+      // the task sleep, exactly as a haul does.
+      groundItem(sim, occ, item, Math.floor(c.x), Math.floor(c.y));
+      c.carrying = -1;
+      c.task = -1;
+      releaseTask(sim, task);
+      return;
+    }
+    c.phase = Phase.ToTarget;
+    c.path = path;
+    c.step = 0;
+    return;
+  }
+
+  if (c.carrying < 0) {
+    // The log left their hands some other way; the blueprint stands and task
+    // generation will hire again once a log is free.
+    abandonTask(sim, occ, task);
+    return;
+  }
+  c.phase = Phase.Working;
+  faceTile(c, task.x, task.y);
+  const gate = sim.wallMap[i] === WallState.GateBp;
+  if (++c.work < (gate ? GATE_BUILD_TICKS : WALL_BUILD_TICKS)) return;
+
+  // The segment goes up *first*, so the sweep and the eviction below see the
+  // tile as the obstacle it has just become.
+  sim.wallMap[i] = builtForm(sim.wallMap[i]);
+  removeItem(sim, c.carrying);
+  c.carrying = -1;
+  markChunkDirty(sim.world, task.x, task.y);
+  markEnclosureStale(sim);
+  // Anything standing or lying on a finished segment steps off it — the
+  // building-placement rule, applied to a 1×1 of wall and to things as well
+  // as people.
+  for (const item of groundItemsAt(sim, task.x, task.y)) {
+    groundItem(sim, occ, item, task.x, task.y);
+  }
+  // Only a segment that actually closed the ground evicts. A gate stays
+  // walkable, and evicting off one costs whoever is in the gateway their task
+  // and their cargo for nothing — `escapePath` would not even move them.
+  if (!isWalkable(sim.wallMap[i])) evictFromTile(sim, occ, task.x, task.y);
+  clearWorker(c);
+  finishTask(sim, task);
+}
+
+/** Tear one built segment down: quick work, and the log comes back. */
+function actRaze(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
+  const i = tileIndex(task.x, task.y, sim.world.size);
+  if (!isBuilt(sim.wallMap[i])) {
+    abandonTask(sim, occ, task);
+    return;
+  }
+  c.phase = Phase.Working;
+  faceTile(c, task.x, task.y);
+  if (++c.work < RAZE_TICKS) return;
+
+  sim.wallMap[i] = WallState.None;
+  sim.razeMap[i] = 0;
+  markChunkDirty(sim.world, task.x, task.y);
+  markEnclosureStale(sim);
+  // The tile has just become free, so the drop spiral starts on it — the chop
+  // precedent, where the log lands where the tree stood.
+  spawnItem(sim, ItemType.Log, task.x, task.y, occ);
   clearWorker(c);
   finishTask(sim, task);
 }
@@ -403,19 +568,6 @@ export function evictFromFootprint(sim: Sim, area: { x: number; y: number; w: nu
     const cx = Math.floor(c.x);
     const cy = Math.floor(c.y);
     if (cx < area.x || cx >= area.x + area.w || cy < area.y || cy >= area.y + area.h) continue;
-    if (c.task >= 0) {
-      const task = findTask(sim, c.task);
-      if (task) {
-        // Hand the work back rather than carrying it out of a wall.
-        if (c.carrying >= 0) {
-          const carried = findItem(sim, c.carrying);
-          if (carried) groundItem(sim, occ, carried, cx, cy);
-          c.carrying = -1;
-        }
-        task.claimedBy = -1;
-        releaseTask(sim, task);
-      }
-    }
     // A slot worker standing where a new footprint landed loses its post: its
     // building is not the one that just appeared under it.
     if (c.slot >= 0 && buildingAt(sim, cx, cy)?.id !== c.slot) {
@@ -423,11 +575,48 @@ export function evictFromFootprint(sim: Sim, area: { x: number; y: number; w: nu
       if (old) old.worker = -1;
       c.slot = -1;
     }
-    clearWorker(c);
-    const out = escapePath(sim, occ, cx, cy);
-    if (out && out.length) {
-      c.path = out;
-      c.step = 0;
+    stepAside(sim, occ, c, cx, cy);
+  }
+}
+
+/**
+ * Get anyone standing on a single tile off it — a wall segment that has just
+ * finished under their feet.
+ *
+ * Unlike a footprint this never unbinds a slot worker: no building appeared,
+ * so their post is still theirs and `stepSlotWorker` simply walks the escape
+ * route and then carries on to their workshop.
+ */
+export function evictFromTile(sim: Sim, occ: Occupancy, x: number, y: number): void {
+  for (const c of sim.colonists) {
+    if (c.inside) continue;
+    if (Math.floor(c.x) !== x || Math.floor(c.y) !== y) continue;
+    stepAside(sim, occ, c, x, y);
+  }
+}
+
+/**
+ * Hand back whatever this colonist was doing and route them off the tile they
+ * are standing on, which has just stopped being ground they may stand on.
+ */
+function stepAside(sim: Sim, occ: Occupancy, c: Colonist, cx: number, cy: number): void {
+  if (c.task >= 0) {
+    const task = findTask(sim, c.task);
+    if (task) {
+      // Hand the work back rather than carrying it out of a wall.
+      if (c.carrying >= 0) {
+        const carried = findItem(sim, c.carrying);
+        if (carried) groundItem(sim, occ, carried, cx, cy);
+        c.carrying = -1;
+      }
+      task.claimedBy = -1;
+      releaseTask(sim, task);
     }
+  }
+  clearWorker(c);
+  const out = escapePath(sim, occ, cx, cy);
+  if (out && out.length) {
+    c.path = out;
+    c.step = 0;
   }
 }

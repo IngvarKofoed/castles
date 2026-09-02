@@ -12,8 +12,9 @@ import { generate, tileIndex, Terrain, type World } from "./world/world";
  * whole thing and `hashSim` must see a total order over it.
  *
  * Enums are frozen `as const` objects of small integers rather than string
- * unions: they hash compactly, and TaskKind's numeric order *is* the labour
- * priority order, which keeps the one fixed global order in a single place.
+ * unions: they hash compactly and serialize as themselves. **Every enum here is
+ * append-only** — the numbers are in save files, so inserting a value silently
+ * reinterprets every old save that held the ones after it.
  */
 
 export const ItemType = {
@@ -51,10 +52,16 @@ export const BuildingState = {
 export type BuildingStateValue = (typeof BuildingState)[keyof typeof BuildingState];
 
 /**
- * Task kinds in **priority order** — a pool worker always takes the
- * lowest-numbered kind available to it. Construction first (CONCEPT.md's
- * labour section), feeding the mill beats felling more trees, general tidying
- * last. One fixed global order; per-colonist priority lists are a later step.
+ * Task kinds. **Append only, never insert** — a kind is a number written into
+ * every save, so slotting a new one into the middle would renumber every live
+ * task in every old save into a different meaning, with no migration able to
+ * tell the difference.
+ *
+ * The numeric order therefore says nothing about priority: that lives in
+ * `TASK_PRIORITY` (tuning.ts), which is the one fixed global order a pool
+ * worker works down. It used to be this enum's order, which was a step-2
+ * convenience the wall tier removed rather than patched
+ * (docs/specs/2026-09-02-palisade-walls.md).
  */
 export const TaskKind = {
   Build: 0,
@@ -62,9 +69,10 @@ export const TaskKind = {
   HaulToInput: 2,
   Chop: 3,
   HaulToStore: 4,
+  BuildWall: 5,
+  Raze: 6,
 } as const;
 export type TaskKindValue = (typeof TaskKind)[keyof typeof TaskKind];
-export const TASK_KIND_COUNT = 5;
 
 /** What a colonist is doing with its current task. */
 export const Phase = {
@@ -187,6 +195,29 @@ export interface Sim {
   /** 1 where the player has marked a tree for chopping. Player intent, so it
    *  lives beside the world rather than in it. */
   chopMap: Uint8Array;
+  /**
+   * One `WallState` per tile — the wall graph, as a grid rather than as
+   * hundreds of 1×1 entities. It lives in `Sim` rather than `World` because it
+   * is player-made, and it is read only through `sim/walls`' predicates so the
+   * stone tier can append states without touching a consumer.
+   */
+  wallMap: Uint8Array;
+  /** 1 where the player has marked a wall segment for dismantling — `chopMap`'s
+   *  player-intent pattern, applied to walls. */
+  razeMap: Uint8Array;
+  /**
+   * 1 where the wall graph encloses the tile: derived from `wallMap` by
+   * `sim/walls/enclosure`, and serialized with the store like any other field
+   * (it is deterministic, so what a save holds and what a load recomputes
+   * agree). The renderer, the HUD and — from step 4 — threats all read it.
+   */
+  insideMap: Uint8Array;
+  /**
+   * 1 when a wall event this tick has invalidated `insideMap`. The recompute
+   * batches to the end of the tick, so this is always 0 at a tick boundary and
+   * a save can never carry a pending one.
+   */
+  enclosureDirty: number;
 }
 
 /** Mint the next entity id. The only id source; ids are never reused. */
@@ -233,6 +264,16 @@ export function createSim(seed: number): Sim {
     buildings: [],
     tasks: [],
     chopMap: new Uint8Array(world.size * world.size),
+    wallMap: new Uint8Array(world.size * world.size),
+    razeMap: new Uint8Array(world.size * world.size),
+    insideMap: new Uint8Array(world.size * world.size),
+    // A wall-less world encloses nothing, so the zeroed layer above is already
+    // correct — but the flag makes the first tick settle it anyway rather than
+    // trusting that. `store.ts` deliberately does not import `walls/enclosure`
+    // to do it here: that folder reaches `buildings.ts`, whose module body
+    // needs `BuildingKind` from this file, and the resulting cycle would fail
+    // or not depending purely on which module a bundler happened to load first.
+    enclosureDirty: 1,
   };
 
   const centre = Math.floor(world.size / 2);

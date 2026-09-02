@@ -1,76 +1,69 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { Command } from "../commands";
+import { applyCommands } from "../commands";
 import { hashSim } from "../hash";
-import { createSim, type Sim } from "../store";
+import { TaskKind, type Sim } from "../store";
 import { advanceTick } from "../tick";
+import { WallState, canPlaceWall } from "../walls";
 import { tileIndex } from "../world/world";
 import { decode } from "./codec";
+import { V1_TICKS, V2_TICKS, replay, v1Script, v2Script } from "./fixtures/recipe";
 
 /**
- * `fixtures/v1.castles` is a real save, written by the version-1 codec on
- * 2026-09-02 and **frozen**. ARCHITECTURE.md's versioning policy asks for
- * migrations tested against fixture saves; this is that test, started while v1
- * is cheap to freeze rather than after the first save format anyone cared
- * about had already shipped.
+ * The committed `.castles` fixtures: real saves, written by the codec of their
+ * own version and **frozen**. ARCHITECTURE.md's versioning policy asks for
+ * migrations tested against fixture saves; this is that test.
  *
- * **Never regenerate this file.** If the `Sim` shape changes, this test starts
- * failing, and the fix is a `SAVE_VERSION` bump plus a rung in `MIGRATIONS` —
- * that failure is the alarm working, not a stale fixture. The pinned hash
- * below moves only when a migration legitimately changes what a v1 save
+ * **Never regenerate either file.** If the `Sim` shape changes, the shape test
+ * below starts failing, and the fix is a `SAVE_VERSION` bump plus a rung in
+ * `MIGRATIONS` — that failure is the alarm working, not a stale fixture. The
+ * pinned hashes move only when a migration legitimately changes what a save
  * decodes into, and the changelog entry for that migration says so.
  *
- * What it holds: `createSim(20260901)` advanced 400 ticks with twelve trees
- * designated at tick 0 and a stockpile placed at tick 5 — colonists mid-path,
- * items on the ground, a blueprint under construction, live tasks with
- * reservations. Not an empty world: an empty store would round-trip past
- * almost every mistake this test exists to catch.
+ * What they hold — recipes in `fixtures/recipe.ts`:
  *
- * **The pinned hash alone cannot raise that alarm**, which is the trap this
- * file has to avoid: decoding a frozen file is a function of the bytes and the
- * codec only, so nothing in `store.ts` participates and a field added to
- * `Colonist` leaves every hash here untouched — the v1 save would load with
- * that field simply missing. So the shape test below re-runs the fixture's own
- * recipe with the *current* build and compares key sets. Key sets, not hashes:
- * retuning the labour numbers changes the colony a recipe produces and must
- * not read as a broken save format.
+ * - **v1**, written 2026-09-02 by the version-1 codec: colonists mid-path,
+ *   items on the ground, a blueprint under construction, live tasks with
+ *   reservations. No walls; the format had none.
+ * - **v2**, written 2026-09-02: all of that plus a closed ring of palisade
+ *   with a gate in it (so `insideMap` is not all zeroes), a run of blueprints
+ *   with live build-wall tasks holding their logs reserved, and a raze
+ *   designation nobody has finished acting on.
+ *
+ * Neither is an empty world: an empty store would round-trip past almost every
+ * mistake this file exists to catch.
+ *
+ * **The pinned hashes alone cannot raise that alarm**, which is the trap here:
+ * decoding a frozen file is a function of the bytes and the codec only, so
+ * nothing in `store.ts` participates and a field added to `Colonist` leaves
+ * every hash untouched — the old save would load with that field simply
+ * missing. So the shape tests re-run each fixture's own recipe with the
+ * *current* build and compare key sets. Key sets, not hashes: retuning the
+ * labour numbers changes the colony a recipe produces and must not read as a
+ * broken save format.
  */
-const FIXTURE = new URL("./fixtures/v1.castles", import.meta.url);
-const SEED = 20260901;
-const TICKS = 400;
+const V1 = new URL("./fixtures/v1.castles", import.meta.url);
+const V2 = new URL("./fixtures/v2.castles", import.meta.url);
 
-/** The fixture's recipe, re-run by whatever the store looks like today. */
-function rebuilt(): Sim {
-  const sim = createSim(SEED);
-  for (let t = 0; t < TICKS; t++) advanceTick(sim, script(sim));
-  return sim;
-}
-
-function script(sim: Sim): Command[] {
-  if (sim.tick === 0) return [{ kind: "designateChop", tiles: nearestTrees(sim, 12) }];
-  if (sim.tick === 5) return [{ kind: "place", building: 0, x: 128, y: 128 }];
-  return [];
-}
-
-function nearestTrees(sim: Sim, count: number): number[] {
-  const size = sim.world.size;
-  const centre = Math.floor(size / 2);
-  const out: number[] = [];
-  for (let r = 1; r < size && out.length < count; r++) {
-    for (let dy = -r; dy <= r && out.length < count; dy++) {
-      for (let dx = -r; dx <= r && out.length < count; dx++) {
-        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-        const i = tileIndex(centre + dx, centre + dy, size);
-        if (sim.world.treeMap[i]) out.push(i);
-      }
-    }
+/** Every store key, and every key of one entity of each kind, from a save. */
+function shapeOf(sim: Sim): Record<string, string[]> {
+  const out: Record<string, string[]> = {
+    store: Object.keys(sim).sort(),
+    world: Object.keys(sim.world).sort(),
+  };
+  for (const key of ["colonists", "items", "buildings", "tasks"] as const) {
+    // A frozen file can only vouch for the kinds it actually contains, and a
+    // recipe can only compare against the kinds it still produces — so assert
+    // both are non-empty rather than letting the comparison pass vacuously.
+    expect(sim[key].length, `holds no ${key}`).toBeGreaterThan(0);
+    out[key] = Object.keys(sim[key][0]).sort();
   }
   return out;
 }
 
 describe("the committed v1 save", () => {
   it("still loads", async () => {
-    const sim = await decode(readFileSync(FIXTURE));
+    const sim = await decode(readFileSync(V1));
     expect(sim.tick).toBe(400);
     expect(sim.world.seed).toBe(20260901);
     expect(sim.world.size).toBe(256);
@@ -79,40 +72,97 @@ describe("the committed v1 save", () => {
     expect(sim.items.length).toBeGreaterThan(0);
   });
 
-  it("decodes to the exact store it was written from", async () => {
+  it("decodes to the store the v2 migration turns it into", async () => {
     // The whole-store hash, so a byte-order slip or a dropped field in the
     // codec shows up here rather than as a colony that is subtly wrong.
-    const sim = await decode(readFileSync(FIXTURE));
-    expect(hashSim(sim)).toBe("5d843ae6");
+    //
+    // 5d843ae6 → 507f1746 at SAVE_VERSION 2: the 1 → 2 rung adds the three
+    // wall layers and `decode` recomputes enclosure over them
+    // (docs/changelog/2026-09-02-palisade-walls.md). The *file* is untouched
+    // and must stay so; what moved is what a v1 save now decodes into, which
+    // is exactly when this number is allowed to move.
+    const sim = await decode(readFileSync(V1));
+    expect(hashSim(sim)).toBe("507f1746");
   });
 
   it("keeps running from where it was saved", async () => {
-    const sim = await decode(readFileSync(FIXTURE));
+    const sim = await decode(readFileSync(V1));
     for (let t = 0; t < 50; t++) advanceTick(sim);
     expect(sim.tick).toBe(450);
   });
 
-  /**
-   * The drift alarm the pinned hash cannot sound. A failure here means the
-   * store grew or lost a field since v1 was frozen, so a v1 save no longer
-   * decodes into a store this build can assume anything about: bump
-   * `SAVE_VERSION` and add the rung that fills the gap.
-   */
-  it("still has the store shape this build produces", async () => {
-    const old = await decode(readFileSync(FIXTURE));
-    const now = rebuilt();
+  it("opens wall-less, and takes a wall immediately", async () => {
+    const sim = await decode(readFileSync(V1));
+    expect(sim.wallMap).toHaveLength(256 * 256);
+    expect(sim.wallMap.some((v) => v !== 0)).toBe(false);
+    expect(sim.razeMap.some((v) => v !== 0)).toBe(false);
+    // Nothing enclosed and nothing pending: the load ran the fill over the
+    // empty wall graph rather than trusting the zeroes the migration handed it.
+    expect(sim.insideMap.some((v) => v !== 0)).toBe(false);
+    expect(sim.enclosureDirty).toBe(0);
 
-    expect(Object.keys(old).sort()).toEqual(Object.keys(now).sort());
-    expect(Object.keys(old.world).sort()).toEqual(Object.keys(now.world).sort());
+    const i = tileIndex(120, 120, 256);
+    expect(canPlaceWall(sim, 120, 120)).toBe(true);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [i] }]);
+    expect(sim.wallMap[i]).toBe(WallState.PalisadeBp);
+  });
+});
 
-    for (const key of ["colonists", "items", "buildings", "tasks"] as const) {
-      // A frozen file can only vouch for the kinds it actually contains, and
-      // the recipe can only compare against the kinds it still produces — so
-      // assert both are non-empty rather than letting the comparison pass
-      // vacuously on an empty list.
-      expect(old[key].length, `fixture holds no ${key}`).toBeGreaterThan(0);
-      expect(now[key].length, `the recipe no longer produces ${key}`).toBeGreaterThan(0);
-      expect(Object.keys(old[key][0]).sort(), key).toEqual(Object.keys(now[key][0]).sort());
+describe("the committed v2 save", () => {
+  it("still loads, with its walls, its ring and its work in flight", async () => {
+    const sim = await decode(readFileSync(V2));
+    expect(sim.tick).toBe(V2_TICKS);
+    expect(sim.world.seed).toBe(20260901);
+
+    // Every wall state the tier ships except the transient gate blueprint.
+    const states = new Set([...sim.wallMap].filter((v) => v !== WallState.None));
+    expect(states).toEqual(new Set([WallState.PalisadeBp, WallState.Palisade, WallState.Gate]));
+
+    // A closed ring with a gate in it encloses its interior — in a real save,
+    // not only in a unit test.
+    expect([...sim.insideMap].reduce((n, v) => n + v, 0)).toBe(1);
+    expect(sim.enclosureDirty).toBe(0);
+
+    // Work in flight: a dismantle mark nobody has finished, and build-wall
+    // tasks each holding a log reserved.
+    expect([...sim.razeMap].filter((v) => v)).toHaveLength(1);
+    const walling = sim.tasks.filter((t) => t.kind === TaskKind.BuildWall);
+    expect(walling.length).toBeGreaterThan(0);
+    for (const t of walling) {
+      expect(sim.items.find((it) => it.id === t.item)?.reservedBy).toBe(t.id);
     }
+    expect(sim.tasks.some((t) => t.kind === TaskKind.Raze)).toBe(true);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V2));
+    expect(hashSim(sim)).toBe("680d0d2e");
+  });
+
+  it("keeps running from where it was saved, and finishes what it was doing", async () => {
+    const sim = await decode(readFileSync(V2));
+    const razing = [...sim.razeMap].findIndex((v) => v === 1);
+    for (let t = 0; t < 400; t++) advanceTick(sim);
+    expect(sim.tick).toBe(V2_TICKS + 400);
+    // The marked segment came down and the ring is open again, which is the
+    // load being genuinely live rather than merely readable.
+    expect(sim.wallMap[razing]).toBe(WallState.None);
+    expect([...sim.insideMap].reduce((n, v) => n + v, 0)).toBe(0);
+  });
+});
+
+/**
+ * The drift alarm the pinned hashes cannot sound. A failure here means the
+ * store grew or lost a field since a fixture was frozen, so that save no
+ * longer decodes into a store this build can assume anything about: bump
+ * `SAVE_VERSION` and add the rung that fills the gap.
+ */
+describe("the fixtures still have the store shape this build produces", () => {
+  it("v1, through its migration", async () => {
+    expect(shapeOf(await decode(readFileSync(V1)))).toEqual(shapeOf(replay(v1Script, V1_TICKS)));
+  });
+
+  it("v2, natively", async () => {
+    expect(shapeOf(await decode(readFileSync(V2)))).toEqual(shapeOf(replay(v2Script, V2_TICKS)));
   });
 });

@@ -1,6 +1,6 @@
 import { defOf, freeCapacity, storedCount } from "../buildings";
 import { groundItem, isFree, itemTile } from "../items";
-import type { Occupancy } from "../path";
+import { occupancy, type Occupancy } from "../path";
 import {
   BuildingKind,
   BuildingState,
@@ -17,8 +17,10 @@ import {
   type Task,
 } from "../store";
 import { TASK_COOLDOWN_JITTER, TASK_COOLDOWN_TICKS } from "../tuning";
+import { WallState, isBlueprint, isBuilt } from "../walls";
+import { markEnclosureStale } from "../walls/enclosure";
 import { nextRand } from "../world/rng";
-import { tileIndex } from "../world/world";
+import { markChunkDirty, tileIndex } from "../world/world";
 
 /**
  * Task generation and the reservation discipline.
@@ -126,10 +128,14 @@ function liveTasks(sim: Sim, kind: number): Task[] {
 export function generateTasks(sim: Sim): void {
   for (const t of sim.tasks) if (t.cooldown > 0) t.cooldown--;
 
+  // Generated in `TASK_PRIORITY` order, so when two needs compete for the same
+  // free log the more urgent one reserves it first.
   generateBuild(sim);
+  generateBuildWall(sim);
   generateHaulToSite(sim);
   generateHaulToInput(sim);
   generateChop(sim);
+  generateRaze(sim);
   generateHaulToStore(sim);
 }
 
@@ -169,6 +175,69 @@ function generateHaulToInput(sim: Sim): void {
       addTask(sim, TaskKind.HaulToInput, log, b);
       room--;
     }
+  }
+}
+
+/**
+ * Every wall blueprint gets one build-wall task — once a free log exists for
+ * it. The log is reserved at creation like any other task's item, so two
+ * builders can never be sent for the same one; a segment with no log available
+ * simply has no task yet and sits as a ghost frame until one turns up.
+ *
+ * Deduplicated by *tile*, the same idempotence rule chop already proves, so
+ * running every tick tops the queue up instead of piling duplicates on.
+ */
+function generateBuildWall(sim: Sim): void {
+  const size = sim.world.size;
+  const has = new Set(liveTasks(sim, TaskKind.BuildWall).map((t) => tileIndex(t.x, t.y, size)));
+  for (let i = 0; i < sim.wallMap.length; i++) {
+    if (!isBlueprint(sim.wallMap[i])) continue;
+    if (has.has(i)) continue;
+    const x = i % size;
+    const y = (i - x) / size;
+    const log = nearestFreeItem(sim, ItemType.Log, x, y, sourceForSite);
+    if (!log) continue;
+    addTask(sim, TaskKind.BuildWall, log, null, x, y);
+  }
+}
+
+/**
+ * Dismantling. A **built** segment gets a raze task; a segment that is still a
+ * *blueprint* is torn up on the spot, here, because there is nothing to work
+ * down — the blueprint clears and any live build-wall task for it goes through
+ * `abandonTask`, which releases the log's reservation and drops it wherever the
+ * builder is standing. That drop **is** the refund: no ledger tracks delivery,
+ * because the log is carried right up to the completion instant.
+ */
+function generateRaze(sim: Sim): void {
+  const size = sim.world.size;
+  const has = new Set(liveTasks(sim, TaskKind.Raze).map((t) => tileIndex(t.x, t.y, size)));
+  let occ: Occupancy | null = null;
+  for (let i = 0; i < sim.razeMap.length; i++) {
+    if (!sim.razeMap[i]) continue;
+    const state = sim.wallMap[i];
+    const x = i % size;
+    const y = (i - x) / size;
+
+    if (isBlueprint(state)) {
+      sim.wallMap[i] = WallState.None;
+      sim.razeMap[i] = 0;
+      occ ??= occupancy(sim);
+      for (const task of [...sim.tasks]) {
+        if (task.kind === TaskKind.BuildWall && task.x === x && task.y === y) abandonTask(sim, occ, task);
+      }
+      markChunkDirty(sim.world, x, y);
+      markEnclosureStale(sim);
+      continue;
+    }
+    if (!isBuilt(state)) {
+      // The wall went away without the mark being cleared; tidy up.
+      sim.razeMap[i] = 0;
+      markChunkDirty(sim.world, x, y);
+      continue;
+    }
+    if (has.has(i)) continue;
+    addTask(sim, TaskKind.Raze, null, null, x, y);
   }
 }
 

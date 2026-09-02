@@ -1,5 +1,6 @@
 import { chunkCount } from "../world/chunks";
 import type { Sim } from "../store";
+import { recomputeEnclosure } from "../walls/enclosure";
 import { MIGRATIONS } from "./migrations";
 
 /**
@@ -33,7 +34,7 @@ import { MIGRATIONS } from "./migrations";
  * the matching entry to `MIGRATIONS` — the fixture test in this folder fails
  * loudly if an old save stops loading, which is the point.
  */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 /** A save that cannot be read, with a message meant for the menu's note row. */
 export class SaveError extends Error {
@@ -158,7 +159,13 @@ export async function decode(bytes: Uint8Array): Promise<Sim> {
     if (!migrate) throw new SaveError(`this save is version ${v}, which this build can no longer read`);
     state = migrate(state);
   }
-  return assertSim(state);
+  const sim = assertSim(state);
+  // Enclosure is derived, so a load recomputes it rather than trusting what
+  // the file said: a migrated save has never had a flood-fill run over it, and
+  // a hand-edited one may disagree with its own wall graph. It is
+  // deterministic, so for an honest save this changes nothing.
+  recomputeEnclosure(sim);
+  return sim;
 }
 
 function reviver(_key: string, value: unknown): unknown {
@@ -193,6 +200,9 @@ function assertSim(raw: unknown): Sim {
   layer(world.tmap, tiles);
   layer(world.treeMap, tiles);
   layer(s.chopMap, tiles);
+  layer(s.wallMap, tiles);
+  layer(s.razeMap, tiles);
+  layer(s.insideMap, tiles);
   if (!(world.chunkVersion instanceof Uint32Array) || world.chunkVersion.length !== chunkCount(size as number)) {
     throw new SaveError(DAMAGED);
   }
@@ -201,6 +211,7 @@ function assertSim(raw: unknown): Sim {
   number(s.tick);
   number(s.rngState);
   number(s.nextId);
+  number(s.enclosureDirty);
   for (const key of ["colonists", "items", "buildings", "tasks"] as const) {
     const list = s[key];
     if (!Array.isArray(list)) throw new SaveError(DAMAGED);

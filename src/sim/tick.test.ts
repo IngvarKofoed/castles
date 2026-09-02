@@ -6,6 +6,7 @@ import type { Command } from "./commands";
 import { hashSim } from "./hash";
 import { readout } from "./know";
 import { canPlace } from "./buildings";
+import { WallState, canPlaceWall } from "./walls";
 import { tileIndex } from "./world/world";
 
 const SEED = 20260901;
@@ -61,9 +62,53 @@ function script(sim: Store): Command[] {
       return staffCommand(sim, "staff");
     case 1300:
       return staffCommand(sim, "unstaff");
+    // One L-shaped wall drag, as the single command a gesture produces — both
+    // legs and the corner in one entry in the log, so the wall tier's
+    // placement, its build-wall tasks and the enclosure recompute all sit
+    // inside the determinism pin.
+    //
+    // Late on purpose. Build-wall outranks haul-to-input, so a wall drawn
+    // early diverts every free log and the mill never cuts a plank — the
+    // intended coupling (expansion competes with hauling), but it would have
+    // cost this file its end-to-end plank assertion. Drawn at 1420 the wall is
+    // demonstrably being worked at tick 1500 while the mill has already run.
+    case 1420:
+      return [{ kind: "placeWall", tiles: lDrag(sim, 6, 4) }];
     default:
       return [];
   }
+}
+
+/**
+ * The tiles of an L with a `west`-long first leg and a `south`-long second,
+ * anchored at the nearest spot where the whole shape takes a wall.
+ *
+ * Built by hand rather than by calling `wallRun`: that lives in `render/`, and
+ * `src/sim/` may not import its consumers. Which is fine — the shape a command
+ * carries is a plain tile list, and writing it out is what the UI hands over
+ * anyway. `pick.test.ts` is what pins the gesture geometry itself.
+ */
+function lDrag(sim: Store, legX: number, legY: number): number[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  const tiles = (x0: number, y0: number): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let i = 0; i < legX; i++) out.push([x0 + i, y0]);
+    for (let i = 1; i < legY; i++) out.push([x0 + legX - 1, y0 + i]);
+    return out;
+  };
+  for (let r = 3; r < 40; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const shape = tiles(centre + dx, centre + dy);
+        if (shape.every(([x, y]) => canPlaceWall(sim, x, y))) {
+          return tileList(sim, shape);
+        }
+      }
+    }
+  }
+  return [];
 }
 
 const tileList = (sim: Store, tiles: [number, number][]): number[] =>
@@ -130,8 +175,27 @@ describe("determinism", () => {
     // gained a second, overlapping box and a hand cancel, and designating now
     // bumps the tile's chunk version, which the hash covers.
     //
-    // Every observable the other tests in this file assert is unchanged.
-    expect(hashSim(scriptedRun(1500))).toBe("fbe20cb9");
+    // fbe20cb9 → 9783cd77 for shape, not behaviour: the store gained
+    // `wallMap`, `razeMap`, `insideMap` and `enclosureDirty`
+    // (docs/changelog/2026-09-02-palisade-walls.md). That run placed no walls,
+    // so all four were as `createSim` left them and nothing about the labour
+    // loop moved — every observable the other tests in this file assert was
+    // unchanged, which is what said the hash moved for shape.
+    //
+    // 9783cd77 → c0441655 when the script gained an L-shaped `placeWall` at
+    // tick 1420 (docs/changelog/2026-09-02-wall-l-drags.md). A behaviour
+    // change this time, and deliberate: the colony now draws and works a wall
+    // inside the pin. The drag is late precisely so the mill still gets its
+    // logs — build-wall outranks haul-to-input, so an early wall would have
+    // starved the plank assertion below.
+    //
+    // c0441655 → 11a997a8 when `walk` began re-checking the next tile's
+    // passability and re-planning a stale route. A behaviour change, and a bug
+    // fix: routes are planned once and blueprints are walkable, so a segment
+    // finishing across a walker's path had them stroll straight through
+    // standing palisade. That this hash moved at all is the evidence — the
+    // scripted L at tick 1420 was being walked through.
+    expect(hashSim(scriptedRun(1500))).toBe("11a997a8");
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {
@@ -185,6 +249,34 @@ describe("the labour loop", () => {
     // Goods ended up in storage rather than scattered on the ground.
     const stored = sim.items.filter((it) => it.loc === Loc.Stored && it.holder === stockpile?.id);
     expect(stored.length).toBeGreaterThan(0);
+  });
+
+  it("takes an L-shaped wall drag as one command and puts folk on it", () => {
+    // The new command's own observable, so it is not merely hash noise: nine
+    // tiles from one gesture — a six-long leg, a corner, and three more — and
+    // the colony working them 80 ticks later.
+    const sim = scriptedRun(1500);
+    const size = sim.world.size;
+    const placed: [number, number][] = [];
+    for (let i = 0; i < sim.wallMap.length; i++) {
+      if (sim.wallMap[i] !== WallState.None) placed.push([i % size, Math.floor(i / size)]);
+    }
+    expect(placed).toHaveLength(9);
+
+    // And it really is an L: one row holds six of them, one column the rest.
+    const rows = new Map<number, number>();
+    const cols = new Map<number, number>();
+    for (const [x, y] of placed) {
+      rows.set(y, (rows.get(y) ?? 0) + 1);
+      cols.set(x, (cols.get(x) ?? 0) + 1);
+    }
+    expect(Math.max(...rows.values())).toBe(6);
+    expect(Math.max(...cols.values())).toBe(4);
+
+    // Being worked: either segments already standing or builders on their way.
+    const standing = placed.filter(([x, y]) => sim.wallMap[y * size + x] === WallState.Palisade).length;
+    const walling = sim.tasks.filter((t) => t.kind === TaskKind.BuildWall).length;
+    expect(standing + walling).toBeGreaterThan(0);
   });
 
   it("leaves no orphaned reservations when the queue drains", () => {

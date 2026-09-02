@@ -1,14 +1,18 @@
 import type { Sim } from "./store";
+import { isWalkable } from "./walls";
 import { Terrain, tileIndex, type World } from "./world/world";
 
 /**
- * A* on the tile grid, 4-neighbour. Water, trees and building footprints are
- * impassable; a height step of one block is a stair, two or more is a cliff.
- * No hierarchy until a profiler asks for one (spec 2026-09-01-tick-and-labour).
+ * A* on the tile grid, 4-neighbour. Water, trees, raised palisade and building
+ * footprints are impassable; a height step of one block is a stair, two or
+ * more is a cliff. No hierarchy until a profiler asks for one (spec
+ * 2026-09-01-tick-and-labour).
  *
  * Occupancy is rebuilt per call from the buildings array rather than cached in
  * the store: a derived index in the store is a second source of truth waiting
- * to desync, and total footprint area stays tiny.
+ * to desync, and total footprint area stays tiny. Walls deliberately do **not**
+ * join it — they are a grid layer and there are hundreds of them, which is
+ * exactly what would blow that "footprint area stays tiny" rationale up.
  */
 
 /** Height difference a colonist can step up or down between adjacent tiles. */
@@ -35,18 +39,38 @@ export function inBounds(world: World, x: number, y: number): boolean {
   return x >= 0 && y >= 0 && x < world.size && y < world.size;
 }
 
-/** Ground a colonist can stand on, ignoring who else is standing there. */
-export function passable(world: World, occ: Occupancy, x: number, y: number): boolean {
+/**
+ * Ground a colonist can stand on, ignoring who else is standing there.
+ *
+ * The wall table, stated once and read nowhere else: `None`, `PalisadeBp`,
+ * `GateBp` and `Gate` are walkable, `Palisade` is not — via `isWalkable`, so
+ * the stone tier appends states without this line changing. Blueprints being
+ * walkable is load-bearing: a long run must not wall its own builders off
+ * halfway through construction.
+ *
+ * `wallMap` is a required argument rather than an optional one on purpose — an
+ * omitted layer would read as "no walls anywhere" and let colonists ghost
+ * straight through a finished segment with nothing failing.
+ */
+export function passable(world: World, wallMap: Uint8Array, occ: Occupancy, x: number, y: number): boolean {
   if (!inBounds(world, x, y)) return false;
   const i = tileIndex(x, y, world.size);
   if (world.tmap[i] === Terrain.Water) return false;
   if (world.treeMap[i]) return false;
+  if (!isWalkable(wallMap[i])) return false;
   return !occ.has(i);
 }
 
 /** Passable, and reachable in one step from a tile at height `fromH`. */
-function stepOk(world: World, occ: Occupancy, x: number, y: number, fromH: number): boolean {
-  if (!passable(world, occ, x, y)) return false;
+function stepOk(
+  world: World,
+  wallMap: Uint8Array,
+  occ: Occupancy,
+  x: number,
+  y: number,
+  fromH: number,
+): boolean {
+  if (!passable(world, wallMap, occ, x, y)) return false;
   return Math.abs(world.hmap[tileIndex(x, y, world.size)] - fromH) <= MAX_STEP;
 }
 
@@ -104,7 +128,7 @@ export function findPath(sim: Sim, occ: Occupancy, sx: number, sy: number, goals
     for (const [dx, dy] of NEIGHBOURS) {
       const nx = cx + dx;
       const ny = cy + dy;
-      if (!stepOk(world, occ, nx, ny, ch)) continue;
+      if (!stepOk(world, sim.wallMap, occ, nx, ny, ch)) continue;
       const n = tileIndex(nx, ny, size);
       const tentative = cg + 1;
       const known = gScore.get(n);
@@ -141,7 +165,7 @@ export function escapePath(sim: Sim, occ: Occupancy, sx: number, sy: number): nu
   const world = sim.world;
   const size = world.size;
   const start = tileIndex(sx, sy, size);
-  if (passable(world, occ, sx, sy)) return [];
+  if (passable(world, sim.wallMap, occ, sx, sy)) return [];
 
   const seen = new Set<number>([start]);
   const cameFrom = new Map<number, number>();
@@ -163,7 +187,7 @@ export function escapePath(sim: Sim, occ: Occupancy, sx: number, sy: number): nu
         // not a position the pathfinder ever chose, so it may not be
         // step-reachable from anywhere. Getting clear beats getting clear
         // gracefully.
-        if (passable(world, occ, nx, ny)) return rebuild(cameFrom, n);
+        if (passable(world, sim.wallMap, occ, nx, ny)) return rebuild(cameFrom, n);
         next.push(n);
       }
     }
@@ -175,7 +199,17 @@ export function escapePath(sim: Sim, occ: Occupancy, sx: number, sy: number): nu
 /** Goal set: the tile itself if it can be stood on, else its free neighbours. */
 export function reachTile(sim: Sim, occ: Occupancy, x: number, y: number): Set<number> {
   const world = sim.world;
-  if (passable(world, occ, x, y)) return new Set([tileIndex(x, y, world.size)]);
+  if (passable(world, sim.wallMap, occ, x, y)) return new Set([tileIndex(x, y, world.size)]);
+  return neighbourGoals(sim, occ, [[x, y]]);
+}
+
+/**
+ * Goal set: beside a wall tile, never on it. Wall work is done from an
+ * adjacent tile even though a blueprint and a gate can both be stood on — a
+ * builder standing on the segment they are finishing would have to evict
+ * itself at the completion instant.
+ */
+export function adjacentToTile(sim: Sim, occ: Occupancy, x: number, y: number): Set<number> {
   return neighbourGoals(sim, occ, [[x, y]]);
 }
 
@@ -188,7 +222,7 @@ export function neighbourGoals(sim: Sim, occ: Occupancy, tiles: readonly (readon
     for (const [dx, dy] of NEIGHBOURS) {
       const nx = x + dx;
       const ny = y + dy;
-      if (!passable(world, occ, nx, ny)) continue;
+      if (!passable(world, sim.wallMap, occ, nx, ny)) continue;
       const n = tileIndex(nx, ny, world.size);
       if (inside.has(n)) continue;
       goals.add(n);

@@ -18,5 +18,33 @@
  */
 export type Migration = (state: unknown) => unknown;
 
-/** Empty at `SAVE_VERSION = 1`: nothing older than the current format exists. */
-export const MIGRATIONS: Readonly<Record<number, Migration>> = {};
+export const MIGRATIONS: Readonly<Record<number, Migration>> = {
+  /**
+   * 1 → 2: walls. A v1 colony has no wall graph, so it gains three zero-filled
+   * layers and a clean enclosure flag; `decode` recomputes `insideMap` from
+   * `wallMap` afterwards, so the zeroes here are a shape rather than a claim
+   * (docs/specs/2026-09-02-palisade-walls.md).
+   *
+   * **Task kinds need no migration**, which is the whole reason `BuildWall`
+   * and `Raze` were appended to `TaskKind` rather than slotted into its
+   * priority order: a v1 save's live tasks still mean exactly what they meant.
+   *
+   * The size is read off the save's own world rather than `WORLD_SIZE` — a
+   * migration describes the file it is handed, not the build reading it. A
+   * nonsense size yields zero-length layers and `assertSim` refuses the save,
+   * which is the correct outcome: this rung guesses at nothing.
+   */
+  1: (state) => {
+    const s = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
+    const world = s.world && typeof s.world === "object" ? (s.world as Record<string, unknown>) : {};
+    const size = typeof world.size === "number" && Number.isInteger(world.size) && world.size > 0 ? world.size : 0;
+    const tiles = size * size;
+    return {
+      ...s,
+      wallMap: new Uint8Array(tiles),
+      razeMap: new Uint8Array(tiles),
+      insideMap: new Uint8Array(tiles),
+      enclosureDirty: 0,
+    };
+  },
+};

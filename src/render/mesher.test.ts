@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BuildingState, type Building } from "../sim/know";
+import { BuildingState, WallState, type Building } from "../sim/know";
 import { Terrain, type TerrainValue, type World } from "../sim/world/world";
 import { BH, WATER_SURFACE_OFFSET, meshChunk, meshWaterChunk, type ChunkGeometry, type Scene } from "./mesher";
 
@@ -14,7 +14,13 @@ function makeWorld(size: number, heights: number[], terrain?: TerrainValue[]): S
     treeMap: new Uint8Array(size * size),
     chunkVersion: new Uint32Array(1).fill(1),
   };
-  return { world, buildings: [], chopMap: new Uint8Array(size * size) };
+  return {
+    world,
+    buildings: [],
+    chopMap: new Uint8Array(size * size),
+    wallMap: new Uint8Array(size * size),
+    razeMap: new Uint8Array(size * size),
+  };
 }
 
 function withTree(scene: Scene, x: number, y: number): Scene {
@@ -37,7 +43,7 @@ function withBuilding(scene: Scene, b: Partial<Building> & { x: number; y: numbe
     millProgress: -1,
     ...b,
   };
-  return { world: scene.world, buildings: [building], chopMap: scene.chopMap };
+  return { ...scene, buildings: [building] };
 }
 
 const quadCount = (g: { indices: Uint32Array }): number => g.indices.length / 6;
@@ -215,6 +221,206 @@ describe("props bake into the chunk", () => {
     expect(new Set(counts).size).toBe(3);
     for (const c of counts) expect(c).toBeGreaterThan(bare);
     expect(counts[1]).toBeGreaterThan(counts[0]);
+  });
+});
+
+describe("walls bake into the chunk", () => {
+  const flat = (size: number): Scene => makeWorld(size, new Array(size * size).fill(3));
+
+  it("gives every wall state its own silhouette, in rising order", () => {
+    // The order is the read: a marked-out plot is ankle-high, a planned gate
+    // stands its frame, a palisade is chest-high, a gate towers. Height rather
+    // than box count, because height is what the player actually sees — and
+    // it is what tells a planned gate apart from a planned palisade in a run.
+    const bare = quadCount(meshChunk(flat(16), 0, 0));
+    const tops = [WallState.PalisadeBp, WallState.GateBp, WallState.Palisade, WallState.Gate].map((state) => {
+      const scene = flat(16);
+      scene.wallMap[5 * 16 + 5] = state;
+      const g = meshChunk(scene, 0, 0);
+      expect(quadCount(g)).toBeGreaterThan(bare);
+      const above = verticesWhere(g, (_px, py) => py > 3 * BH + 0.01);
+      expect(above.length).toBeGreaterThan(0);
+      // Every part of it sits over the tile it belongs to.
+      for (const v of above) {
+        expect(g.positions[v * 3]).toBeGreaterThan(4.4);
+        expect(g.positions[v * 3]).toBeLessThan(6.6);
+      }
+      return Math.max(...above.map((v) => g.positions[v * 3 + 1])) - 3 * BH;
+    });
+    for (let i = 1; i < tops.length; i++) expect(tops[i]).toBeGreaterThan(tops[i - 1]);
+  });
+
+  /**
+   * The corner cases the one-axis-per-tile version got wrong. A palisade is a
+   * centre post plus an arm per linked direction, so what these assert is that
+   * every linked side is *reached* — rails running all the way out to the tile
+   * edge on that side — and that no unlinked side is.
+   */
+  describe("junctions", () => {
+    /** How far the wall's timber reaches from the tile centre, per side. */
+    function reach(scene: Scene, tx: number, ty: number): Record<string, number> {
+      const g = meshChunk(scene, 0, 0);
+      const size = scene.world.size;
+      const ground = scene.world.hmap[ty * size + tx] * BH;
+      const cx = tx + 0.5;
+      const cz = ty + 0.5;
+      const out = { west: 0, east: 0, north: 0, south: 0 };
+      for (let v = 0; v < g.positions.length / 3; v++) {
+        const [px, py, pz] = [g.positions[v * 3], g.positions[v * 3 + 1], g.positions[v * 3 + 2]];
+        // Rails only: above the ground plate, below the stake tops, and only
+        // vertices belonging to this tile.
+        if (py <= ground + 0.01) continue;
+        if (Math.abs(px - cx) > 0.75 || Math.abs(pz - cz) > 0.75) continue;
+        out.west = Math.max(out.west, cx - px);
+        out.east = Math.max(out.east, px - cx);
+        out.north = Math.max(out.north, cz - pz);
+        out.south = Math.max(out.south, pz - cz);
+      }
+      return out;
+    }
+
+    /** A wall on (5,5) plus walls on each named neighbour. */
+    function junction(...sides: ("west" | "east" | "north" | "south")[]): Scene {
+      const scene = makeWorld(16, new Array(16 * 16).fill(3));
+      const put = (x: number, y: number): void => {
+        scene.wallMap[y * 16 + x] = WallState.Palisade;
+      };
+      put(5, 5);
+      for (const side of sides) {
+        if (side === "west") put(4, 5);
+        if (side === "east") put(6, 5);
+        if (side === "north") put(5, 4);
+        if (side === "south") put(5, 6);
+      }
+      return scene;
+    }
+
+    // A linked side is reached to the tile edge (0.5) and a little past it by
+    // the arm's overlap; an unlinked side stops at the stake's own half-width.
+    const REACHED = 0.5;
+    const UNREACHED = 0.2;
+
+    it("reaches the edge on a straight run and nowhere else", () => {
+      const ew = reach(junction("west", "east"), 5, 5);
+      expect(ew.west).toBeGreaterThanOrEqual(REACHED);
+      expect(ew.east).toBeGreaterThanOrEqual(REACHED);
+      expect(ew.north).toBeLessThan(UNREACHED);
+      expect(ew.south).toBeLessThan(UNREACHED);
+
+      const ns = reach(junction("north", "south"), 5, 5);
+      expect(ns.north).toBeGreaterThanOrEqual(REACHED);
+      expect(ns.south).toBeGreaterThanOrEqual(REACHED);
+      expect(ns.west).toBeLessThan(UNREACHED);
+      expect(ns.east).toBeLessThan(UNREACHED);
+    });
+
+    it("reaches both sides of a corner, which is what left a hole before", () => {
+      // The whole defect: with one axis per tile this tile rendered as an
+      // east-west segment and the southward run stopped half a tile short.
+      const corner = reach(junction("west", "south"), 5, 5);
+      expect(corner.west).toBeGreaterThanOrEqual(REACHED);
+      expect(corner.south).toBeGreaterThanOrEqual(REACHED);
+      expect(corner.east).toBeLessThan(UNREACHED);
+      expect(corner.north).toBeLessThan(UNREACHED);
+    });
+
+    it("reaches all three sides of a T and all four of a cross", () => {
+      const t = reach(junction("west", "east", "south"), 5, 5);
+      expect(t.west).toBeGreaterThanOrEqual(REACHED);
+      expect(t.east).toBeGreaterThanOrEqual(REACHED);
+      expect(t.south).toBeGreaterThanOrEqual(REACHED);
+      expect(t.north).toBeLessThan(UNREACHED);
+
+      const cross = reach(junction("west", "east", "north", "south"), 5, 5);
+      for (const side of ["west", "east", "north", "south"] as const) {
+        expect(cross[side], side).toBeGreaterThanOrEqual(REACHED);
+      }
+    });
+
+    it("gives a lone segment the look it had before: an east-west stub", () => {
+      const lone = reach(junction(), 5, 5);
+      expect(lone.west).toBeGreaterThanOrEqual(REACHED);
+      expect(lone.east).toBeGreaterThanOrEqual(REACHED);
+      expect(lone.north).toBeLessThan(UNREACHED);
+      expect(lone.south).toBeLessThan(UNREACHED);
+    });
+
+    it("keeps a straight run's rails one colour across the tile centre", () => {
+      // The rails are two arms now, and each arm would draw its own per-prop
+      // colour wobble from its own position — a seam mid-tile on every segment
+      // of every run. They anchor their wobble to the tile instead.
+      // A lone segment: one tile, two arms, no neighbours' timber to confuse
+      // the sample.
+      const g = meshChunk(junction(), 0, 0);
+      const ground = 3 * BH;
+      const tones = new Set<string>();
+      let west = 0;
+      let east = 0;
+      for (let v = 0; v < g.positions.length / 3; v++) {
+        const py = g.positions[v * 3 + 1];
+        // The lower rail's band. A box only has vertices at its own corners, so
+        // a mid-height band catches rails and never a stake, whose vertices are
+        // all at its base or its top.
+        if (py < ground + 0.43 || py > ground + 0.52) continue;
+        if (g.positions[v * 3] < 5.5) west++;
+        else east++;
+        tones.add(`${g.colors[v * 3].toFixed(5)},${g.colors[v * 3 + 1].toFixed(5)}`);
+      }
+      // Sampled on both sides of the centre, or the tone assertion is vacuous.
+      expect(west).toBeGreaterThan(0);
+      expect(east).toBeGreaterThan(0);
+      expect(tones.size).toBe(1);
+    });
+  });
+
+  it("orients a run from its neighbours, reading across a chunk seam", () => {
+    // A horizontal run crossing x=16. The tile at (16, 5) has a wall to its
+    // west in the *other* chunk, so its rails have to run along x — which only
+    // works because the mesher reads the world layer rather than its own chunk.
+    const scene = makeWorld(32, new Array(32 * 32).fill(3));
+    for (let x = 12; x <= 20; x++) scene.wallMap[5 * 32 + x] = WallState.Palisade;
+    const east = meshChunk(scene, 1, 0);
+    const seam = verticesWhere(east, (px, py, pz) => py > 3 * BH && px >= 16 && px <= 17 && pz >= 5 && pz <= 6);
+    expect(seam.length).toBeGreaterThan(0);
+    // Rails span the full tile along x, so the segment reaches both its edges.
+    const xs = seam.map((v) => east.positions[v * 3]);
+    expect(Math.min(...xs)).toBeCloseTo(16, 5);
+    expect(Math.max(...xs)).toBeCloseTo(17, 5);
+
+    // The same segment in a vertical run instead: now it reaches both z edges.
+    const upright = makeWorld(32, new Array(32 * 32).fill(3));
+    for (let y = 2; y <= 8; y++) upright.wallMap[y * 32 + 16] = WallState.Palisade;
+    const g = meshChunk(upright, 1, 0);
+    const zs = verticesWhere(g, (px, py, pz) => py > 3 * BH && px >= 16 && px <= 17 && pz >= 5 && pz <= 6).map(
+      (v) => g.positions[v * 3 + 2],
+    );
+    expect(Math.min(...zs)).toBeCloseTo(5, 5);
+    expect(Math.max(...zs)).toBeCloseTo(6, 5);
+  });
+
+  it("shifts a raze-marked segment's timber toward gold without moving it", () => {
+    // Measured, not eyeballed — the same reason a designated canopy's 15% is:
+    // the timber already carries per-prop jitter, so a shift this size is easy
+    // to mistake for ordinary variation in either direction.
+    const plain = flat(16);
+    plain.wallMap[5 * 16 + 5] = WallState.Palisade;
+    const marked = flat(16);
+    marked.wallMap[5 * 16 + 5] = WallState.Palisade;
+    marked.razeMap[5 * 16 + 5] = 1;
+
+    const a = meshChunk(plain, 0, 0);
+    const b = meshChunk(marked, 0, 0);
+    expect(b.positions).toEqual(a.positions);
+
+    let changed = 0;
+    for (let v = 0; v < a.colors.length / 3; v++) {
+      const [ar, ag] = [a.colors[v * 3], a.colors[v * 3 + 1]];
+      const [br, bg] = [b.colors[v * 3], b.colors[v * 3 + 1]];
+      if (ar === br && ag === bg) continue;
+      changed++;
+      expect(br).toBeGreaterThan(ar);
+    }
+    expect(changed).toBeGreaterThan(0);
   });
 });
 

@@ -3,6 +3,7 @@ import {
   BUILDING_DEFS,
   BuildingKind,
   BuildingState,
+  WALL_LOG_COST,
   inspect,
   readout,
   type BuildingKindValue,
@@ -21,7 +22,33 @@ import "./hud.css";
  * `send`, which queues a command for the next tick boundary.
  */
 
-export type Tool = { kind: "none" } | { kind: "chop" } | { kind: "build"; building: BuildingKindValue };
+export type Tool =
+  | { kind: "none" }
+  | { kind: "chop" }
+  | { kind: "build"; building: BuildingKindValue }
+  | { kind: "wall" }
+  | { kind: "gate" }
+  | { kind: "raze" };
+
+/** The three tools that put walls on the map, and the ones the enclosure wash
+ *  appears for. Nothing tints the world permanently. */
+export function isWallTool(tool: Tool): boolean {
+  return tool.kind === "wall" || tool.kind === "gate" || tool.kind === "raze";
+}
+
+/** The tools whose left-drag is a selection marquee rather than a run. */
+export function isMarqueeTool(tool: Tool): boolean {
+  return tool.kind === "chop" || tool.kind === "raze";
+}
+
+/**
+ * Which rail button a tool belongs to. One place, because the pressed state,
+ * the click handler and the tool itself all have to agree on it.
+ */
+function toolKey(tool: Tool): string {
+  if (tool.kind === "build") return BUILDING_DEFS[tool.building].name.toLowerCase();
+  return tool.kind;
+}
 
 export interface HudPorts {
   send(command: Command): void;
@@ -53,6 +80,11 @@ const ICONS: Record<string, string> = {
   chop: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 15 L12 6"/><path d="M11 2 L19 6 L14 11 L9 5 Z"/></svg>`,
   stockpile: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="7" height="7"/><rect x="12" y="7" width="7" height="7"/><path d="M3 5 h16"/></svg>`,
   sawmill: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 8 L11 3 L19 8"/><rect x="5" y="8" width="12" height="7"/><path d="M9 15 v-4 h4 v4"/></svg>`,
+  // Palisade: stakes under two rails. Gate: the same run with the middle open
+  // under a lintel. Raze: a stake coming apart.
+  wall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V5"/><path d="M8 15 V4"/><path d="M12 15 V5"/><path d="M16 15 V4"/><path d="M3 8 h16"/><path d="M3 12 h16"/></svg>`,
+  gate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 15 V6"/><path d="M17 15 V6"/><path d="M3 5 h16"/><path d="M9 15 v-4"/><path d="M13 15 v-4"/></svg>`,
+  raze: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 V7 L3 4"/><path d="M16 15 V8 L19 4"/><path d="M9 11 l4 -3"/><path d="M11 4 v3"/></svg>`,
 };
 
 export class Hud {
@@ -185,6 +217,7 @@ export class Hud {
     this.res.planks.textContent = String(r.planks);
     this.res.folk.textContent = String(r.folk);
     this.res.idle.textContent = String(r.idle);
+    this.res.enclosed.textContent = String(r.enclosed);
     this.res.day.textContent = `Day ${r.day}`;
 
     const speed = this.ports.getSpeed();
@@ -207,6 +240,9 @@ export class Hud {
     ribbon.append(el("span", { class: "divider" }));
     ribbon.append(this.count("folk", "folk"));
     ribbon.append(this.count("idle", "idle"));
+    ribbon.append(el("span", { class: "divider" }));
+    // The game's progress bar: buildable ground the wall has actually claimed.
+    ribbon.append(this.count("enclosed", "enclosed"));
 
     const clock = el("span", { class: "clock" });
     const speed = el("span", { class: "speed", role: "group", "aria-label": "Game speed" });
@@ -264,41 +300,39 @@ export class Hud {
   private buildRail(): HTMLElement {
     const rail = el("nav", { class: "panel rail", "aria-label": "Build tools" });
     rail.append(el("span", { class: "rail-label" }, "Build"));
-    rail.append(this.toolButton("chop", "Chop", { kind: "chop" }, ""));
+    rail.append(this.toolButton("Chop", { kind: "chop" }, ""));
     for (const kind of [BuildingKind.Stockpile, BuildingKind.Sawmill] as BuildingKindValue[]) {
       const def = BUILDING_DEFS[kind];
-      rail.append(
-        this.toolButton(
-          def.name.toLowerCase(),
-          def.name,
-          { kind: "build", building: kind },
-          `${def.cost} logs`,
-        ),
-      );
+      rail.append(this.toolButton(def.name, { kind: "build", building: kind }, `${def.cost} logs`));
     }
+    // The wall family, below the three that were here first. Wall and gate
+    // cost the same materials and differ in labour, so both read "1 log".
+    const logs = `${WALL_LOG_COST} log${WALL_LOG_COST === 1 ? "" : "s"}`;
+    rail.append(this.toolButton("Wall", { kind: "wall" }, logs));
+    rail.append(this.toolButton("Gate", { kind: "gate" }, logs));
+    rail.append(this.toolButton("Raze", { kind: "raze" }, ""));
     return rail;
   }
 
-  private toolButton(icon: string, label: string, tool: Tool, cost: string): HTMLButtonElement {
+  private toolButton(label: string, tool: Tool, cost: string): HTMLButtonElement {
+    const key = toolKey(tool);
     const b = el("button", { class: "tool", type: "button", "aria-pressed": "false" }) as HTMLButtonElement;
-    b.innerHTML = ICONS[icon] ?? "";
+    b.innerHTML = ICONS[key] ?? "";
     b.append(el("span", {}, label));
     if (cost) b.append(el("span", { class: "cost" }, cost));
     b.addEventListener("click", () => {
       this.setTool(sameTool(this.tool_, tool) ? { kind: "none" } : tool);
     });
-    this.toolButtons.set(icon, b);
+    this.toolButtons.set(key, b);
     return b;
   }
 
   private setTool(tool: Tool): void {
     this.tool_ = tool;
     if (tool.kind !== "none") this.selected = -1;
-    for (const [icon, b] of this.toolButtons) {
-      const active =
-        (tool.kind === "chop" && icon === "chop") ||
-        (tool.kind === "build" && BUILDING_DEFS[tool.building].name.toLowerCase() === icon);
-      b.setAttribute("aria-pressed", String(active));
+    const active = tool.kind === "none" ? "" : toolKey(tool);
+    for (const [key, b] of this.toolButtons) {
+      b.setAttribute("aria-pressed", String(key === active));
     }
   }
 

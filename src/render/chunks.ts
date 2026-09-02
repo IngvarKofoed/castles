@@ -1,6 +1,6 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material, type Object3D, type Scene as ThreeScene } from "three";
 import { chunkCoords, chunkCount } from "../sim/world/chunks";
-import { buildings, chopLayer, type Sim } from "../sim/know";
+import { buildings, chopLayer, razeLayer, wallLayer, type Sim } from "../sim/know";
 import { meshChunk, meshWaterChunk, type ChunkGeometry, type Scene, type WaterGeometry } from "./mesher";
 
 /**
@@ -10,8 +10,9 @@ import { meshChunk, meshWaterChunk, type ChunkGeometry, type Scene, type WaterGe
  * moved — which on first sync is all of them, since generation leaves every
  * version at 1 and nothing has been seen yet.
  *
- * Trees and buildings bake into these meshes, so felling a tree or finishing a
- * building only shows up because the sim bumped that chunk's version.
+ * Trees, buildings and wall segments bake into these meshes, so felling a
+ * tree, finishing a building or raising a palisade only shows up because the
+ * sim bumped that chunk's version.
  */
 export class ChunkRenderer {
   private readonly lastSeen: Uint32Array;
@@ -75,7 +76,13 @@ export class ChunkRenderer {
     this.targets = null;
     const world = this.sim.world;
     const { cx, cy } = chunkCoords(c, world.size);
-    const input: Scene = { world, buildings: buildings(this.sim), chopMap: chopLayer(this.sim) };
+    const input: Scene = {
+      world,
+      buildings: buildings(this.sim),
+      chopMap: chopLayer(this.sim),
+      wallMap: wallLayer(this.sim),
+      razeMap: razeLayer(this.sim),
+    };
 
     const terrainGeom = toGeometry(meshChunk(input, cx, cy));
     this.terrain[c] = this.replace(this.terrain[c], terrainGeom, this.terrainMaterial, true);

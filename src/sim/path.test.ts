@@ -1,32 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { adjacentToBuilding, escapePath, findPath, occupancy, passable, reachTile } from "./path";
 import { BuildingState, type Sim } from "./store";
+import { flatSim } from "./test-sim";
+import { WallState } from "./walls";
 import { Terrain, tileIndex } from "./world/world";
 
-/** A tiny flat world with nothing on it, so each test blocks exactly what it means to. */
-function flatSim(size = 12, height = 4): Sim {
-  const n = size * size;
-  return {
-    world: {
-      size,
-      seed: 1,
-      hmap: new Uint8Array(n).fill(height),
-      tmap: new Uint8Array(n).fill(Terrain.Grass),
-      treeMap: new Uint8Array(n),
-      chunkVersion: new Uint32Array(1).fill(1),
-    },
-    tick: 0,
-    rngState: 1,
-    nextId: 1,
-    colonists: [],
-    items: [],
-    buildings: [],
-    tasks: [],
-    chopMap: new Uint8Array(n),
-  };
-}
-
 const at = (sim: Sim, x: number, y: number): number => tileIndex(x, y, sim.world.size);
+
+/** `passable`, with this sim's layers — the shape every call site uses. */
+const walkable = (sim: Sim, x: number, y: number): boolean =>
+  passable(sim.world, sim.wallMap, occupancy(sim), x, y);
 
 describe("passability", () => {
   it("refuses water, trees and building footprints", () => {
@@ -48,14 +31,39 @@ describe("passability", () => {
       worker: -1,
       millProgress: -1,
     });
-    const occ = occupancy(sim);
-    expect(passable(sim.world, occ, 0, 0)).toBe(true);
-    expect(passable(sim.world, occ, 1, 1)).toBe(false);
-    expect(passable(sim.world, occ, 2, 1)).toBe(false);
-    expect(passable(sim.world, occ, 3, 1)).toBe(false);
-    expect(passable(sim.world, occ, 4, 2)).toBe(false);
-    expect(passable(sim.world, occ, 5, 1)).toBe(true);
-    expect(passable(sim.world, occ, -1, 0)).toBe(false);
+    expect(walkable(sim, 0, 0)).toBe(true);
+    expect(walkable(sim, 1, 1)).toBe(false);
+    expect(walkable(sim, 2, 1)).toBe(false);
+    expect(walkable(sim, 3, 1)).toBe(false);
+    expect(walkable(sim, 4, 2)).toBe(false);
+    expect(walkable(sim, 5, 1)).toBe(true);
+    expect(walkable(sim, -1, 0)).toBe(false);
+  });
+
+  it("refuses a raised palisade but lets folk through a gate or a blueprint", () => {
+    // The table `passable` states once: only a standing palisade stops anyone.
+    // A gate being walkable while the enclosure fill treats it as wall is the
+    // whole point of gates (docs/CONCEPT.md).
+    const sim = flatSim();
+    sim.wallMap[at(sim, 6, 6)] = WallState.Palisade;
+    sim.wallMap[at(sim, 6, 7)] = WallState.Gate;
+    sim.wallMap[at(sim, 6, 8)] = WallState.PalisadeBp;
+    sim.wallMap[at(sim, 6, 9)] = WallState.GateBp;
+    expect(walkable(sim, 6, 6)).toBe(false);
+    expect(walkable(sim, 6, 7)).toBe(true);
+    expect(walkable(sim, 6, 8)).toBe(true);
+    expect(walkable(sim, 6, 9)).toBe(true);
+  });
+
+  it("routes through a gate rather than around the wall it sits in", () => {
+    const sim = flatSim();
+    for (let y = 0; y < sim.world.size; y++) sim.wallMap[at(sim, 6, y)] = WallState.Palisade;
+    expect(findPath(sim, occupancy(sim), 2, 5, new Set([at(sim, 9, 5)]))).toBeNull();
+
+    sim.wallMap[at(sim, 6, 5)] = WallState.Gate;
+    const path = findPath(sim, occupancy(sim), 2, 5, new Set([at(sim, 9, 5)]));
+    expect(path).not.toBeNull();
+    expect(path).toContain(at(sim, 6, 5));
   });
 
   it("climbs a one-block step but not a two-block cliff", () => {
@@ -154,11 +162,10 @@ describe("escapePath", () => {
       worker: -1,
       millProgress: -1,
     });
-    const occ = occupancy(sim);
-    const out = escapePath(sim, occ, 4, 4);
+    const out = escapePath(sim, occupancy(sim), 4, 4);
     expect(out).not.toBeNull();
     expect(out!.length).toBe(1);
-    expect(passable(sim.world, occ, out![0] % sim.world.size, Math.floor(out![0] / sim.world.size))).toBe(true);
+    expect(walkable(sim, out![0] % sim.world.size, Math.floor(out![0] / sim.world.size))).toBe(true);
   });
 
   it("stays put when the tile is already free", () => {

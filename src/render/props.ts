@@ -1,15 +1,15 @@
 import { hash } from "../sim/world/noise";
-import { BuildingKind, BuildingState, type Building } from "../sim/know";
+import { BuildingKind, BuildingState, WallState, type Building } from "../sim/know";
 import { OVERLAY, PROP, PROP_JITTER, lerpHex } from "./palette";
 
 /**
- * The voxel props baked into chunk geometry: trees and buildings.
+ * The voxel props baked into chunk geometry: trees, buildings and walls.
  *
- * Both are *static world content* — a tree stands until it is chopped, a
- * building changes shape three times in its life — so they belong in the
- * chunk mesh next to terrain rather than in a second per-frame instanced
- * path. A change bumps `chunkVersion` and one chunk rebuilds
- * (docs/changelog/2026-09-01-dirty-chunk-neighbours.md).
+ * All three are *static world content* — a tree stands until it is chopped, a
+ * building changes shape three times in its life, a wall segment twice — so
+ * they belong in the chunk mesh next to terrain rather than in a second
+ * per-frame instanced path. A change bumps `chunkVersion` and one chunk
+ * rebuilds (docs/changelog/2026-09-01-dirty-chunk-neighbours.md).
  *
  * Models are ported from `mockups/mockup3d.html`: a prop is a box at
  * (x, groundY + height/2, z) sized (sx, height, sz), optionally spun about y.
@@ -31,12 +31,29 @@ export interface Box {
   color: number;
   /** Multiplies the colour — cheap shading between a prop's own parts. */
   shade: number;
+  /**
+   * Where the per-prop colour wobble is keyed from, defaulting to the box's
+   * own centre. A member that spans a tile in *pieces* — a palisade rail, now
+   * that it is built as arms meeting at the centre post — has to anchor all its
+   * pieces to one point, or each piece draws its own wobble and the join shows
+   * as a colour seam mid-tile.
+   */
+  jx: number;
+  jz: number;
 }
 
 const TREE_SALT = 0x1b873593;
+const WALL_SALT = 0xc2b2ae35;
 
 function box(x: number, base: number, z: number, sx: number, sy: number, sz: number, color: number, rot = 0, shade = 1): Box {
-  return { x, y: base + sy / 2, z, sx, sy, sz, rot, color, shade };
+  return { x, y: base + sy / 2, z, sx, sy, sz, rot, color, shade, jx: x, jz: z };
+}
+
+/** Wobble this box's colour as if it sat at (jx, jz). See `Box.jx`. */
+function anchorJitter(b: Box, jx: number, jz: number): Box {
+  b.jx = jx;
+  b.jz = jz;
+  return b;
 }
 
 /** Block height in world units — one voxel step. Shared with the mesher. */
@@ -164,6 +181,169 @@ function sawmill(cx: number, g: number, cz: number, b: Building, out: Box[]): vo
   out.push(box(cx, g + 0.3 * BH, b.y + b.h - 0.13, 0.44, 0.95 * BH, 0.1, PROP.door));
   // A stack of cut timber against the west wall says what happens here.
   out.push(box(b.x + 0.26, g + 0.3 * BH, cz, 0.32, 0.3 * BH, b.h - 0.7, PROP.plank, 0, 0.96));
+}
+
+/** Which way a segment's run goes, as a bitmask of neighbours holding wall. */
+export const WallLink = { West: 1, East: 2, North: 4, South: 8 } as const;
+
+/** Palisade height in world units, and the gate's taller frame. */
+const WALL_TOP = 2.2 * BH;
+const GATE_TOP = 2.9 * BH;
+
+/**
+ * A palisade's four possible arms.
+ *
+ * `s` is the stake-height key each arm borrows, and the pairing is deliberate:
+ * West and North both take −1, East and South both take +1, which is exactly
+ * what the old one-axis-per-tile code used for its two outer stakes. That makes
+ * a straight run — horizontal or vertical — keep the identical stake heights it
+ * had before this became corner-aware. The cost is that a four-way cross shows
+ * two heights across its four arms rather than four; a straight run is most of
+ * every wall and a cross is rare, so identity there is worth more.
+ */
+const ARMS = [
+  { bit: WallLink.West, dx: -1, dz: 0, s: -1 },
+  { bit: WallLink.East, dx: 1, dz: 0, s: 1 },
+  { bit: WallLink.North, dx: 0, dz: -1, s: -1 },
+  { bit: WallLink.South, dx: 0, dz: 1, s: 1 },
+] as const;
+
+/** Rail heights as fractions of the palisade, and its cross-section. */
+const RAIL_HEIGHTS = [0.4, 0.76] as const;
+const RAIL_THICK = 0.11;
+const RAIL_DEPTH = 0.14 * BH;
+const STAKE_THICK = 0.19;
+/** How far from the tile centre a stake stands, along its arm. */
+const STAKE_OUT = 0.32;
+/**
+ * How far an arm's rails reach *past* the tile centre. Without it two arms
+ * meeting at a corner would each stop dead on the centre line and leave a
+ * hairline of daylight at the join; with it they interpenetrate inside the
+ * centre post, where the surplus faces are enclosed and never drawn.
+ */
+const RAIL_OVERLAP = 0.07;
+const ARM_LEN = 0.5 + RAIL_OVERLAP;
+const ARM_MID = (0.5 - RAIL_OVERLAP) / 2;
+
+/**
+ * One wall segment on tile (tx, ty).
+ *
+ * Built from the palette rather than from a recipe — the mockup's `fence()` is
+ * a single low pole, inspiration only; `deck()` above is where the rail
+ * assembly comes from. A gate is two heavier posts either side of the opening
+ * under a lintel, leaving the middle open, because the gap runs *through* the
+ * wall and that is the way folk walk.
+ *
+ * **A palisade is a centre post plus an arm per linked direction** — stakes and
+ * rails per *arm*, never a run along one chosen axis. That is what makes
+ * corners, T-junctions and crosses come out right; a straight run is the
+ * two-opposite-arms case and looks exactly as it did before.
+ *
+ * `links` says which neighbours hold wall (any state, so a drawn line reads as
+ * a line before it is raised). Gate and blueprint variants still take a single
+ * dominant axis — a gateway has a side you walk through, so it has to choose.
+ * `markChunkDirty` covers every chunk within one tile of an edit, which is
+ * exactly the reach this function needs, so orientation propagates to the
+ * neighbours of a new segment for free (docs/changelog/2026-09-01-dirty-chunk-neighbours.md).
+ *
+ * A raze-marked segment's timber bakes toward gold at the same strength a
+ * designated canopy does: the base diamond is the precise mark, this is the one
+ * visible from across the map.
+ */
+export function wallBoxes(
+  tx: number,
+  ty: number,
+  h: number,
+  seed: number,
+  out: Box[],
+  state: number,
+  links: number,
+  razeMarked = false,
+): void {
+  const g = h * BH;
+  const x = tx + 0.5;
+  const z = ty + 0.5;
+  const axisX = (links & (WallLink.West | WallLink.East)) !== 0 || (links & (WallLink.North | WallLink.South)) === 0;
+  const mark = (colour: number): number =>
+    razeMarked ? lerpHex(colour, OVERLAY.gold, DESIGNATED_TINT) : colour;
+  // Along the run, and across it: every part below is placed in these two.
+  const along = (d: number): number => (axisX ? x + d : x);
+  const across = (d: number): number => (axisX ? z : z + d);
+  const spanX = (long: number, short: number): number => (axisX ? long : short);
+  const spanZ = (long: number, short: number): number => (axisX ? short : long);
+
+  if (state === WallState.PalisadeBp || state === WallState.GateBp) {
+    // The building blueprint's grammar, at one tile: a scraped plate and a
+    // stake at each end of the run. A *gate* blueprint stands its stakes
+    // taller and joins them with a crossbar, so a planned gate is visible as a
+    // gate in a drawn line rather than only once it is standing.
+    const gate = state === WallState.GateBp;
+    const post = gate ? 1.1 * BH : 0.55 * BH;
+    out.push(box(x, g, z, 0.86, 0.06, 0.86, mark(PROP.stake), 0, 0.85));
+    for (const s of [-1, 1]) {
+      out.push(box(along(s * 0.34), g, across(s * 0.34), 0.13, post, 0.13, mark(PROP.stake)));
+    }
+    if (gate) {
+      out.push(box(x, g + post, z, spanX(0.8, 0.1), 0.12 * BH, spanZ(0.8, 0.1), mark(PROP.stake), 0, 0.9));
+    }
+    return;
+  }
+
+  if (state === WallState.Gate) {
+    for (const s of [-1, 1]) {
+      out.push(
+        box(along(s * 0.38), g, across(s * 0.38), spanX(0.24, 0.3), GATE_TOP, spanZ(0.24, 0.3), mark(PROP.trunk)),
+      );
+    }
+    // The lintel, spanning the two posts and overhanging them a little.
+    out.push(box(x, g + GATE_TOP, z, spanX(1.0, 0.34), 0.36 * BH, spanZ(1.0, 0.34), mark(PROP.timber), 0, 0.94));
+    return;
+  }
+
+  // A palisade is a centre post plus one arm per linked direction, never a run
+  // along a single chosen axis. Picking one axis per tile is what made every
+  // corner render as a straight segment — stakes across the turn instead of
+  // along it, and the perpendicular run's rails stopping half a tile short of
+  // the join, which left a hole at every corner and made T and cross junctions
+  // wrong by construction. Arms cost nothing extra to get right: each one is
+  // its own half-tile piece, so a corner, a T and a cross all just work.
+  const stake = (ox: number, oz: number, s: number): void => {
+    const j = hash(tx * 3 + s + 1, ty * 3 + s + 1, seed ^ WALL_SALT);
+    out.push(
+      box(x + ox, g, z + oz, STAKE_THICK, WALL_TOP * (0.88 + j * 0.24), STAKE_THICK, mark(PROP.trunk)),
+    );
+  };
+
+  stake(0, 0, 0);
+  // A lone segment has no arms to take orientation from, so it borrows the
+  // east-west pair: that is what it looked like before, and a single click
+  // should still read as a piece of wall rather than as a solitary post.
+  const arms = links === 0 ? WallLink.West | WallLink.East : links;
+  for (const arm of ARMS) {
+    if (!(arms & arm.bit)) continue;
+    stake(arm.dx * STAKE_OUT, arm.dz * STAKE_OUT, arm.s);
+    for (const fy of RAIL_HEIGHTS) {
+      out.push(
+        anchorJitter(
+          box(
+            x + arm.dx * ARM_MID,
+            g + fy * WALL_TOP,
+            z + arm.dz * ARM_MID,
+            arm.dx !== 0 ? ARM_LEN : RAIL_THICK,
+            RAIL_DEPTH,
+            arm.dz !== 0 ? ARM_LEN : RAIL_THICK,
+            mark(PROP.timber),
+            0,
+            0.9,
+          ),
+          // Both of a run's rail halves wobble as one member, so the tile
+          // centre never shows a colour seam where the arms meet.
+          x,
+          z,
+        ),
+      );
+    }
+  }
 }
 
 function treeStyle(tx: number, ty: number, seed: number): number {

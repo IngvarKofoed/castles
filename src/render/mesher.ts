@@ -2,8 +2,9 @@ import { Color } from "three";
 import { CHUNK } from "../sim/world/chunks";
 import { Terrain, tileIndex, type World } from "../sim/world/world";
 import type { Building } from "../sim/know";
+import { WallState } from "../sim/know";
 import { tileColor } from "./palette";
-import { BH, buildingBoxes, propJitter, treeBoxes, type Box } from "./props";
+import { BH, WallLink, buildingBoxes, propJitter, treeBoxes, wallBoxes, type Box } from "./props";
 
 export { BH };
 
@@ -26,6 +27,14 @@ export interface Scene {
    * bump the tile's chunk version.
    */
   readonly chopMap: Uint8Array;
+  /**
+   * The wall layer and its dismantle designations, same deal: a segment's
+   * posts and rails bake, and a raze mark bakes into their colour, so both
+   * placing and marking bump chunk versions. Wall orientation is read from the
+   * *world*, not from the chunk, so a run reads continuously across a seam.
+   */
+  readonly wallMap: Uint8Array;
+  readonly razeMap: Uint8Array;
 }
 
 /**
@@ -151,10 +160,21 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
   // call and take the same contact shading. A prop's own vertical fraction
   // feeds aBlockY, matching the mockup's per-box vBlockY.
   const boxes: Box[] = [];
+  const walled = (x: number, y: number): boolean =>
+    x >= 0 && x < size && y >= 0 && y < size && scene.wallMap[tileIndex(x, y, size)] !== WallState.None;
+
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const i = tileIndex(x, y, size);
       if (world.treeMap[i]) treeBoxes(x, y, world.hmap[i], world.seed, boxes, scene.chopMap[i] === 1);
+      const wall = scene.wallMap[i];
+      if (wall === WallState.None) continue;
+      const links =
+        (walled(x - 1, y) ? WallLink.West : 0) |
+        (walled(x + 1, y) ? WallLink.East : 0) |
+        (walled(x, y - 1) ? WallLink.North : 0) |
+        (walled(x, y + 1) ? WallLink.South : 0);
+      wallBoxes(x, y, world.hmap[i], world.seed, boxes, wall, links, scene.razeMap[i] === 1);
     }
   }
   // A building is emitted whole by the chunk owning its origin tile, so a
@@ -167,7 +187,9 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
 
   const boxColor = new Color();
   for (const p of boxes) {
-    boxColor.setHex(p.color).multiplyScalar(p.shade * propJitter(p.x, p.z, world.seed));
+    // Keyed to the box's jitter anchor, not its centre: a member built in
+    // pieces (a palisade rail split into arms) must not wobble per piece.
+    boxColor.setHex(p.color).multiplyScalar(p.shade * propJitter(p.jx, p.jz, world.seed));
     r = boxColor.r;
     g = boxColor.g;
     b = boxColor.b;

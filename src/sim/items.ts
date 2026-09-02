@@ -1,5 +1,7 @@
 import { occupancy, passable, type Occupancy } from "./path";
 import { Loc, mintId, type Item, type Sim } from "./store";
+import { WallState } from "./walls";
+import { tileIndex } from "./world/world";
 
 /** Items on a given ground tile, in id order. */
 export function groundItemsAt(sim: Sim, x: number, y: number): Item[] {
@@ -16,13 +18,26 @@ export function countItems(sim: Sim, type: number): number {
  * The nearest tile at or around (x, y) an item may be put down on. Ground
  * items never sit under a building or in water, so a drop next to a footprint
  * has to look outward; the spiral is ordered so the choice is deterministic.
+ *
+ * It skips **any** wall tile, blueprints and gates included — which is more
+ * than `passable` refuses, because a gate and a blueprint can both be walked
+ * over. A log lying on a tile where a wall is or will be would block the very
+ * segment it was fetched for (`canPlaceWall` refuses a tile with a ground item
+ * on it), so a refund or a chop drop must never land there. Anything already
+ * lying on a tile older than the blueprint is swept off when the segment
+ * completes.
  */
 export function dropTile(sim: Sim, occ: Occupancy, x: number, y: number): [number, number] | null {
+  const size = sim.world.size;
   for (let r = 0; r <= 6; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (r > 0 && Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-        if (passable(sim.world, occ, x + dx, y + dy)) return [x + dx, y + dy];
+        const tx = x + dx;
+        const ty = y + dy;
+        if (!passable(sim.world, sim.wallMap, occ, tx, ty)) continue;
+        if (sim.wallMap[tileIndex(tx, ty, size)] !== WallState.None) continue;
+        return [tx, ty];
       }
     }
   }

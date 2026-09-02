@@ -119,6 +119,25 @@ Drawn by `src/render/`, same vocabulary as the panels:
   it can cover half the screen. Square corners, solid lines: never dashed,
   never animated — marching ants are motion, and nothing here moves. It
   exists only while the drag is held.
+- **Enclosure** (which ground the wall has claimed): a **keylined sage
+  boundary line traced along the inside edge of the enclosing wall**, at
+  `0.85` alpha and ~0.11 tiles wide, over a **very faint sage interior
+  fill** at `0.14`. Assembled per tile — a bar on every side of an enclosed
+  tile whose neighbour is *not* enclosed — so it traces whatever shape the
+  player drew.
+
+  **Boundary-first, and the ordering is the point.** By this section's own
+  measurement a faint sage fill against grass is invisible on its own, so
+  the line is what carries the read and the wash only says which side of it
+  is inside. Raising the fill instead is the wrong repair: at any strength
+  where a wash reads by itself it is tinting the world, and the world is the
+  hero.
+
+  It is shown **only while a wall-family tool is active** (wall, gate,
+  raze), never permanently. Sage is right here for the same reason it is
+  right on a placement ghost — this is ground the colony may use — and the
+  two never appear in conflict, because the run ghost sits on wall tiles and
+  wall tiles are never enclosed ground.
 
 Three rules the world imposes on all three, added once the first overlays
 were measured against real terrain (`2026-09-01-tick-and-labour`):

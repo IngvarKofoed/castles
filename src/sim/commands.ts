@@ -16,6 +16,8 @@ import {
   type Colonist,
   type Sim,
 } from "./store";
+import { WallState, canPlaceWall } from "./walls";
+import { markEnclosureStale } from "./walls/enclosure";
 import { markChunkDirty, tileIndex, type World } from "./world/world";
 
 /**
@@ -45,7 +47,19 @@ export type Command =
   | { kind: "place"; building: BuildingKindValue; x: number; y: number }
   | { kind: "cancelBlueprint"; building: number }
   | { kind: "staff"; building: number }
-  | { kind: "unstaff"; building: number };
+  | { kind: "unstaff"; building: number }
+  /**
+   * A drawn wall run, as one command — the same "one gesture, one entry in the
+   * log" rule `designateChop` follows. The tool sends only the tiles it judged
+   * valid, so one bad tile in the middle of a drag costs that segment and not
+   * the run; the sim re-checks each of them anyway, because a command may be
+   * replayed against a world a tick older than the preview.
+   */
+  | { kind: "placeWall"; tiles: number[] }
+  | { kind: "placeGate"; tiles: number[] }
+  /** Mark wall segments for dismantling. Additive, like `designateChop`. */
+  | { kind: "designateRaze"; tiles: number[] }
+  | { kind: "cancelRaze"; x: number; y: number };
 
 export function applyCommands(sim: Sim, commands: readonly Command[]): void {
   for (const command of commands) applyCommand(sim, command);
@@ -65,6 +79,14 @@ function applyCommand(sim: Sim, command: Command): void {
       return staff(sim, command.building);
     case "unstaff":
       return unstaff(sim, command.building);
+    case "placeWall":
+      return placeWalls(sim, command.tiles, WallState.PalisadeBp);
+    case "placeGate":
+      return placeWalls(sim, command.tiles, WallState.GateBp);
+    case "designateRaze":
+      return designateRazeTiles(sim, command.tiles);
+    case "cancelRaze":
+      return designateRaze(sim, command.x, command.y, 0);
   }
 }
 
@@ -96,6 +118,55 @@ function designate(sim: Sim, x: number, y: number, on: number): void {
     const occ = occupancy(sim);
     for (const task of [...sim.tasks]) {
       if (task.kind === TaskKind.Chop && task.x === x && task.y === y) abandonTask(sim, occ, task);
+    }
+  }
+}
+
+/**
+ * Write wall blueprints into `wallMap`. Only tiles that still pass
+ * `canPlaceWall` take, so an invalid tile in a run is skipped rather than
+ * killing it.
+ *
+ * Nothing is evicted here: a blueprint is walkable, and stays walkable until
+ * the segment is actually raised. Placing one does move the enclosure, though
+ * — a wall tile is not enclosed ground even before it stands — so the
+ * recompute is flagged.
+ */
+function placeWalls(sim: Sim, tiles: readonly number[], state: number): void {
+  const size = sim.world.size;
+  for (const i of tiles) {
+    if (!Number.isInteger(i) || i < 0 || i >= sim.wallMap.length) continue;
+    const x = i % size;
+    const y = (i - x) / size;
+    if (!canPlaceWall(sim, x, y)) continue;
+    sim.wallMap[i] = state;
+    markChunkDirty(sim.world, x, y);
+    markEnclosureStale(sim);
+  }
+}
+
+/** Mark a whole selection for dismantling. Only tiles holding a wall take. */
+function designateRazeTiles(sim: Sim, tiles: readonly number[]): void {
+  const size = sim.world.size;
+  for (const i of tiles) {
+    if (!Number.isInteger(i) || i < 0 || i >= sim.razeMap.length) continue;
+    designateRaze(sim, i % size, Math.floor(i / size), 1);
+  }
+}
+
+function designateRaze(sim: Sim, x: number, y: number, on: number): void {
+  if (!inBounds(sim.world, x, y)) return;
+  const i = tileIndex(x, y, sim.world.size);
+  if (on && sim.wallMap[i] === WallState.None) return;
+  if (sim.razeMap[i] === on) return;
+  sim.razeMap[i] = on;
+  // Like a chop mark, half of this is baked — a doomed segment's timber bakes
+  // gold-shifted — so marking one is a geometry change.
+  markChunkDirty(sim.world, x, y);
+  if (!on) {
+    const occ = occupancy(sim);
+    for (const task of [...sim.tasks]) {
+      if (task.kind === TaskKind.Raze && task.x === x && task.y === y) abandonTask(sim, occ, task);
     }
   }
 }

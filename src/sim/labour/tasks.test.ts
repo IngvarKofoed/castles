@@ -14,7 +14,7 @@ import {
 } from "../store";
 import { advanceTick } from "../tick";
 import { inspect } from "../know";
-import { SAWMILL_INPUT_CAP, SAWMILL_OUTPUT_CAP } from "../tuning";
+import { SAWMILL_INPUT_CAP, SAWMILL_OUTPUT_CAP, TASK_PRIORITY } from "../tuning";
 import { generateTasks } from "./tasks";
 
 const SEED = 20260901;
@@ -53,6 +53,34 @@ function nearestTrees(sim: Sim, x: number, y: number, count: number): [number, n
   }
   return out;
 }
+
+describe("the priority table", () => {
+  /**
+   * `TASK_PRIORITY` holds bare numbers, because `tuning.ts` may not import
+   * `TaskKind` as a value without closing a load-order-dependent cycle. This
+   * is what stops that from being a silent coupling: it names every entry, so
+   * a renumbered enum — the exact bug appending `BuildWall` and `Raze` was
+   * meant to design out — fails here instead of quietly reordering the colony's
+   * work.
+   */
+  it("works the kinds in the order the spec names, by name", () => {
+    const nameOf = (value: number): string =>
+      Object.entries(TaskKind).find(([, v]) => v === value)?.[0] ?? `unknown:${value}`;
+    expect(TASK_PRIORITY.map(nameOf)).toEqual([
+      "Build",
+      "BuildWall",
+      "HaulToSite",
+      "HaulToInput",
+      "Chop",
+      "Raze",
+      "HaulToStore",
+    ]);
+  });
+
+  it("covers every live task kind exactly once, or a kind would never be worked", () => {
+    expect([...TASK_PRIORITY].sort((a, b) => a - b)).toEqual(Object.values(TaskKind).sort((a, b) => a - b));
+  });
+});
 
 describe("task generation is idempotent", () => {
   it("does not pile up duplicate haul tasks for one blueprint", () => {
@@ -215,7 +243,7 @@ describe("the pool/slot tension", () => {
       Math.floor(worker.y) >= mill.y &&
       Math.floor(worker.y) < mill.y + mill.h;
     expect(inFootprint).toBe(false);
-    expect(passable(sim.world, occupancy(sim), Math.floor(worker.x), Math.floor(worker.y))).toBe(true);
+    expect(passable(sim.world, sim.wallMap, occupancy(sim), Math.floor(worker.x), Math.floor(worker.y))).toBe(true);
 
     // And back in the pool: they take queue work again. Loose logs alone
     // generate nothing without a stockpile to put them in, so the work here
@@ -253,7 +281,7 @@ describe("the pool/slot tension", () => {
 
     applyCommands(sim, [{ kind: "unstaff", building: mill.id }]);
     expect(worker.inside).toBe(0);
-    expect(passable(sim.world, occupancy(sim), Math.floor(worker.x), Math.floor(worker.y))).toBe(true);
+    expect(passable(sim.world, sim.wallMap, occupancy(sim), Math.floor(worker.x), Math.floor(worker.y))).toBe(true);
   });
 
   it("unstaffing mid-cut keeps the milling progress on the building", () => {
