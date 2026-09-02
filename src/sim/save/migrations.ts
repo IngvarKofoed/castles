@@ -28,17 +28,12 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
    * **Task kinds need no migration**, which is the whole reason `BuildWall`
    * and `Raze` were appended to `TaskKind` rather than slotted into its
    * priority order: a v1 save's live tasks still mean exactly what they meant.
-   *
-   * The size is read off the save's own world rather than `WORLD_SIZE` — a
-   * migration describes the file it is handed, not the build reading it. A
-   * nonsense size yields zero-length layers and `assertSim` refuses the save,
-   * which is the correct outcome: this rung guesses at nothing.
+   * The same held when `Mine` and `Terraform` were appended for v3, and it
+   * keeps holding for exactly as long as nobody inserts.
    */
   1: (state) => {
-    const s = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
-    const world = s.world && typeof s.world === "object" ? (s.world as Record<string, unknown>) : {};
-    const size = typeof world.size === "number" && Number.isInteger(world.size) && world.size > 0 ? world.size : 0;
-    const tiles = size * size;
+    const s = object(state);
+    const tiles = tileCount(s);
     return {
       ...s,
       wallMap: new Uint8Array(tiles),
@@ -47,4 +42,54 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
       enclosureDirty: 0,
     };
   },
+
+  /**
+   * 2 → 3: the stone tier. Two zero-filled intent layers — nothing was
+   * designated for quarrying or levelling in a v2 colony — **and the two new
+   * stockpile filters stamped on to every building that already exists.**
+   *
+   * That second half is the whole reason this rung is more than a line. The
+   * accept flags are per-good fields on `Building`, and a v2 building has no
+   * `acceptRock`/`acceptBlock` at all: left alone they read as `undefined`,
+   * `stockpileAccepts` refuses, and every stockpile in every migrated colony
+   * would quietly refuse rock and blocks *forever* while the mason jammed at
+   * output cap. Nothing would error; the colony would simply stop working, and
+   * the player would have no way to tell why.
+   *
+   * Stamped to 1, matching what `place` gives a new building — a v2 player
+   * never chose to exclude a good that did not exist, so the default is the
+   * only honest reading of their intent.
+   */
+  2: (state) => {
+    const s = object(state);
+    const tiles = tileCount(s);
+    return {
+      ...s,
+      mineMap: new Uint8Array(tiles),
+      terraformMap: new Uint8Array(tiles),
+      buildings: Array.isArray(s.buildings)
+        ? // Non-object entries pass through untouched so `assertSim` still
+          // refuses the save rather than this rung papering over it.
+          s.buildings.map((b) =>
+            b && typeof b === "object" ? { ...(b as Record<string, unknown>), acceptRock: 1, acceptBlock: 1 } : b,
+          )
+        : s.buildings,
+    };
+  },
 };
+
+function object(state: unknown): Record<string, unknown> {
+  return state && typeof state === "object" ? (state as Record<string, unknown>) : {};
+}
+
+/**
+ * Tiles in the save's **own** world. Read off the file rather than from
+ * `WORLD_SIZE`: a migration describes the save it is handed, not the build
+ * reading it. A nonsense size yields zero-length layers and `assertSim`
+ * refuses the save, which is the correct outcome — a rung guesses at nothing.
+ */
+function tileCount(s: Record<string, unknown>): number {
+  const world = object(s.world);
+  const size = typeof world.size === "number" && Number.isInteger(world.size) && world.size > 0 ? world.size : 0;
+  return size * size;
+}

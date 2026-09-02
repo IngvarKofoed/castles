@@ -37,6 +37,8 @@ The game promises calm; the UI must keep it:
 | `rust` | `#b8503a` | **slots & invalidity**: slot workers, invalid placement (text: `#e08a72`) |
 | `timber` | `#a9713f` | log resource icon |
 | `plank` | `#d0b078` | plank resource icon |
+| `rock` | `#8a9096` | rock resource icon (quarried rubble: cool, raw) |
+| `block` | `#b3ab97` | block resource icon (cut stone: warmer, paler) |
 
 World colors live in `src/render/palette.ts` and are not UI colors.
 
@@ -163,14 +165,28 @@ were measured against real terrain (`2026-09-01-tick-and-labour`):
   partly hidden mark. Tinting a baked object means marking it is a geometry
   change: whatever bakes it has to be re-baked.
 
+  The rule generalises to every mark whose subject stands up out of the
+  ground, at the same 15%: a wall segment marked for dismantling gold-shifts
+  its timber, and a rock outcrop marked for quarrying gold-shifts **its top
+  face only** — the surface being worked warms up while the cliff faces stay
+  rock, so it reads as a marked top rather than as a gold boulder. A mark on
+  the *ground itself* has no second half, and that is not an omission: a
+  levelling designation is the base diamond alone, and so is the one
+  designation that dirties no chunk.
+
 ## Layout regions
 
 - **Ribbon** — full-width top bar: brand, resource readouts (icon + value +
   faint caps label), a `line-soft` divider, folk/idle counts, then
   right-aligned speed group (pause, ×1, ×2, ×4 — active gets the gold
   treatment) and the day/time caption.
-- **Build rail** — left edge, 62px wide, below the ribbon: section label
-  then vertical tools.
+- **Build rail** — left edge, 62px wide, below the ribbon: a 10px caps
+  section head, then that section's vertical tools, repeating. Sections are
+  by *what the tool does to the world* — **Orders** (tell people to work on
+  what is already there), **Build** (put a building down), **Walls** (draw a
+  line) — and each head after the first carries a `line-soft` rule above it.
+  The rail is bounded by the viewport and scrolls inside itself rather than
+  running off the bottom edge.
 - **Inspector** — right edge, 246px, below the ribbon; a second panel may
   sit above the bottom edge.
 

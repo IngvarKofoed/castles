@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hashSim } from "../hash";
 import { createSim } from "../store";
+import { canMine } from "../ground";
 import { advanceTick } from "../tick";
 import type { Command } from "../commands";
 import { tileIndex } from "../world/world";
@@ -24,7 +25,33 @@ function playedSim(ticks: number): ReturnType<typeof createSim> {
 function script(sim: ReturnType<typeof createSim>): Command[] {
   if (sim.tick === 0) return [{ kind: "designateChop", tiles: nearestTrees(sim, 12) }];
   if (sim.tick === 5) return [{ kind: "place", building: 0, x: 128, y: 128 }];
+  // A mason, a quarry mark and a levelling area, so the drift test below runs
+  // over a colony that is actually using the v3 fields rather than one whose
+  // new layers are all zeroes — a save that carries no rock proves nothing
+  // about a save that does.
+  if (sim.tick === 40) return [{ kind: "place", building: 2, x: 122, y: 122 }];
+  if (sim.tick === 60) return [{ kind: "designateMine", tiles: nearestRock(sim, 2) }];
+  if (sim.tick === 80) {
+    const tiles = [tileIndex(134, 134, sim.world.size), tileIndex(135, 134, sim.world.size)];
+    return [{ kind: "designateTerraform", tiles, target: 5 }];
+  }
   return [];
+}
+
+/** The nearest quarriable outcrops, as tile indices. */
+function nearestRock(sim: ReturnType<typeof createSim>, count: number): number[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  const out: number[] = [];
+  for (let r = 1; r < size && out.length < count; r++) {
+    for (let dy = -r; dy <= r && out.length < count; dy++) {
+      for (let dx = -r; dx <= r && out.length < count; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        if (canMine(sim, centre + dx, centre + dy)) out.push(tileIndex(centre + dx, centre + dy, size));
+      }
+    }
+  }
+  return out;
 }
 
 function nearestTrees(sim: ReturnType<typeof createSim>, count: number): number[] {
@@ -236,6 +263,42 @@ describe("the migrations ladder", () => {
   it("leaves a nonsense v1 state to be refused rather than guessing a size", () => {
     const migrated = MIGRATIONS[1]({ world: { size: "big" } }) as Record<string, unknown>;
     expect((migrated.wallMap as Uint8Array).length).toBe(0);
+  });
+
+  it("gives a v2 state the quarry and levelling layers", () => {
+    const migrated = MIGRATIONS[2]({ world: { size: 8 }, tick: 9, buildings: [] }) as Record<string, unknown>;
+    for (const key of ["mineMap", "terraformMap"] as const) {
+      expect(migrated[key]).toBeInstanceOf(Uint8Array);
+      expect((migrated[key] as Uint8Array).length).toBe(64);
+    }
+    expect(migrated.tick).toBe(9);
+  });
+
+  /**
+   * The rung's load-bearing half. A v2 building has no `acceptRock` or
+   * `acceptBlock` at all, and a stockpile whose flags read `undefined` refuses
+   * the new goods **forever** — silently, with the mason jammed at output cap
+   * and nothing in the game able to explain why. So the migration stamps them,
+   * and this is what says it did.
+   */
+  it("stamps the new stockpile filters on to every building a v2 save holds", () => {
+    const migrated = MIGRATIONS[2]({
+      world: { size: 4 },
+      buildings: [{ id: 1, kind: 0, acceptLog: 1, acceptPlank: 0 }, { id: 2, kind: 1 }],
+    }) as Record<string, unknown>;
+    const buildings = migrated.buildings as Record<string, unknown>[];
+    expect(buildings.map((b) => [b.acceptRock, b.acceptBlock])).toEqual([
+      [1, 1],
+      [1, 1],
+    ]);
+    // A filter the player had already turned off stays off: the rung adds the
+    // two goods that did not exist, and touches nothing else.
+    expect(buildings[0].acceptPlank).toBe(0);
+  });
+
+  it("passes a non-object building through so the save is refused, not patched", () => {
+    const migrated = MIGRATIONS[2]({ world: { size: 4 }, buildings: [null, 7] }) as Record<string, unknown>;
+    expect(migrated.buildings).toEqual([null, 7]);
   });
 });
 

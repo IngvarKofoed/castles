@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { adjacentToBuilding, escapePath, findPath, occupancy, passable, reachTile } from "./path";
 import { BuildingState, type Sim } from "./store";
-import { flatSim } from "./test-sim";
+import { flatSim, testBuilding } from "./test-sim";
 import { WallState } from "./walls";
 import { Terrain, tileIndex } from "./world/world";
 
@@ -16,21 +16,7 @@ describe("passability", () => {
     const sim = flatSim();
     sim.world.tmap[at(sim, 1, 1)] = Terrain.Water;
     sim.world.treeMap[at(sim, 2, 1)] = 1;
-    sim.buildings.push({
-      id: 1,
-      kind: 0,
-      x: 3,
-      y: 1,
-      w: 2,
-      h: 2,
-      state: BuildingState.Active,
-      progress: 0,
-      reservedIncoming: 0,
-      acceptLog: 1,
-      acceptPlank: 1,
-      worker: -1,
-      millProgress: -1,
-    });
+    sim.buildings.push(testBuilding({ id: 1, x: 3, y: 1 }));
     expect(walkable(sim, 0, 0)).toBe(true);
     expect(walkable(sim, 1, 1)).toBe(false);
     expect(walkable(sim, 2, 1)).toBe(false);
@@ -124,18 +110,7 @@ describe("reaching things", () => {
   it("rings a footprint without including it", () => {
     const sim = flatSim();
     const b = { x: 4, y: 4, w: 2, h: 2 };
-    sim.buildings.push({
-      id: 1,
-      kind: 0,
-      ...b,
-      state: BuildingState.Active,
-      progress: 0,
-      reservedIncoming: 0,
-      acceptLog: 1,
-      acceptPlank: 1,
-      worker: -1,
-      millProgress: -1,
-    });
+    sim.buildings.push(testBuilding({ id: 1, ...b }));
     const goals = adjacentToBuilding(sim, occupancy(sim), b);
     expect(goals.size).toBe(8);
     expect(goals.has(at(sim, 4, 4))).toBe(false);
@@ -147,21 +122,7 @@ describe("reaching things", () => {
 describe("escapePath", () => {
   it("walks someone out of a footprint dropped on top of them", () => {
     const sim = flatSim();
-    sim.buildings.push({
-      id: 1,
-      kind: 0,
-      x: 4,
-      y: 4,
-      w: 2,
-      h: 2,
-      state: BuildingState.Blueprint,
-      progress: 0,
-      reservedIncoming: 0,
-      acceptLog: 1,
-      acceptPlank: 1,
-      worker: -1,
-      millProgress: -1,
-    });
+    sim.buildings.push(testBuilding({ id: 1, x: 4, y: 4, state: BuildingState.Blueprint }));
     const out = escapePath(sim, occupancy(sim), 4, 4);
     expect(out).not.toBeNull();
     expect(out!.length).toBe(1);

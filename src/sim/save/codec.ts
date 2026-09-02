@@ -34,7 +34,7 @@ import { MIGRATIONS } from "./migrations";
  * the matching entry to `MIGRATIONS` — the fixture test in this folder fails
  * loudly if an old save stops loading, which is the point.
  */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /** A save that cannot be read, with a message meant for the menu's note row. */
 export class SaveError extends Error {
@@ -200,6 +200,8 @@ function assertSim(raw: unknown): Sim {
   layer(world.tmap, tiles);
   layer(world.treeMap, tiles);
   layer(s.chopMap, tiles);
+  layer(s.mineMap, tiles);
+  layer(s.terraformMap, tiles);
   layer(s.wallMap, tiles);
   layer(s.razeMap, tiles);
   layer(s.insideMap, tiles);

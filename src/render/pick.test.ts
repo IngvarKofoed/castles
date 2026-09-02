@@ -2,8 +2,17 @@ import { OrthographicCamera, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { WallState } from "../sim/know";
 import { createSim } from "../sim/store";
+import { Terrain } from "../sim/world/world";
 import { tileIndex } from "../sim/world/world";
-import { rectFrom, rectSpan, treeTilesInRect, wallRun, wallTilesInRect } from "./pick";
+import {
+  levelTilesInRect,
+  rectFrom,
+  rectSpan,
+  rockTilesInRect,
+  treeTilesInRect,
+  wallRun,
+  wallTilesInRect,
+} from "./pick";
 
 /** A canvas stub: `treeTilesInRect` only ever asks for the bounding rect. */
 function canvasStub(width = 800, height = 600): HTMLCanvasElement {
@@ -168,5 +177,58 @@ describe("treeTilesInRect", () => {
       const y = (i - x) / size;
       expect(tileIndex(x, y, size)).toBe(i);
     }
+  });
+});
+
+describe("rockTilesInRect", () => {
+  it("returns only quarriable outcrops, and skips ones already marked", () => {
+    const sim = createSim(20260901);
+    const size = sim.world.size;
+    const centre = Math.floor(size / 2);
+    const camera = topDownCamera(centre, 40);
+    const canvas = canvasStub();
+    const all = { left: 0, top: 0, right: 800, bottom: 600 };
+
+    // The spawn clearing is grass, so there is nothing to quarry until an
+    // outcrop is put there.
+    expect(rockTilesInRect(sim, camera, canvas, all)).toEqual([]);
+
+    for (const [dx, dy] of [
+      [0, 0],
+      [1, 0],
+    ]) {
+      const i = tileIndex(centre + dx, centre + dy, size);
+      sim.world.tmap[i] = Terrain.Rock;
+      sim.world.hmap[i] = 7;
+    }
+    const found = rockTilesInRect(sim, camera, canvas, all);
+    expect(found).toHaveLength(2);
+
+    for (const i of found) sim.mineMap[i] = 1;
+    expect(rockTilesInRect(sim, camera, canvas, all)).toEqual([]);
+  });
+});
+
+describe("levelTilesInRect", () => {
+  it("returns eligible ground that is not already at the target", () => {
+    const sim = createSim(20260901);
+    const size = sim.world.size;
+    const centre = Math.floor(size / 2);
+    const camera = topDownCamera(centre, 8);
+    const canvas = canvasStub();
+    const all = { left: 0, top: 0, right: 800, bottom: 600 };
+
+    // The clearing is flat at 4, so levelling it *to* 4 is a no-op selection
+    // and levelling it to 5 catches every tile in the box.
+    expect(levelTilesInRect(sim, camera, canvas, all, 4)).toEqual([]);
+    const raise = levelTilesInRect(sim, camera, canvas, all, 5);
+    expect(raise.length).toBeGreaterThan(0);
+    for (const i of raise) expect(sim.world.hmap[i]).toBe(4);
+
+    // Rock is never eligible: quarrying is the only way an outcrop comes down.
+    const rock = tileIndex(centre, centre, size);
+    sim.world.tmap[rock] = Terrain.Rock;
+    sim.world.hmap[rock] = 7;
+    expect(levelTilesInRect(sim, camera, canvas, all, 5)).not.toContain(rock);
   });
 });

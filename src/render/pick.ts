@@ -1,5 +1,16 @@
 import { Raycaster, Vector2, Vector3, type Camera, type Object3D } from "three";
-import { WallState, chopLayer, razeLayer, treeLayer, wallLayer, type Sim } from "../sim/know";
+import {
+  WallState,
+  canMine,
+  canTerraform,
+  chopLayer,
+  groundHeight,
+  mineLayer,
+  razeLayer,
+  treeLayer,
+  wallLayer,
+  type Sim,
+} from "../sim/know";
 import { tileIndex } from "../sim/world/world";
 import { BH } from "./props";
 
@@ -57,6 +68,43 @@ export function wallTilesInRect(sim: Sim, camera: Camera, canvas: HTMLCanvasElem
   const walls = wallLayer(sim);
   const marked = razeLayer(sim);
   return tilesInRect(sim, camera, canvas, rect, (i) => walls[i] !== WallState.None && !marked[i]);
+}
+
+/**
+ * Every quarriable outcrop inside a screen rectangle, already-marked tiles
+ * excluded — the chop marquee's rule again. `canMine` is what refuses a sea
+ * stack here, so the box simply does not select what could never be worked.
+ */
+export function rockTilesInRect(sim: Sim, camera: Camera, canvas: HTMLCanvasElement, rect: Rect): number[] {
+  const marked = mineLayer(sim);
+  const size = sim.world.size;
+  return tilesInRect(sim, camera, canvas, rect, (i) => {
+    if (marked[i]) return false;
+    const x = i % size;
+    return canMine(sim, x, (i - x) / size);
+  });
+}
+
+/**
+ * Every tile inside a screen rectangle that could be levelled to `target` —
+ * eligible ground (`canTerraform`) that is not already at that height. Tiles
+ * carrying a *different* stored target are included on purpose: re-dragging is
+ * how a mis-pressed area is fixed, so the second drag has to be able to reach
+ * tiles the first one marked.
+ */
+export function levelTilesInRect(
+  sim: Sim,
+  camera: Camera,
+  canvas: HTMLCanvasElement,
+  rect: Rect,
+  target: number,
+): number[] {
+  const size = sim.world.size;
+  return tilesInRect(sim, camera, canvas, rect, (i) => {
+    const x = i % size;
+    const y = (i - x) / size;
+    return groundHeight(sim, x, y) !== target && canTerraform(sim, x, y);
+  });
 }
 
 function tilesInRect(

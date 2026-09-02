@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BuildingState, WallState, type Building } from "../sim/know";
+import { testBuilding } from "../sim/test-sim";
 import { Terrain, type TerrainValue, type World } from "../sim/world/world";
 import { BH, WATER_SURFACE_OFFSET, meshChunk, meshWaterChunk, type ChunkGeometry, type Scene } from "./mesher";
 
@@ -18,6 +19,7 @@ function makeWorld(size: number, heights: number[], terrain?: TerrainValue[]): S
     world,
     buildings: [],
     chopMap: new Uint8Array(size * size),
+    mineMap: new Uint8Array(size * size),
     wallMap: new Uint8Array(size * size),
     razeMap: new Uint8Array(size * size),
   };
@@ -29,20 +31,7 @@ function withTree(scene: Scene, x: number, y: number): Scene {
 }
 
 function withBuilding(scene: Scene, b: Partial<Building> & { x: number; y: number }): Scene {
-  const building: Building = {
-    id: 1,
-    kind: 0,
-    w: 2,
-    h: 2,
-    state: BuildingState.Active,
-    progress: 0,
-    reservedIncoming: 0,
-    acceptLog: 1,
-    acceptPlank: 1,
-    worker: -1,
-    millProgress: -1,
-    ...b,
-  };
+  const building: Building = testBuilding({ id: 1, ...b });
   return { ...scene, buildings: [building] };
 }
 
@@ -195,6 +184,40 @@ describe("props bake into the chunk", () => {
     expect(changed).toBeLessThan(a.colors.length / 3);
   });
 
+  it("shifts a marked outcrop's top face toward gold, leaving its cliffs rock", () => {
+    // The other half of the two-marks rule, on the one designation whose
+    // subject is the terrain itself: the surface being worked warms up, the
+    // faces you see from the side stay rock — so it reads as a marked *top*
+    // rather than as a gold boulder. Measured, for the same reason the canopy
+    // tint is: rock already carries per-tile jitter.
+    const rock: TerrainValue[] = [Terrain.Rock, Terrain.Grass, Terrain.Grass, Terrain.Grass];
+    const plain = makeWorld(2, [7, 3, 3, 3], rock);
+    const marked = makeWorld(2, [7, 3, 3, 3], rock);
+    marked.mineMap[0] = 1;
+
+    const a = meshChunk(plain, 0, 0);
+    const b = meshChunk(marked, 0, 0);
+    expect(b.positions).toEqual(a.positions);
+    expect(b.indices).toEqual(a.indices);
+
+    let changed = 0;
+    for (let v = 0; v < a.colors.length / 3; v++) {
+      const [ar, ag] = [a.colors[v * 3], a.colors[v * 3 + 1]];
+      const [br, bg] = [b.colors[v * 3], b.colors[v * 3 + 1]];
+      if (ar === br && ag === bg) continue;
+      changed++;
+      // Warmer: more red, and more red relative to green.
+      expect(br).toBeGreaterThan(ar);
+      expect(br / bg).toBeGreaterThan(ar / ag);
+      // And only on the top face — every changed vertex sits at the column's
+      // own top, with the +Y normal.
+      expect(a.positions[v * 3 + 1]).toBeCloseTo(7 * BH, 6);
+      expect(a.normals[v * 3 + 1]).toBe(1);
+    }
+    // Exactly the four corners of one top quad.
+    expect(changed).toBe(4);
+  });
+
   it("emits a building once, from the chunk owning its origin tile", () => {
     const heights = new Array(32 * 32).fill(3);
     // Origin in the west chunk, footprint straddling the x=16 seam.
@@ -248,6 +271,50 @@ describe("walls bake into the chunk", () => {
       return Math.max(...above.map((v) => g.positions[v * 3 + 1])) - 3 * BH;
     });
     for (let i = 1; i < tops.length; i++) expect(tops[i]).toBeGreaterThan(tops[i - 1]);
+  });
+
+  it("stands stone taller than timber, and its gateway taller again", () => {
+    // The permanent tier has to read as permanent from across the map, so the
+    // silhouette is the thing: stone is taller than the palisade of the same
+    // shape, and a stone arch is the tallest thing a wall run has.
+    const top = (state: number): number => {
+      const scene = flat(16);
+      scene.wallMap[5 * 16 + 5] = state;
+      const g = meshChunk(scene, 0, 0);
+      const above = verticesWhere(g, (_px, py) => py > 3 * BH + 0.01);
+      expect(above.length).toBeGreaterThan(0);
+      return Math.max(...above.map((v) => g.positions[v * 3 + 1])) - 3 * BH;
+    };
+    expect(top(WallState.Stone)).toBeGreaterThan(top(WallState.Palisade));
+    expect(top(WallState.StoneGate)).toBeGreaterThan(top(WallState.Gate));
+    expect(top(WallState.StoneGate)).toBeGreaterThan(top(WallState.Stone));
+    // A stone blueprint is still a marked-out plot: ankle-high, like every
+    // other drawing, so a drawn line never looks like a built one.
+    expect(top(WallState.StoneBp)).toBeLessThan(top(WallState.Stone));
+    expect(top(WallState.StoneBp)).toBeCloseTo(top(WallState.PalisadeBp), 6);
+    expect(top(WallState.StoneGateBp)).toBeCloseTo(top(WallState.GateBp), 6);
+  });
+
+  it("bakes stone as a solid course, not as posts and rails", () => {
+    // What makes stone read as stone at a glance is that it is *filled*: a
+    // palisade is a few thin members with daylight between them, a stone
+    // segment is a wall. Measured as the run of the widest member across the
+    // tile, which is the difference a screenshot shows.
+    const widest = (state: number): number => {
+      const scene = flat(16);
+      scene.wallMap[5 * 16 + 5] = state;
+      scene.wallMap[4 * 16 + 5] = state;
+      scene.wallMap[6 * 16 + 5] = state;
+      const g = meshChunk(scene, 0, 0);
+      // Vertices belonging to the middle tile, above the ground.
+      const mine = verticesWhere(
+        g,
+        (px, py, pz) => py > 3 * BH + 0.05 && px > 5.05 && px < 5.95 && pz > 5.05 && pz < 5.95,
+      );
+      const xs = mine.map((v) => g.positions[v * 3]);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    expect(widest(WallState.Stone)).toBeGreaterThan(widest(WallState.Palisade) * 2);
   });
 
   /**

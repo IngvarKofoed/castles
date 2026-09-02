@@ -1,4 +1,5 @@
-import { defOf, freeCapacity, storedCount } from "../buildings";
+import { defOf, freeCapacity, recipeOf, storedCount } from "../buildings";
+import { canMine, isTargetHeight, keepsTerraforming } from "../ground";
 import { groundItem, isFree, itemTile } from "../items";
 import { occupancy, type Occupancy } from "../path";
 import {
@@ -17,7 +18,7 @@ import {
   type Task,
 } from "../store";
 import { TASK_COOLDOWN_JITTER, TASK_COOLDOWN_TICKS } from "../tuning";
-import { WallState, isBlueprint, isBuilt } from "../walls";
+import { WallState, isBlueprint, isBuilt, wallItem, wallMaterial } from "../walls";
 import { markEnclosureStale } from "../walls/enclosure";
 import { nextRand } from "../world/rng";
 import { markChunkDirty, tileIndex } from "../world/world";
@@ -134,8 +135,7 @@ export function generateTasks(sim: Sim): void {
   generateBuildWall(sim);
   generateHaulToSite(sim);
   generateHaulToInput(sim);
-  generateChop(sim);
-  generateRaze(sim);
+  generateDesignations(sim);
   generateHaulToStore(sim);
 }
 
@@ -163,26 +163,34 @@ function generateHaulToSite(sim: Sim): void {
   }
 }
 
-/** A staffed sawmill with input room wants logs — from a stockpile or the ground. */
+/**
+ * A staffed workshop with input room wants its input — from a stockpile or the
+ * ground. Which good that is comes off the recipe, so the mason's rock flows
+ * exactly as the sawmill's logs do.
+ */
 function generateHaulToInput(sim: Sim): void {
   for (const b of sim.buildings) {
-    if (b.kind !== BuildingKind.Sawmill || b.state !== BuildingState.Active) continue;
-    if (b.worker < 0) continue;
-    let room = freeCapacity(sim, b, ItemType.Log) - b.reservedIncoming;
+    if (b.state !== BuildingState.Active || b.worker < 0) continue;
+    const recipe = recipeOf(b);
+    if (!recipe) continue;
+    let room = freeCapacity(sim, b, recipe.input) - b.reservedIncoming;
     while (room > 0) {
-      const log = nearestFreeItem(sim, ItemType.Log, b.x, b.y, sourceForSite);
-      if (!log) break;
-      addTask(sim, TaskKind.HaulToInput, log, b);
+      const good = nearestFreeItem(sim, recipe.input, b.x, b.y, sourceForSite);
+      if (!good) break;
+      addTask(sim, TaskKind.HaulToInput, good, b);
       room--;
     }
   }
 }
 
 /**
- * Every wall blueprint gets one build-wall task — once a free log exists for
- * it. The log is reserved at creation like any other task's item, so two
- * builders can never be sent for the same one; a segment with no log available
- * simply has no task yet and sits as a ghost frame until one turns up.
+ * Every wall blueprint gets one build-wall task — once a free item of **its
+ * own material** exists for it: a log for timber, a block for stone. The item
+ * is reserved at creation like any other task's, so two builders can never be
+ * sent for the same one; a segment with nothing available simply has no task
+ * yet and sits as a ghost frame until something turns up. Which is the whole
+ * of the stone tier's plumbing on this side: a stone line drawn before the
+ * mason is running is a line of frames, waiting.
  *
  * Deduplicated by *tile*, the same idempotence rule chop already proves, so
  * running every tick tops the queue up instead of piling duplicates on.
@@ -195,9 +203,9 @@ function generateBuildWall(sim: Sim): void {
     if (has.has(i)) continue;
     const x = i % size;
     const y = (i - x) / size;
-    const log = nearestFreeItem(sim, ItemType.Log, x, y, sourceForSite);
-    if (!log) continue;
-    addTask(sim, TaskKind.BuildWall, log, null, x, y);
+    const stuff = nearestFreeItem(sim, wallItem(wallMaterial(sim.wallMap[i])), x, y, sourceForSite);
+    if (!stuff) continue;
+    addTask(sim, TaskKind.BuildWall, stuff, null, x, y);
   }
 }
 
@@ -205,65 +213,131 @@ function generateBuildWall(sim: Sim): void {
  * Dismantling. A **built** segment gets a raze task; a segment that is still a
  * *blueprint* is torn up on the spot, here, because there is nothing to work
  * down — the blueprint clears and any live build-wall task for it goes through
- * `abandonTask`, which releases the log's reservation and drops it wherever the
- * builder is standing. That drop **is** the refund: no ledger tracks delivery,
- * because the log is carried right up to the completion instant.
+ * `abandonTask`, which releases the item's reservation and drops it wherever
+ * the builder is standing. That drop **is** the refund, for a block exactly as
+ * for a log: no ledger tracks delivery, because the material is carried right
+ * up to the completion instant.
  */
-function generateRaze(sim: Sim): void {
-  const size = sim.world.size;
-  const has = new Set(liveTasks(sim, TaskKind.Raze).map((t) => tileIndex(t.x, t.y, size)));
-  let occ: Occupancy | null = null;
-  for (let i = 0; i < sim.razeMap.length; i++) {
-    if (!sim.razeMap[i]) continue;
-    const state = sim.wallMap[i];
-    const x = i % size;
-    const y = (i - x) / size;
+function razeTile(
+  sim: Sim,
+  i: number,
+  x: number,
+  y: number,
+  has: Set<number>,
+  occ: Occupancy | null,
+): Occupancy | null {
+  const state = sim.wallMap[i];
 
-    if (isBlueprint(state)) {
-      sim.wallMap[i] = WallState.None;
-      sim.razeMap[i] = 0;
-      occ ??= occupancy(sim);
-      for (const task of [...sim.tasks]) {
-        if (task.kind === TaskKind.BuildWall && task.x === x && task.y === y) abandonTask(sim, occ, task);
-      }
-      markChunkDirty(sim.world, x, y);
-      markEnclosureStale(sim);
-      continue;
+  if (isBlueprint(state)) {
+    sim.wallMap[i] = WallState.None;
+    sim.razeMap[i] = 0;
+    const pending = occ ?? occupancy(sim);
+    for (const task of [...sim.tasks]) {
+      if (task.kind === TaskKind.BuildWall && task.x === x && task.y === y) abandonTask(sim, pending, task);
     }
-    if (!isBuilt(state)) {
-      // The wall went away without the mark being cleared; tidy up.
-      sim.razeMap[i] = 0;
-      markChunkDirty(sim.world, x, y);
-      continue;
-    }
-    if (has.has(i)) continue;
-    addTask(sim, TaskKind.Raze, null, null, x, y);
+    markChunkDirty(sim.world, x, y);
+    markEnclosureStale(sim);
+    return pending;
   }
-}
-
-/** Every designated tree without a live chop task gets one. */
-function generateChop(sim: Sim): void {
-  const size = sim.world.size;
-  const has = new Set(liveTasks(sim, TaskKind.Chop).map((t) => tileIndex(t.x, t.y, size)));
-  for (let i = 0; i < sim.chopMap.length; i++) {
-    if (!sim.chopMap[i]) continue;
-    if (!sim.world.treeMap[i]) {
-      // The tree went away without the designation being cleared; tidy up.
-      sim.chopMap[i] = 0;
-      continue;
-    }
-    if (has.has(i)) continue;
-    const x = i % size;
-    const y = (i - x) / size;
-    addTask(sim, TaskKind.Chop, null, null, x, y);
+  if (!isBuilt(state)) {
+    // The wall went away without the mark being cleared; tidy up.
+    sim.razeMap[i] = 0;
+    markChunkDirty(sim.world, x, y);
+    return occ;
   }
+  if (!has.has(i)) addTask(sim, TaskKind.Raze, null, null, x, y);
+  return occ;
 }
 
 /**
- * Loose goods want a home: an item on the ground, or a plank finished in a
- * sawmill's output buffer, is hauled to any stockpile that accepts it and has
- * room. Buildings never hand items to each other — everything goes through
- * filtered storage (CONCEPT.md's Kubifaktorium model).
+ * The four designation layers — chop, mine, raze, terraform — in **one walk of
+ * the grid**, one task per marked tile, plus the tidy-up for a mark whose
+ * subject has gone away.
+ *
+ * One walk rather than one per layer because the walk *is* the cost: at 256²
+ * the loop overhead dwarfs the four byte reads inside it, and this is the
+ * hottest thing in the tick. It is also why the earlier three-scan version was
+ * already the recorded thing to index first
+ * (docs/changelog/2026-09-02-palisade-walls.md); merging is the cheap half of
+ * that, and it leaves the queue with two grid scans in total rather than five.
+ *
+ * **Their relative order is immaterial and that is load-bearing** — none of
+ * the four reserves an item, so nothing here competes for a log the way
+ * build-wall and the hauls do. What decides which of them a colonist actually
+ * picks up is `TASK_PRIORITY` at claim time, not the order they were made in.
+ * A future designation kind that *does* reserve something must not join this
+ * pass; it belongs at its own place in the priority run above.
+ */
+function generateDesignations(sim: Sim): void {
+  const size = sim.world.size;
+  const chopping = tileTasks(sim, TaskKind.Chop, size);
+  const mining = tileTasks(sim, TaskKind.Mine, size);
+  const razing = tileTasks(sim, TaskKind.Raze, size);
+  const levelling = tileTasks(sim, TaskKind.Terraform, size);
+  let occ: Occupancy | null = null;
+
+  for (let i = 0; i < sim.chopMap.length; i++) {
+    const chop = sim.chopMap[i];
+    const mine = sim.mineMap[i];
+    const raze = sim.razeMap[i];
+    const level = sim.terraformMap[i];
+    if (!chop && !mine && !raze && !level) continue;
+    const x = i % size;
+    const y = (i - x) / size;
+
+    if (chop) {
+      if (!sim.world.treeMap[i]) {
+        // The tree went away without the designation being cleared; tidy up.
+        sim.chopMap[i] = 0;
+      } else if (!chopping.has(i)) {
+        addTask(sim, TaskKind.Chop, null, null, x, y);
+      }
+    }
+
+    if (mine) {
+      // Already quarried, or somehow no longer rock: drop the mark rather than
+      // keep a task nobody can finish. The mark is baked, so this dirties the
+      // chunk like clearing a chop mark by hand does.
+      if (!canMine(sim, x, y)) {
+        sim.mineMap[i] = 0;
+        markChunkDirty(sim.world, x, y);
+      } else if (!mining.has(i)) {
+        addTask(sim, TaskKind.Mine, null, null, x, y);
+      }
+    }
+
+    if (raze) occ = razeTile(sim, i, x, y, razing, occ);
+
+    if (level) {
+      // A tile at its target is finished; one that has grown a wall, a
+      // building or a tree since is not levellable at all. Both drop the mark
+      // here rather than only in the task, so a designation the player can no
+      // longer act on cannot sit on the map looking like work.
+      const target = level - 1;
+      if (!isTargetHeight(target) || sim.world.hmap[i] === target || !keepsTerraforming(sim, x, y)) {
+        sim.terraformMap[i] = 0;
+      } else if (!levelling.has(i)) {
+        addTask(sim, TaskKind.Terraform, null, null, x, y);
+      }
+    }
+  }
+}
+
+/** Tiles that already have a live task of this kind — the dedup key that makes
+ *  generation a top-up rather than a pile-up. */
+function tileTasks(sim: Sim, kind: number, size: number): Set<number> {
+  const out = new Set<number>();
+  for (const t of sim.tasks) if (t.kind === kind) out.add(tileIndex(t.x, t.y, size));
+  return out;
+}
+
+/**
+ * Loose goods want a home: an item on the ground, or a finished good sitting
+ * in a workshop's output buffer, is hauled to any stockpile that accepts it
+ * and has room. Buildings never hand items to each other — everything goes
+ * through filtered storage (CONCEPT.md's Kubifaktorium model), which is why a
+ * block reaches a wall by way of a stockpile unless a builder happens to be
+ * the one who empties the mason.
  */
 function generateHaulToStore(sim: Sim): void {
   for (const item of sim.items) {
@@ -275,23 +349,33 @@ function generateHaulToStore(sim: Sim): void {
   }
 }
 
-/** On the ground, or sitting in a sawmill's output buffer. */
+/** On the ground, or sitting in a workshop's output buffer. */
 function isLoose(sim: Sim, item: Item): boolean {
   if (item.loc === Loc.Ground) return true;
   if (item.loc !== Loc.Stored) return false;
   const b = findBuilding(sim, item.holder);
-  return b !== null && b.kind === BuildingKind.Sawmill && item.type === ItemType.Plank;
+  return b !== null && isOutputOf(b, item);
 }
 
-/** Items a construction site or a mill may pull from: loose, or in a stockpile. */
+/**
+ * Items a construction site or a workshop may pull from: loose, or in a
+ * stockpile. Asked of the *recipe* rather than of the building's kind, so a
+ * finished block may leave the mason exactly as a finished plank may leave the
+ * sawmill — and neither workshop's inputs may be taken back out.
+ */
 function sourceForSite(sim: Sim, item: Item): boolean {
   if (item.loc === Loc.Ground) return true;
   if (item.loc !== Loc.Stored) return false;
   const b = findBuilding(sim, item.holder);
   if (!b || b.state !== BuildingState.Active) return false;
   if (b.kind === BuildingKind.Stockpile) return true;
-  // A finished plank may leave a sawmill, but its input logs may not.
-  return b.kind === BuildingKind.Sawmill && item.type === ItemType.Plank;
+  return isOutputOf(b, item);
+}
+
+/** Is this item the finished good of the workshop holding it? */
+function isOutputOf(b: Building, item: Item): boolean {
+  const recipe = recipeOf(b);
+  return recipe !== null && item.type === recipe.output;
 }
 
 function nearestFreeItem(

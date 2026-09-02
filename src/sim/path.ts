@@ -61,8 +61,16 @@ export function passable(world: World, wallMap: Uint8Array, occ: Occupancy, x: n
   return !occ.has(i);
 }
 
-/** Passable, and reachable in one step from a tile at height `fromH`. */
-function stepOk(
+/**
+ * Passable, and reachable in one step from a tile at height `fromH`.
+ *
+ * Exported because the *walker* has to ask it too, not only the planner: a
+ * route is planned once, and ground-changing labour (a terraform step, an
+ * outcrop quarried away) can raise a cliff across a route somebody is already
+ * walking. One rule, one place — a second copy of the height test in
+ * `colonists.ts` would be free to drift from this one.
+ */
+export function canStepTo(
   world: World,
   wallMap: Uint8Array,
   occ: Occupancy,
@@ -128,7 +136,7 @@ export function findPath(sim: Sim, occ: Occupancy, sx: number, sy: number, goals
     for (const [dx, dy] of NEIGHBOURS) {
       const nx = cx + dx;
       const ny = cy + dy;
-      if (!stepOk(world, sim.wallMap, occ, nx, ny, ch)) continue;
+      if (!canStepTo(world, sim.wallMap, occ, nx, ny, ch)) continue;
       const n = tileIndex(nx, ny, size);
       const tentative = cg + 1;
       const known = gScore.get(n);

@@ -1,4 +1,6 @@
 import type { Command } from "../../commands";
+import { canPlace } from "../../buildings";
+import { canMine, canTerraform } from "../../ground";
 import { canPlaceWall } from "../../walls";
 import { tileIndex } from "../../world/world";
 import { createSim, type Sim } from "../../store";
@@ -57,13 +59,13 @@ export function v2Script(sim: Sim): Command[] {
     // One tile of the ring is the gate. A ring with a gate still encloses —
     // pathing walks through it, the flood-fill does not.
     return [
-      { kind: "placeWall", tiles: ring.slice(1) },
-      { kind: "placeGate", tiles: [ring[0]] },
+      { kind: "placeWall", tiles: ring.slice(1), material: "timber" },
+      { kind: "placeGate", tiles: [ring[0]], material: "timber" },
     ];
   }
   if (sim.tick === 990) {
     const run = wallSite(sim, 5);
-    return run.length ? [{ kind: "placeWall", tiles: run }] : [];
+    return run.length ? [{ kind: "placeWall", tiles: run, material: "timber" }] : [];
   }
   if (sim.tick === 995) {
     const built = sim.wallMap.indexOf(2 /* WallState.Palisade */);
@@ -72,11 +74,135 @@ export function v2Script(sim: Sim): Command[] {
   return [];
 }
 
+/**
+ * v3: the stone tier, on **its own seed**. 20260904 puts woods ten tiles from
+ * the map centre and a quarriable outcrop fourteen, where the default fixture
+ * seed's nearest rock is nearly fifty tiles out — far enough that a
+ * command-only recipe would spend thousands of ticks walking before a single
+ * block existed. A fixture's job is to carry the format's state, not to
+ * reproduce a particular map, so the near seed is the right one and the older
+ * fixtures keep theirs untouched.
+ *
+ * What it carries: a staffed mason with rock in its buffer, blocks in the
+ * colony, a stone line (drawn, and built where a block reached it), quarry
+ * designations part-worked, a levelling area mid-job, plus the timber walls and
+ * live tasks v2 already proved.
+ */
+export const FIXTURE_SEED_V3 = 20260904;
+export const V3_TICKS = 1400;
+
+export function v3Script(sim: Sim): Command[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 40) }];
+    case 5:
+      return [{ kind: "place", building: 0, x: centre - 6, y: centre + 4 }];
+    case 200: {
+      const site = buildSite(sim, 1);
+      return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
+    }
+    case 320: {
+      const site = buildSite(sim, 2);
+      return site ? [{ kind: "place", building: 2, x: site[0], y: site[1] }] : [];
+    }
+    // Staff the mason and set it quarrying: the fixture's whole point is a
+    // rock→block chain caught mid-flow.
+    case 700:
+      return staff(sim, 2);
+    case 720:
+      return [{ kind: "designateMine", tiles: rockSite(sim, 2) }];
+    // A stone line, and a levelling area beside it.
+    case 1200: {
+      const run = wallSite(sim, 3);
+      return run.length ? [{ kind: "placeWall", tiles: run, material: "stone" }] : [];
+    }
+    case 1210: {
+      const area = levelSite(sim, 2);
+      return area.length ? [{ kind: "designateTerraform", tiles: area, target: 5 }] : [];
+    }
+    // Two more marks right at the end, so the file carries a live quarry
+    // designation and a dismantle order as well as the finished work.
+    case 1390:
+      return [{ kind: "designateMine", tiles: rockSite(sim, 1) }];
+    case 1395: {
+      const built = sim.wallMap.findIndex((v) => v === 2 /* WallState.Palisade */ || v === 6 /* Stone */);
+      return built >= 0 ? [{ kind: "designateRaze", tiles: [built] }] : [];
+    }
+    default:
+      return [];
+  }
+}
+
 /** Rebuild a fixture's colony with whatever the store looks like today. */
-export function replay(script: (sim: Sim) => Command[], ticks: number): Sim {
-  const sim = createSim(FIXTURE_SEED);
+export function replay(script: (sim: Sim) => Command[], ticks: number, seed = FIXTURE_SEED): Sim {
+  const sim = createSim(seed);
   for (let t = 0; t < ticks; t++) advanceTick(sim, script(sim));
   return sim;
+}
+
+/** Staff whatever building of `kind` exists, or nothing. */
+function staff(sim: Sim, kind: number): Command[] {
+  const b = sim.buildings.find((x) => x.kind === kind);
+  return b ? [{ kind: "staff", building: b.id }] : [];
+}
+
+/** The first placeable site for a building kind, searched outward from the
+ *  centre so the answer is a pure function of the store. */
+function buildSite(sim: Sim, kind: 0 | 1 | 2): [number, number] | null {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  for (let r = 2; r < 30; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        if (canPlace(sim, kind, centre + dx, centre + dy)) return [centre + dx, centre + dy];
+      }
+    }
+  }
+  return null;
+}
+
+/** The nearest quarriable outcrops, as tile indices. */
+function rockSite(sim: Sim, count: number): number[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  const out: number[] = [];
+  for (let r = 1; r < 40 && out.length < count; r++) {
+    for (let dy = -r; dy <= r && out.length < count; dy++) {
+      for (let dx = -r; dx <= r && out.length < count; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        if (canMine(sim, centre + dx, centre + dy)) out.push(tileIndex(centre + dx, centre + dy, size));
+      }
+    }
+  }
+  return out;
+}
+
+/** The nearest `n`×`n` block of levellable ground, as tile indices. */
+function levelSite(sim: Sim, n: number): number[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  for (let r = 5; r < 30; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const tiles: number[] = [];
+        let ok = true;
+        for (let oy = 0; oy < n && ok; oy++) {
+          for (let ox = 0; ox < n && ok; ox++) {
+            const x = centre + dx + ox;
+            const y = centre + dy + oy;
+            ok = canTerraform(sim, x, y);
+            tiles.push(tileIndex(x, y, size));
+          }
+        }
+        if (ok) return tiles;
+      }
+    }
+  }
+  return [];
 }
 
 /** Tree tiles nearest the map centre, by growing rings, as tile indices. */

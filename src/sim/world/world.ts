@@ -69,6 +69,23 @@ const TREE_CLUMP_FREQ = 0.055;
 const TREE_CLUMP_THRESHOLD = 0.7;
 const TREE_SCATTER_THRESHOLD = 0.45;
 
+/**
+ * What terrain a height *means*. Generation's thresholds, pulled out so the
+ * ground-changing labour — mining an outcrop down, terraforming a bump flat —
+ * re-derives terrain by exactly the same rule rather than by a second table
+ * that could drift from this one.
+ *
+ * Note the consequence at the top end: nothing that lands at or above
+ * `ROCK_MIN` is reachable by labour, because both callers clamp to
+ * `GROUND_MAX` (tuning.ts) — so no worked ground ever re-derives to rock and
+ * the map's stone budget is finite by construction (docs/CONCEPT.md).
+ */
+export function terrainFor(h: number): TerrainValue {
+  if (h <= WATER_MAX) return Terrain.Water;
+  if (h === SAND_HEIGHT) return Terrain.Sand;
+  return h >= ROCK_MIN ? Terrain.Rock : Terrain.Grass;
+}
+
 /** Generate the world for a seed. Same seed, same world — byte for byte. */
 export function generate(seed: number): World {
   const size = WORLD_SIZE;
@@ -102,11 +119,7 @@ export function generate(seed: number): World {
 
       const i = tileIndex(x, y, size);
       hmap[i] = h;
-      const t =
-        h <= WATER_MAX ? Terrain.Water
-        : h === SAND_HEIGHT ? Terrain.Sand
-        : h >= ROCK_MIN ? Terrain.Rock
-        : Terrain.Grass;
+      const t = terrainFor(h);
       tmap[i] = t;
 
       // Woods on grass only, and never within the starting clearing: the

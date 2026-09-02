@@ -1,3 +1,4 @@
+import { stockpileAccepts } from "./goods";
 import {
   BuildingKind,
   BuildingState,
@@ -5,13 +6,21 @@ import {
   Loc,
   type Building,
   type BuildingKindValue,
+  type ItemTypeValue,
   type Sim,
 } from "./store";
-import { SAWMILL_INPUT_CAP, SAWMILL_OUTPUT_CAP, STOCKPILE_PER_TILE } from "./tuning";
+import {
+  MASON_TICKS,
+  MILL_TICKS,
+  ROCK_PER_BLOCK,
+  STOCKPILE_PER_TILE,
+  WORKSHOP_INPUT_CAP,
+  WORKSHOP_OUTPUT_CAP,
+} from "./tuning";
 import { Terrain, tileIndex } from "./world/world";
 
 /**
- * Content definitions for the two buildings step 2 ships. These are data, not
+ * Content definitions for the buildings the game ships. These are data, not
  * behaviour — when `assets/` grows a content format (ARCHITECTURE.md) this
  * table is what moves into it.
  */
@@ -24,6 +33,24 @@ export interface BuildingDef {
   readonly cost: number;
   /** True if a colonist can be bound to it as a slot worker. */
   readonly hasSlot: boolean;
+  /** What its slot worker makes, or null for a building that produces
+   *  nothing. A workshop *is* its recipe: everything the mason needed beyond
+   *  the sawmill is a second row here. */
+  readonly recipe: Recipe | null;
+}
+
+/**
+ * One workshop's conversion. `per` is how many inputs one output eats — the
+ * ratio is the chain's cost dial, and the only difference between milling a
+ * plank (1 log) and cutting a block (2 rock).
+ */
+export interface Recipe {
+  readonly input: ItemTypeValue;
+  readonly per: number;
+  readonly output: ItemTypeValue;
+  readonly ticks: number;
+  readonly inputCap: number;
+  readonly outputCap: number;
 }
 
 export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
@@ -34,6 +61,7 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     h: 2,
     cost: 2,
     hasSlot: false,
+    recipe: null,
   },
   [BuildingKind.Sawmill]: {
     kind: BuildingKind.Sawmill,
@@ -42,11 +70,46 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     h: 2,
     cost: 4,
     hasSlot: true,
+    recipe: {
+      input: ItemType.Log,
+      per: 1,
+      output: ItemType.Plank,
+      ticks: MILL_TICKS,
+      inputCap: WORKSHOP_INPUT_CAP,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
+  },
+  /**
+   * The mason: the sawmill's shape verbatim, one row down. Its real purpose is
+   * systemic rather than economic — two slot workshops against five colonists
+   * is what makes staffing a genuine trade-off for the first time, which is
+   * CONCEPT's labour trap made playable.
+   */
+  [BuildingKind.Mason]: {
+    kind: BuildingKind.Mason,
+    name: "Mason",
+    w: 2,
+    h: 2,
+    cost: 4,
+    hasSlot: true,
+    recipe: {
+      input: ItemType.Rock,
+      per: ROCK_PER_BLOCK,
+      output: ItemType.Block,
+      ticks: MASON_TICKS,
+      inputCap: WORKSHOP_INPUT_CAP,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
   },
 };
 
 export function defOf(b: Building): BuildingDef {
   return BUILDING_DEFS[b.kind as BuildingKindValue];
+}
+
+/** The recipe this building works, or null if it is not a workshop. */
+export function recipeOf(b: Building): Recipe | null {
+  return defOf(b).recipe;
 }
 
 /** Every tile of a building's footprint, in row-major order. */
@@ -97,18 +160,24 @@ export function freeCapacity(sim: Sim, b: Building, type: number): number {
     return defOf(b).cost - storedCount(sim, b.id, ItemType.Log);
   }
   if (b.state !== BuildingState.Active) return 0;
-  if (b.kind === BuildingKind.Stockpile) {
-    if (type === ItemType.Log && !b.acceptLog) return 0;
-    if (type === ItemType.Plank && !b.acceptPlank) return 0;
+  const recipe = recipeOf(b);
+  if (!recipe) {
+    // A stockpile takes anything its filters allow, up to its floor area.
+    if (b.kind !== BuildingKind.Stockpile) return 0;
+    if (!stockpileAccepts(b, type)) return 0;
     return b.w * b.h * STOCKPILE_PER_TILE - storedTotal(sim, b.id);
   }
-  // Sawmill: logs into the input buffer; planks are output, never hauled in.
-  if (type !== ItemType.Log) return 0;
-  return SAWMILL_INPUT_CAP - storedCount(sim, b.id, ItemType.Log);
+  // A workshop takes its input and nothing else — its output leaves, and is
+  // never hauled back in.
+  if (type !== recipe.input) return 0;
+  return recipe.inputCap - storedCount(sim, b.id, recipe.input);
 }
 
-export function sawmillOutputFull(sim: Sim, b: Building): boolean {
-  return storedCount(sim, b.id, ItemType.Plank) >= SAWMILL_OUTPUT_CAP;
+/** No room for what this workshop makes, so it must not start another. */
+export function outputFull(sim: Sim, b: Building): boolean {
+  const recipe = recipeOf(b);
+  if (!recipe) return false;
+  return storedCount(sim, b.id, recipe.output) >= recipe.outputCap;
 }
 
 /**

@@ -3,11 +3,17 @@ import {
   BUILDING_DEFS,
   BuildingKind,
   BuildingState,
-  WALL_LOG_COST,
+  GOODS,
+  GOOD_LIST,
+  ItemType,
+  WALL_ITEM_COST,
   inspect,
   readout,
+  wallItem,
   type BuildingKindValue,
+  type ItemTypeValue,
   type Sim,
+  type WallMaterial,
 } from "../sim/know";
 import "./hud.css";
 
@@ -25,12 +31,16 @@ import "./hud.css";
 export type Tool =
   | { kind: "none" }
   | { kind: "chop" }
+  | { kind: "mine" }
+  | { kind: "terraform" }
   | { kind: "build"; building: BuildingKindValue }
-  | { kind: "wall" }
-  | { kind: "gate" }
+  /** A wall tool carries its own material: two buttons, never one button with
+   *  a mode, so a forgotten setting can never raise the wrong wall. */
+  | { kind: "wall"; material: WallMaterial }
+  | { kind: "gate"; material: WallMaterial }
   | { kind: "raze" };
 
-/** The three tools that put walls on the map, and the ones the enclosure wash
+/** The tools that put walls on the map, and the ones the enclosure wash
  *  appears for. Nothing tints the world permanently. */
 export function isWallTool(tool: Tool): boolean {
   return tool.kind === "wall" || tool.kind === "gate" || tool.kind === "raze";
@@ -38,15 +48,26 @@ export function isWallTool(tool: Tool): boolean {
 
 /** The tools whose left-drag is a selection marquee rather than a run. */
 export function isMarqueeTool(tool: Tool): boolean {
-  return tool.kind === "chop" || tool.kind === "raze";
+  return tool.kind === "chop" || tool.kind === "raze" || tool.kind === "mine" || tool.kind === "terraform";
+}
+
+/** The tools whose left-drag draws a wall run — an L of two legs. A gateway
+ *  is a single tile in either material, so it is never a run. */
+export function isRunTool(tool: Tool): boolean {
+  return tool.kind === "wall";
 }
 
 /**
  * Which rail button a tool belongs to. One place, because the pressed state,
- * the click handler and the tool itself all have to agree on it.
+ * the click handler and the tool itself all have to agree on it — and a
+ * material is part of the identity, or the stone buttons would share the
+ * timber ones' pressed state.
  */
 function toolKey(tool: Tool): string {
   if (tool.kind === "build") return BUILDING_DEFS[tool.building].name.toLowerCase();
+  if (tool.kind === "wall" || tool.kind === "gate") {
+    return tool.material === "stone" ? `stone${tool.kind}` : tool.kind;
+  }
   return tool.kind;
 }
 
@@ -67,6 +88,19 @@ const SPEEDS: readonly { label: string; value: number; title: string }[] = [
   { label: "×4", value: 4, title: "Quadruple speed" },
 ];
 
+/**
+ * The resource icons' colours, keyed by good. These are *UI* tokens from
+ * docs/STYLEGUIDE.md, so they live here rather than in the sim's goods table —
+ * which knows what a good is called and how storage treats it, and nothing
+ * about how it is painted.
+ */
+const GOOD_VAR: Record<ItemTypeValue, string> = {
+  [ItemType.Log]: "var(--timber)",
+  [ItemType.Plank]: "var(--plank)",
+  [ItemType.Rock]: "var(--rock)",
+  [ItemType.Block]: "var(--block)",
+};
+
 /** How the inspector names where a slot worker is. */
 const WORKER_LABEL: Record<"none" | "walking" | "inside", string> = {
   none: "none",
@@ -85,6 +119,14 @@ const ICONS: Record<string, string> = {
   wall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V5"/><path d="M8 15 V4"/><path d="M12 15 V5"/><path d="M16 15 V4"/><path d="M3 8 h16"/><path d="M3 12 h16"/></svg>`,
   gate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 15 V6"/><path d="M17 15 V6"/><path d="M3 5 h16"/><path d="M9 15 v-4"/><path d="M13 15 v-4"/></svg>`,
   raze: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 V7 L3 4"/><path d="M16 15 V8 L19 4"/><path d="M9 11 l4 -3"/><path d="M11 4 v3"/></svg>`,
+  // Mine: a pick swung at an outcrop. Terraform: ground stepping down to a
+  // level line. Mason: a block on a bench under a chisel.
+  mine: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 15 L11 7"/><path d="M7 3 q5 1 8 5"/><path d="M15 8 l-4 -5"/><path d="M13 15 h6 l-2 -4 h-3 Z"/></svg>`,
+  terraform: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 14 h5 v-4 h5 v-4 h6"/><path d="M3 6 h6"/><path d="M6 4 v4"/></svg>`,
+  mason: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="9" width="14" height="6"/><path d="M11 9 v6"/><path d="M8 6 h6"/><path d="M11 3 v3"/></svg>`,
+  // Stone wall: coursed blocks. Stone gate: the same arch, squared.
+  stonewall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="6" width="16" height="4"/><rect x="3" y="10" width="16" height="4"/><path d="M8 6 v4"/><path d="M14 6 v4"/><path d="M5 10 v4"/><path d="M11 10 v4"/><path d="M17 10 v4"/></svg>`,
+  stonegate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4" width="16" height="3"/><path d="M5 15 V7 h3 v8"/><path d="M17 15 V7 h-3 v8"/></svg>`,
 };
 
 export class Hud {
@@ -213,8 +255,7 @@ export class Hud {
   /** Refresh the readouts. Called every frame; rebuilds only what changed. */
   update(): void {
     const r = readout(this.sim);
-    this.res.logs.textContent = String(r.logs);
-    this.res.planks.textContent = String(r.planks);
+    for (const good of GOOD_LIST) this.res[`good${good.type}`].textContent = String(r.goods[good.type] ?? 0);
     this.res.folk.textContent = String(r.folk);
     this.res.idle.textContent = String(r.idle);
     this.res.enclosed.textContent = String(r.enclosed);
@@ -235,8 +276,11 @@ export class Hud {
   private buildRibbon(): HTMLElement {
     const ribbon = el("div", { class: "panel ribbon" });
     ribbon.append(el("span", { class: "brand" }, "Castles"));
-    ribbon.append(this.resource("logs", "var(--timber)", "logs"));
-    ribbon.append(this.resource("planks", "var(--plank)", "planks"));
+    // One readout per good, walked from the goods table: a new good appears on
+    // the ribbon by existing rather than by someone remembering to add a row.
+    for (const good of GOOD_LIST) {
+      ribbon.append(this.resource(`good${good.type}`, GOOD_VAR[good.type], good.label));
+    }
     ribbon.append(el("span", { class: "divider" }));
     ribbon.append(this.count("folk", "folk"));
     ribbon.append(this.count("idle", "idle"));
@@ -297,20 +341,39 @@ export class Hud {
 
   // ------------------------------------------------------------------ rail
 
+  /**
+   * The rail, in three labelled sections — **Orders** (tell people to do
+   * something to what is already there), **Build** (put a building down),
+   * **Walls** (draw a line). Eleven tools in one unbroken column stopped being
+   * readable; the styleguide's rail anatomy already allowed section heads, so
+   * this is that allowance spent.
+   */
   private buildRail(): HTMLElement {
     const rail = el("nav", { class: "panel rail", "aria-label": "Build tools" });
-    rail.append(el("span", { class: "rail-label" }, "Build"));
+
+    rail.append(el("span", { class: "rail-label" }, "Orders"));
     rail.append(this.toolButton("Chop", { kind: "chop" }, ""));
-    for (const kind of [BuildingKind.Stockpile, BuildingKind.Sawmill] as BuildingKindValue[]) {
+    rail.append(this.toolButton("Mine", { kind: "mine" }, ""));
+    rail.append(this.toolButton("Level", { kind: "terraform" }, "labour"));
+    rail.append(this.toolButton("Raze", { kind: "raze" }, ""));
+
+    rail.append(el("span", { class: "rail-label" }, "Build"));
+    for (const kind of [BuildingKind.Stockpile, BuildingKind.Sawmill, BuildingKind.Mason] as BuildingKindValue[]) {
       const def = BUILDING_DEFS[kind];
       rail.append(this.toolButton(def.name, { kind: "build", building: kind }, `${def.cost} logs`));
     }
-    // The wall family, below the three that were here first. Wall and gate
-    // cost the same materials and differ in labour, so both read "1 log".
-    const logs = `${WALL_LOG_COST} log${WALL_LOG_COST === 1 ? "" : "s"}`;
-    rail.append(this.toolButton("Wall", { kind: "wall" }, logs));
-    rail.append(this.toolButton("Gate", { kind: "gate" }, logs));
-    rail.append(this.toolButton("Raze", { kind: "raze" }, ""));
+
+    // Each wall button carries its own material and says what it costs, so the
+    // choice is made by which button you press rather than by a mode you have
+    // to remember. A gate costs the same material as a plain run of its
+    // material and differs only in labour.
+    rail.append(el("span", { class: "rail-label" }, "Walls"));
+    for (const material of ["timber", "stone"] as WallMaterial[]) {
+      const cost = wallCost(material);
+      const stone = material === "stone";
+      rail.append(this.toolButton(stone ? "Stone wall" : "Wall", { kind: "wall", material }, cost));
+      rail.append(this.toolButton(stone ? "Stone gate" : "Gate", { kind: "gate", material }, cost));
+    }
     return rail;
   }
 
@@ -358,8 +421,7 @@ export class Hud {
       b.state,
       b.staffed,
       b.delivered,
-      b.storedLogs,
-      b.storedPlanks,
+      ...b.stored.map((s) => s.count),
       Math.round(b.progress * 40),
       Math.round(b.milling * 50),
       b.stall,
@@ -396,26 +458,30 @@ export class Hud {
     }
 
     if (b.kind === BuildingKind.Stockpile) {
+      // A row per good and an accept line built from the filters, rather than
+      // two hard-coded rows that would have quietly stopped mentioning half
+      // the colony's goods the moment rock existed.
       nodes.push(
         rows([
-          ["Stored", `${b.storedLogs + b.storedPlanks} / ${b.capacity}`],
-          ["Logs", String(b.storedLogs)],
-          ["Planks", String(b.storedPlanks)],
+          ["Stored", `${b.storedTotal} / ${b.capacity}`],
+          ...b.stored.map((s): [string, string] => [s.name, String(s.count)]),
         ]),
       );
-      nodes.push(note("accepts logs and planks"));
+      nodes.push(
+        note(acceptNote(b.stored.filter((s) => s.accepted).map((s) => GOODS[s.type as ItemTypeValue].label))),
+      );
       return nodes;
     }
 
-    nodes.push(chain("Log", "Plank"));
+    if (b.chain) nodes.push(chain(b.chain.input, b.chain.output));
     nodes.push(
       rows([
         // The worker row is load-bearing once someone is inside: the renderer
         // stops drawing them, so this is where the player reads that the slot
         // is filled.
         ["Worker", WORKER_LABEL[b.worker]],
-        ["Input", `${b.storedLogs} / ${b.inputCap}`],
-        ["Output", `${b.storedPlanks} / ${b.outputCap}`],
+        ["Input", `${b.inputCount} / ${b.inputCap}`],
+        ["Output", `${b.outputCount} / ${b.outputCap}`],
       ]),
     );
     if (b.milling >= 0) nodes.push(meter(b.milling));
@@ -461,21 +527,37 @@ export class Hud {
 }
 
 function sameTool(a: Tool, b: Tool): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === "build" && b.kind === "build") return a.building === b.building;
-  return true;
+  return toolKey(a) === toolKey(b);
+}
+
+/** What one segment of this material costs, in the ribbon's own words. */
+function wallCost(material: WallMaterial): string {
+  const good = GOODS[wallItem(material)];
+  return `${WALL_ITEM_COST} ${WALL_ITEM_COST === 1 ? good.name.toLowerCase() : good.label}`;
 }
 
 /**
- * What a sawmill is doing, in the house voice. A stalled mill has to name the
- * reason it stalled — "waiting for logs" while the input buffer is full is the
- * panel lying, and the panel is the only diagnosis the player gets.
+ * What a workshop is doing, in the house voice. A stalled workshop has to name
+ * the reason it stalled — "waiting for logs" while the input buffer is full is
+ * the panel lying, and the panel is the only diagnosis the player gets. The
+ * goods are named from the chain, so the mason waits for *rock* rather than
+ * inheriting the sawmill's words.
  */
 function millNote(b: NonNullable<ReturnType<typeof inspect>>): string {
   if (!b.staffed) return "no one is working here";
-  if (b.stall === "output-full") return "output full — nowhere to put the planks";
-  if (b.stall === "no-logs") return "waiting for logs";
-  return "cutting";
+  const chainOf = b.chain;
+  if (!chainOf) return "";
+  if (b.stall === "output-full") return `output full — nowhere to put the ${chainOf.output.toLowerCase()}s`;
+  if (b.stall === "no-input") return `waiting for ${chainOf.input.toLowerCase()}`;
+  return "working";
+}
+
+/** "accepts logs, planks, rock and blocks" — an Oxford-less list, because the
+ *  note row is one quiet sentence and never a table. */
+function acceptNote(labels: string[]): string {
+  if (!labels.length) return "accepts nothing";
+  if (labels.length === 1) return `accepts ${labels[0]}`;
+  return `accepts ${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
 function tagClass(b: NonNullable<ReturnType<typeof inspect>>): string {

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { BuildingKind, BuildingState, ItemType, Loc, TaskKind } from "./store";
+import { BuildingKind, BuildingState, ItemType, Loc, TaskKind, type BuildingKindValue } from "./store";
 import { createSim } from "./store";
 import { advanceTick } from "./tick";
 import type { Command } from "./commands";
 import { hashSim } from "./hash";
 import { readout } from "./know";
 import { canPlace } from "./buildings";
-import { WallState, canPlaceWall } from "./walls";
+import { canMine, canTerraform } from "./ground";
+import { WallState, canPlaceWall, isBlueprint, isStoneWall } from "./walls";
 import { tileIndex } from "./world/world";
 
 const SEED = 20260901;
@@ -54,6 +55,15 @@ function script(sim: Store): Command[] {
       const [x, y] = nearestSite(sim, BuildingKind.Sawmill, sim.buildings[0]);
       return [{ kind: "place", building: BuildingKind.Sawmill, x, y }];
     }
+    // The second workshop, and the reason it exists: with the mason staffed
+    // too, two of five colonists are locked in slots and the pool that feeds
+    // both is down to three. CONCEPT's labour trap, inside the pin.
+    case 700: {
+      const [x, y] = nearestSite(sim, BuildingKind.Mason, ...sim.buildings);
+      return [{ kind: "place", building: BuildingKind.Mason, x, y }];
+    }
+    case 1000:
+      return staffCommand(sim, "staff", BuildingKind.Mason);
     // Staff, pull them back out, put them back in: the slot worker's whole
     // round trip — walk over, step inside, step out to the work tile, rejoin
     // the pool, walk back in — sits inside the determinism pin.
@@ -73,10 +83,67 @@ function script(sim: Store): Command[] {
     // cost this file its end-to-end plank assertion. Drawn at 1420 the wall is
     // demonstrably being worked at tick 1500 while the mill has already run.
     case 1420:
-      return [{ kind: "placeWall", tiles: lDrag(sim, 6, 4) }];
+      return [{ kind: "placeWall", tiles: lDrag(sim, 6, 4), material: "timber" }];
+    // The stone tier's three orders, all late for the same reason the timber
+    // drag is: each one diverts the pool, and drawn earlier they would cost
+    // this file its end-to-end plank assertion.
+    //
+    // The nearest outcrop on this seed is some fifty tiles out, so what sits
+    // inside the pin here is the designation and the walk toward it — the
+    // whole rock → block → wall chain running to completion is pinned in
+    // `stone.test.ts`, on ground built for it.
+    case 1440:
+      return [{ kind: "designateMine", tiles: tileList(sim, nearestRock(sim, 3)) }];
+    // Level a flat 3×3 *up* one block: nothing near the spawn clearing is
+    // bumpy (generation keeps it flat), so the interesting case to pin is the
+    // one the player can always ask for anywhere.
+    case 1450: {
+      const area = levelArea(sim, 3);
+      return area.length ? [{ kind: "designateTerraform", tiles: tileList(sim, area), target: 5 }] : [];
+    }
+    case 1460:
+      return [{ kind: "placeWall", tiles: lDrag(sim, 3, 3), material: "stone" }];
     default:
       return [];
   }
+}
+
+/** The nearest quarriable outcrops, by growing rings, so the pick is a pure
+ *  function of the store. */
+function nearestRock(sim: Store, count: number): [number, number][] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  const out: [number, number][] = [];
+  for (let r = 1; r < size && out.length < count; r++) {
+    for (let dy = -r; dy <= r && out.length < count; dy++) {
+      for (let dx = -r; dx <= r && out.length < count; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        if (canMine(sim, centre + dx, centre + dy)) out.push([centre + dx, centre + dy]);
+      }
+    }
+  }
+  return out;
+}
+
+/** The nearest `n`×`n` block of levellable ground, clear of the colony. */
+function levelArea(sim: Store, n: number): [number, number][] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  const block = (x0: number, y0: number): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let dy = 0; dy < n; dy++) for (let dx = 0; dx < n; dx++) out.push([x0 + dx, y0 + dy]);
+    return out;
+  };
+  for (let r = 6; r < 40; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const area = block(centre + dx, centre + dy);
+        if (area.every(([x, y]) => canTerraform(sim, x, y))) return area;
+      }
+    }
+  }
+  return [];
 }
 
 /**
@@ -114,9 +181,13 @@ function lDrag(sim: Store, legX: number, legY: number): number[] {
 const tileList = (sim: Store, tiles: [number, number][]): number[] =>
   tiles.map(([x, y]) => tileIndex(x, y, sim.world.size));
 
-function staffCommand(sim: Store, kind: "staff" | "unstaff"): Command[] {
-  const mill = sim.buildings.find((b) => b.kind === BuildingKind.Sawmill);
-  return mill ? [{ kind, building: mill.id }] : [];
+function staffCommand(
+  sim: Store,
+  kind: "staff" | "unstaff",
+  of: number = BuildingKind.Sawmill,
+): Command[] {
+  const shop = sim.buildings.find((b) => b.kind === of);
+  return shop ? [{ kind, building: shop.id }] : [];
 }
 
 function nearestTrees(sim: Store, count: number): [number, number][] {
@@ -137,7 +208,11 @@ function nearestTrees(sim: Store, count: number): [number, number][] {
   return out;
 }
 
-function nearestSite(sim: Store, kind: 0 | 1, avoid?: { x: number; y: number }): [number, number] {
+function nearestSite(
+  sim: Store,
+  kind: BuildingKindValue,
+  ...avoid: { x: number; y: number }[]
+): [number, number] {
   const size = sim.world.size;
   const centre = Math.floor(size / 2);
   for (let r = 2; r < size; r++) {
@@ -146,7 +221,7 @@ function nearestSite(sim: Store, kind: 0 | 1, avoid?: { x: number; y: number }):
         if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
         const x = centre + dx;
         const y = centre + dy;
-        if (avoid && Math.abs(x - avoid.x) < 4 && Math.abs(y - avoid.y) < 4) continue;
+        if (avoid.some((a) => Math.abs(x - a.x) < 4 && Math.abs(y - a.y) < 4)) continue;
         if (canPlace(sim, kind, x, y)) return [x, y];
       }
     }
@@ -195,7 +270,16 @@ describe("determinism", () => {
     // finishing across a walker's path had them stroll straight through
     // standing palisade. That this hash moved at all is the evidence — the
     // scripted L at tick 1420 was being walked through.
-    expect(hashSim(scriptedRun(1500))).toBe("11a997a8");
+    //
+    // 11a997a8 → 430213d1 with the stone tier
+    // (docs/changelog/2026-09-02-stone-and-terraform.md). Both a shape change
+    // (`mineMap`, `terraformMap`, two accept flags per building) and a
+    // behaviour one, deliberately: the script now places and staffs a mason,
+    // marks outcrops for quarrying, draws a stone L and levels a 3×3. The
+    // assertions below are what say the number moved for those and not for
+    // something quiet — most of all the plank assertion, which still passes
+    // with *two* workshops staffed and three colonists left in the pool.
+    expect(hashSim(scriptedRun(1500))).toBe("430213d1");
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {
@@ -238,13 +322,17 @@ describe("the labour loop", () => {
     expect(sawmill?.state).toBe(BuildingState.Active);
 
     // Trees were felled into logs, and logs became planks.
-    expect(r.logs).toBeGreaterThan(0);
-    expect(r.planks).toBeGreaterThan(0);
+    expect(r.goods[ItemType.Log]).toBeGreaterThan(0);
+    expect(r.goods[ItemType.Plank]).toBeGreaterThan(0);
 
-    // The mill is staffed, so the pool is one pair of hands short.
+    // Both workshops are staffed, so the pool that feeds both is two pairs of
+    // hands short — the labour trap, as a number.
+    const mason = sim.buildings.find((b) => b.kind === BuildingKind.Mason);
     expect(sawmill?.worker).toBeGreaterThanOrEqual(0);
-    expect(r.pool).toBe(r.folk - 1);
-    expect(r.slots).toBe(1);
+    expect(mason?.state).toBe(BuildingState.Active);
+    expect(mason?.worker).toBeGreaterThanOrEqual(0);
+    expect(r.pool).toBe(r.folk - 2);
+    expect(r.slots).toBe(2);
 
     // Goods ended up in storage rather than scattered on the ground.
     const stored = sim.items.filter((it) => it.loc === Loc.Stored && it.holder === stockpile?.id);
@@ -259,7 +347,10 @@ describe("the labour loop", () => {
     const size = sim.world.size;
     const placed: [number, number][] = [];
     for (let i = 0; i < sim.wallMap.length; i++) {
-      if (sim.wallMap[i] !== WallState.None) placed.push([i % size, Math.floor(i / size)]);
+      // Timber only: the stone L drawn at 1460 is its own shape, counted below.
+      if (sim.wallMap[i] !== WallState.None && !isStoneWall(sim.wallMap[i])) {
+        placed.push([i % size, Math.floor(i / size)]);
+      }
     }
     expect(placed).toHaveLength(9);
 
@@ -277,6 +368,36 @@ describe("the labour loop", () => {
     const standing = placed.filter(([x, y]) => sim.wallMap[y * size + x] === WallState.Palisade).length;
     const walling = sim.tasks.filter((t) => t.kind === TaskKind.BuildWall).length;
     expect(standing + walling).toBeGreaterThan(0);
+  });
+
+  it("takes the stone tier's three orders as three gestures", () => {
+    // The new commands' own observables, so the hash move is not merely noise.
+    // One `scriptedRun` for all three, because the run is the expensive part
+    // of this file and every test in it pays for another.
+    const sim = scriptedRun(1500);
+
+    // Stone, and told apart from timber by state rather than by tile: the
+    // material rides on the command, so nothing in the wall layer is
+    // generically "wall" any more.
+    const stone = [...sim.wallMap].filter((v) => isStoneWall(v));
+    expect(stone).toHaveLength(5);
+    // Drawn 40 ticks before the end with no block in the colony yet, so they
+    // are still blueprints — and that *is* the tier's coupling: a stone line
+    // waits on the mason, which waits on the quarry.
+    expect(stone.every((v) => isBlueprint(v))).toBe(true);
+    expect(sim.items.some((it) => it.type === ItemType.Block)).toBe(false);
+
+    // Three outcrops marked, three quarry tasks — fifty tiles out, so what is
+    // pinned here is the order and the walk, not the yield.
+    expect([...sim.mineMap].filter((v) => v)).toHaveLength(3);
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.Mine)).toHaveLength(3);
+
+    // Nine tiles designated to height 5, stored as target-plus-one, with a
+    // task each: the marquee's whole area from one command.
+    const marks = [...sim.terraformMap].filter((v) => v);
+    expect(marks).toHaveLength(9);
+    expect(marks.every((v) => v === 6)).toBe(true);
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.Terraform)).toHaveLength(9);
   });
 
   it("leaves no orphaned reservations when the queue drains", () => {

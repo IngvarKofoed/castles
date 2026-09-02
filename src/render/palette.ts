@@ -1,4 +1,5 @@
 import { Color } from "three";
+import { ItemType, type ItemTypeValue } from "../sim/know";
 import { hash } from "../sim/world/noise";
 import { Terrain, tileIndex, type TerrainValue, type World } from "../sim/world/world";
 
@@ -30,6 +31,10 @@ export const PROP = {
   door: 0x67452a,
   crate: 0xb08a56,
   plank: 0xd0b078,
+  /** Quarried rubble — cooler and rawer than the cut stone below it, so a
+   *  rock pile and a block pile are not the same grey. */
+  rock: 0x8a9096,
+  block: 0xb3ab97,
   linen: 0xe3d8ba,
   tunic: 0x3f79ab,
   smock: 0x5f9438,
@@ -53,6 +58,27 @@ export const OVERLAY = {
   rust: 0xb8503a,
   keyline: 0x14170f,
 } as const;
+
+/**
+ * Which colour a good is drawn in, keyed by `ItemType` — one table, so the
+ * ribbon's icon, the mover layer's ground pile and a building's buffer
+ * contents cannot disagree about what a rock looks like.
+ */
+export const GOOD_HEX: Record<ItemTypeValue, number> = {
+  [ItemType.Log]: PROP.timber,
+  [ItemType.Plank]: PROP.plank,
+  [ItemType.Rock]: PROP.rock,
+  [ItemType.Block]: PROP.block,
+};
+
+/**
+ * How far a designated thing shifts toward the gold accent, per the
+ * styleguide's two-marks rule: enough to pick a marked wood or outcrop out at
+ * a distance, small enough that it still reads as a tree or as rock rather
+ * than as an overlay. Shared by the tree canopy, the raze-marked timber and
+ * the mine-marked rock face so the three cannot drift apart.
+ */
+export const DESIGNATED_TINT = 0.15;
 
 /** Straight-line blend between two packed sRGB hex colours. */
 export function lerpHex(a: number, b: number, t: number): number {
@@ -108,10 +134,15 @@ const COL = new Color();
 /**
  * Final linear-space colour of a tile: palette × jitter × AO. Water gets
  * neither jitter nor AO. Returns a shared Color — copy, don't keep.
+ *
+ * `tint` shifts the palette colour toward the gold accent *before* the
+ * conversion out of sRGB, which is where the tree canopy's designation tint
+ * happens too — folded in afterwards, in linear space, the same fraction
+ * reads visibly weaker.
  */
-export function tileColor(world: World, x: number, y: number): Color {
+export function tileColor(world: World, x: number, y: number, tint = 0): Color {
   const t = world.tmap[tileIndex(x, y, world.size)] as TerrainValue;
-  COL.setHex(TERRAIN_HEX[t]);
+  COL.setHex(tint > 0 ? lerpHex(TERRAIN_HEX[t], OVERLAY.gold, tint) : TERRAIN_HEX[t]);
   if (t !== Terrain.Water) {
     const amt = TERRAIN_JITTER[t];
     if (amt) {

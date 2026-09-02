@@ -10,24 +10,26 @@ import {
   type Scene,
 } from "three";
 import {
-  BuildingKind,
   BuildingState,
-  ItemType,
   Loc,
   buildings,
   chopLayer,
   colonists,
+  defOf,
   footprint,
   insideLayer,
   items,
+  mineLayer,
   razeLayer,
+  terraformLayer,
   BUILDING_DEFS,
   type BuildingKindValue,
+  type ItemTypeValue,
   type Sim,
 } from "../sim/know";
 import { WORLD_SIZE, tileIndex } from "../sim/world/world";
 import { createMoverMaterial } from "./materials";
-import { OVERLAY, PROP } from "./palette";
+import { GOOD_HEX, OVERLAY, PROP } from "./palette";
 import { BH } from "./props";
 
 /**
@@ -349,7 +351,9 @@ export class MoverRenderer {
     const perBuilding = new Map<number, number>();
 
     for (const item of items(this.sim)) {
-      const tint = item.type === ItemType.Log ? PROP.timber : PROP.plank;
+      // One colour table for every good (palette.ts), so a rock pile and a
+      // block pile are told apart by the same rule the ribbon's icons use.
+      const tint = GOOD_HEX[item.type as ItemTypeValue] ?? PROP.crate;
       if (item.loc === Loc.Ground) {
         const key = tileIndex(item.x, item.y, this.sim.world.size);
         const n = perTile.get(key) ?? 0;
@@ -366,10 +370,12 @@ export class MoverRenderer {
       perBuilding.set(b.id, n + 1);
       const cell = Math.floor(n / 8) % (b.w * b.h);
       const [ox, oy, oz] = lattice(n % 8);
-      // A mill's buffers ride on its roofline, because the walls are solid;
-      // everything else stacks on the deck or the marked-out plot.
+      // A workshop's buffers ride on its roofline, because the walls are
+      // solid; everything else stacks on the deck or the marked-out plot.
+      // Keyed on *having a recipe* rather than on being the sawmill, so the
+      // mason's rock and blocks sit where the mill's logs and planks do.
       const deck =
-        b.kind === BuildingKind.Sawmill && b.state === BuildingState.Active ? 2.38 * BH : 0.16 * BH;
+        defOf(b).recipe !== null && b.state === BuildingState.Active ? 2.38 * BH : 0.16 * BH;
       put(
         this.solids,
         b.x + (cell % b.w) + 0.5 + ox,
@@ -386,10 +392,15 @@ export class MoverRenderer {
 
   /**
    * Gold outline over a faint gold fill on the ground tile a marked thing
-   * stands on — at its base, not capping it. Trees marked for felling and wall
-   * segments marked for dismantling share the mark: both are the same
-   * statement of player intent, and both carry it at distance by tinting the
-   * baked object itself (props.ts).
+   * stands on — at its base, not capping it. Every designation the game has
+   * shares this one mark: trees to fell, outcrops to quarry, segments to
+   * dismantle, ground to level. They are the same statement of player intent,
+   * so they read the same, and the three that mark a *tall* thing also carry
+   * it at distance by tinting the baked object (props.ts, mesher.ts).
+   *
+   * Levelling is the exception with nothing to tint — the marked thing *is*
+   * the ground — so the diamond is the whole of its mark, which is also why
+   * designating one dirties no chunk.
    *
    * The canopy does hide the back half of a tree's diamond at these camera
    * angles, and that is fine: the front half reads. A cap floating above the
@@ -402,8 +413,10 @@ export class MoverRenderer {
     // marked tile: this runs once a frame.
     const chop = chopLayer(this.sim);
     const raze = razeLayer(this.sim);
+    const mine = mineLayer(this.sim);
+    const level = terraformLayer(this.sim);
     for (let i = 0; i < chop.length; i++) {
-      if (!chop[i] && !raze[i]) continue;
+      if (!chop[i] && !raze[i] && !mine[i] && !level[i]) continue;
       const x = i % size;
       const y = (i - x) / size;
       const top = this.groundY(x, y) + 0.02;

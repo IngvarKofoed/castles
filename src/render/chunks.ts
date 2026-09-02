@@ -1,6 +1,6 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material, type Object3D, type Scene as ThreeScene } from "three";
 import { chunkCoords, chunkCount } from "../sim/world/chunks";
-import { buildings, chopLayer, razeLayer, wallLayer, type Sim } from "../sim/know";
+import { buildings, chopLayer, mineLayer, razeLayer, wallLayer, type Sim } from "../sim/know";
 import { meshChunk, meshWaterChunk, type ChunkGeometry, type Scene, type WaterGeometry } from "./mesher";
 
 /**
@@ -80,6 +80,7 @@ export class ChunkRenderer {
       world,
       buildings: buildings(this.sim),
       chopMap: chopLayer(this.sim),
+      mineMap: mineLayer(this.sim),
       wallMap: wallLayer(this.sim),
       razeMap: razeLayer(this.sim),
     };

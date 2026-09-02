@@ -3,7 +3,7 @@ import { CHUNK } from "../sim/world/chunks";
 import { Terrain, tileIndex, type World } from "../sim/world/world";
 import type { Building } from "../sim/know";
 import { WallState } from "../sim/know";
-import { tileColor } from "./palette";
+import { DESIGNATED_TINT, tileColor } from "./palette";
 import { BH, WallLink, buildingBoxes, propJitter, treeBoxes, wallBoxes, type Box } from "./props";
 
 export { BH };
@@ -27,6 +27,14 @@ export interface Scene {
    * bump the tile's chunk version.
    */
   readonly chopMap: Uint8Array;
+  /**
+   * Quarry designations. A marked outcrop's **top face** bakes gold-shifted —
+   * the object half of the styleguide's two-marks rule, and the reason
+   * designating one bumps its chunk version like designating a tree does. Only
+   * the top: the cliff faces stay rock, so the mark reads as a marked surface
+   * rather than as a gold boulder.
+   */
+  readonly mineMap: Uint8Array;
   /**
    * The wall layer and its dismantle designations, same deal: a segment's
    * posts and rails bake, and a raze mark bakes into their colour, so both
@@ -103,19 +111,27 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
 
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
-      const h = world.hmap[tileIndex(x, y, size)];
+      const i = tileIndex(x, y, size);
+      const h = world.hmap[i];
       const top = h * BH;
-      const col = tileColor(world, x, y);
-      r = col.r;
-      g = col.g;
-      b = col.b;
+      const marked = scene.mineMap[i] === 1;
+      const paint = (tint: number): void => {
+        const col = tileColor(world, x, y, tint);
+        r = col.r;
+        g = col.g;
+        b = col.b;
+      };
 
-      // Top quad, CCW seen from above (+Y normal).
+      // Top quad, CCW seen from above (+Y normal). A quarry-marked outcrop
+      // takes the designation tint here and nowhere else, so the mark sits on
+      // the surface being worked and the rock face stays rock.
+      paint(marked ? DESIGNATED_TINT : 0);
       vertex(x, top, y, 0, 1, 0, 1);
       vertex(x, top, y + 1, 0, 1, 0, 1);
       vertex(x + 1, top, y + 1, 0, 1, 0, 1);
       vertex(x + 1, top, y, 0, 1, 0, 1);
       quadIndices();
+      if (marked) paint(0);
 
       // Side quads down to each lower neighbour. blockY is the vertex's
       // fraction of this column's height, matching the mockup's per-column

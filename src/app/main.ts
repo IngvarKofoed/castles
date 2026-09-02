@@ -2,16 +2,30 @@ import { CameraRig } from "../render/camera";
 import { ChunkRenderer } from "../render/chunks";
 import { createTerrainMaterial, createWaterMaterial, waveTime } from "../render/materials";
 import { MoverRenderer, type Ghost } from "../render/movers";
-import { Picker, rectFrom, rectSpan, treeTilesInRect, wallRun, wallTilesInRect } from "../render/pick";
+import {
+  Picker,
+  levelTilesInRect,
+  rectFrom,
+  rectSpan,
+  rockTilesInRect,
+  treeTilesInRect,
+  wallRun,
+  wallTilesInRect,
+} from "../render/pick";
 import { createStage } from "../render/scene";
 import {
+  canMine,
   canPlace,
   canPlaceWall,
   buildingAtTile,
+  groundHeight,
   hasTree,
   hasWall,
   isDesignated,
+  isMineMarked,
   isRazeMarked,
+  isTargetHeight,
+  isTerraformMarked,
   readout,
   type BuildingKindValue,
 } from "../sim/know";
@@ -22,7 +36,7 @@ import { SAVE_VERSION, decode, encode } from "../sim/save/codec";
 import { advanceTick } from "../sim/tick";
 import { DAY_TICKS, MAX_TICKS_PER_FRAME, TICK_HZ } from "../sim/tuning";
 import { WORLD_SIZE } from "../sim/world/world";
-import { Hud, isMarqueeTool, isWallTool } from "../ui/hud";
+import { Hud, isMarqueeTool, isRunTool, isWallTool } from "../ui/hud";
 import { Menu } from "../ui/menu";
 import { showBlockingNotice } from "../ui/notice";
 import { VERSION } from "../version";
@@ -182,14 +196,29 @@ function buildSession(sim: Sim): Session {
   /** The tile a wall drag started on, and the live far end of the run. */
   let runFrom: [number, number] | null = null;
   let runTo: [number, number] | null = null;
+  /**
+   * The height a levelling drag is aiming at: the press tile's own. Captured
+   * at pointer-down because that is the gesture's whole statement of intent —
+   * "make all of this as high as *this*" — and the tile under the cursor has
+   * usually changed by the time the drag is released.
+   *
+   * Null unless the press tile's height is a height labour may leave a tile
+   * at: pressing on an outcrop or the shallows names a target the sim refuses
+   * whole, so the gesture is dropped here rather than issuing a command that
+   * gets thrown away after a screen-wide tile scan.
+   */
+  let levelTarget: number | null = null;
 
   canvas.addEventListener(
     "pointerdown",
     (e) => {
       if (e.button !== 0) return;
       down = { x: e.clientX, y: e.clientY, id: e.pointerId };
-      runFrom = hud.tool.kind === "wall" ? tileFrom(e) : null;
+      runFrom = isRunTool(hud.tool) ? tileFrom(e) : null;
       runTo = runFrom;
+      const pressed = hud.tool.kind === "terraform" ? tileFrom(e) : null;
+      const height = pressed ? groundHeight(sim, pressed[0], pressed[1]) : -1;
+      levelTarget = isTargetHeight(height) ? height : null;
       // The rig already declined this drag (canOrbit is false while a tool is
       // active), so capturing here takes the gesture without fighting it.
       if (hud.tool.kind !== "none") canvas.setPointerCapture(e.pointerId);
@@ -225,10 +254,12 @@ function buildSession(sim: Sim): Session {
       const wasMarquee = marqueeing;
       const from = runFrom;
       const to = runTo;
+      const target = levelTarget;
       down = null;
       marqueeing = false;
       runFrom = null;
       runTo = null;
+      levelTarget = null;
       hud.hideMarquee();
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
 
@@ -241,17 +272,30 @@ function buildSession(sim: Sim): Session {
           if (tiles.length) queued.push({ kind: "designateRaze", tiles });
           return;
         }
+        if (hud.tool.kind === "mine") {
+          const tiles = rockTilesInRect(sim, rig.camera, canvas, rect);
+          if (tiles.length) queued.push({ kind: "designateMine", tiles });
+          return;
+        }
+        if (hud.tool.kind === "terraform") {
+          if (target === null) return;
+          const tiles = levelTilesInRect(sim, rig.camera, canvas, rect, target);
+          if (tiles.length) queued.push({ kind: "designateTerraform", tiles, target });
+          return;
+        }
         const tiles = treeTilesInRect(sim, rig.camera, canvas, rect);
         if (tiles.length) queued.push({ kind: "designateChop", tiles });
         return;
       }
-      if (from) {
+      if (from && (hud.tool.kind === "wall" || hud.tool.kind === "gate")) {
         // One place-wall command carrying the whole run, valid tiles only — a
         // press under the click slop leaves from === to and places one segment.
+        // The material rides along, so the same gesture raises timber or stone
+        // depending only on which button is pressed.
         const tiles = wallRun(from, to ?? from, WORLD_SIZE)
           .filter(([x, y]) => canPlaceWall(sim, x, y))
           .map(([x, y]) => y * WORLD_SIZE + x);
-        if (tiles.length) queued.push({ kind: "placeWall", tiles });
+        if (tiles.length) queued.push({ kind: "placeWall", tiles, material: hud.tool.material });
         return;
       }
       if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_SLOP) return;
@@ -267,6 +311,7 @@ function buildSession(sim: Sim): Session {
     marqueeing = false;
     runFrom = null;
     runTo = null;
+    levelTarget = null;
     hud.hideMarquee();
   };
   canvas.addEventListener("pointercancel", cancelDrag, { signal });
@@ -308,6 +353,24 @@ function buildSession(sim: Sim): Session {
       );
       return;
     }
+    if (tool.kind === "mine") {
+      if (!canMine(sim, x, y)) return;
+      // Clicking a marked outcrop again unmarks it — the marquee only ever
+      // adds, exactly as with chop.
+      queued.push(
+        isMineMarked(sim, x, y) ?
+          { kind: "cancelMine", x, y }
+        : { kind: "designateMine", tiles: [y * WORLD_SIZE + x] },
+      );
+      return;
+    }
+    if (tool.kind === "terraform") {
+      // A click is only ever a *cancel*: the drag's target is the press tile's
+      // own height, so a single tile asked to level to its own height has
+      // nothing to do. Which leaves the click free to mean "take this back".
+      if (isTerraformMarked(sim, x, y)) queued.push({ kind: "cancelTerraform", x, y });
+      return;
+    }
     if (tool.kind === "build") {
       if (!canPlace(sim, tool.building, x, y)) return;
       queued.push({ kind: "place", building: tool.building, x, y });
@@ -319,14 +382,14 @@ function buildSession(sim: Sim): Session {
       // click falls through to the selection branch and silently changes what
       // the inspector is showing while a build tool is held.
       if (!canPlaceWall(sim, x, y)) return;
-      queued.push({ kind: "placeWall", tiles: [y * WORLD_SIZE + x] });
+      queued.push({ kind: "placeWall", tiles: [y * WORLD_SIZE + x], material: tool.material });
       return;
     }
     if (tool.kind === "gate") {
       // A single tile: converting a standing palisade into a gate is
       // raze-then-place, not a special case.
       if (!canPlaceWall(sim, x, y)) return;
-      queued.push({ kind: "placeGate", tiles: [y * WORLD_SIZE + x] });
+      queued.push({ kind: "placeGate", tiles: [y * WORLD_SIZE + x], material: tool.material });
       return;
     }
     if (tool.kind === "raze") {
@@ -361,7 +424,7 @@ function buildSession(sim: Sim): Session {
       // While a wall drag is held the preview is the whole run; otherwise it
       // is the single tile under the cursor, as the build tool's is.
       const run =
-        runFrom && tool.kind === "wall" ? wallRun(runFrom, runTo ?? runFrom, WORLD_SIZE)
+        runFrom && isRunTool(tool) ? wallRun(runFrom, runTo ?? runFrom, WORLD_SIZE)
         : hover ? [hover]
         : [];
       if (!run.length) return null;

@@ -26,6 +26,12 @@
   --rust-ink: #e08a72;
   --timber: #a9713f;
   --plank: #d0b078;
+  /* The stone chain's two goods. Quarried rubble reads cooler than cut stone,
+   * so a rock count and a block count are not the same grey pip; both match
+   * `src/render/palette.ts`, since the ribbon's icon and the pile on the
+   * ground are the same object seen twice. */
+  --rock: #8a9096;
+  --block: #b3ab97;
   --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
   --display: "Grenze Gotisch", "Grenze", Georgia, serif;
 }
@@ -137,23 +143,41 @@
 
 /* ---------- build rail ---------- */
 
+/*
+ * Eleven tools with three section heads is taller than a short window, so the
+ * rail is bounded by the viewport and scrolls inside itself rather than
+ * running off the bottom edge. It still hugs the left edge and still never
+ * covers the centre.
+ */
 .rail {
   left: 12px;
   top: 62px;
   width: 62px;
-  padding: 8px 0;
+  padding: 6px 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   border-radius: 2px;
+  max-height: calc(100vh - 86px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
+/* A head above each section (Orders / Build / Walls), so a long column reads
+ * as groups rather than as a list. The first needs no top rule. */
 .rail-label {
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-faint);
   text-align: center;
-  padding-bottom: 6px;
+  padding: 7px 0 5px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+.rail-label:first-child {
+  padding-top: 2px;
+  margin-top: 0;
+  border-top: 0;
 }
 .tool {
   appearance: none;
@@ -164,11 +188,11 @@
   font-family: var(--ui);
   font-size: 11px;
   letter-spacing: 0.05em;
-  padding: 7px 2px 6px;
+  padding: 5px 2px 4px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   cursor: pointer;
   transition:
     color 0.12s,

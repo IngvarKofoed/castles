@@ -9,11 +9,14 @@ import {
   spawnItem,
   storeItem,
 } from "../items";
+import { canMine, erodesTo, keepsTerraforming, setHeight } from "../ground";
 import {
   adjacentToBuilding,
   adjacentToTile,
+  canStepTo,
   escapePath,
   findPath,
+  neighbourGoals,
   occupancy,
   passable,
   reachTile,
@@ -37,13 +40,23 @@ import {
 import {
   BUILD_TICKS,
   CHOP_TICKS,
-  GATE_BUILD_TICKS,
+  MINE_ROCK,
+  MINE_TICKS,
   RAZE_TICKS,
   TASK_PRIORITY,
+  TERRAFORM_TICKS,
   WALK_TILES_PER_TICK,
-  WALL_BUILD_TICKS,
 } from "../tuning";
-import { WallState, builtForm, isBlueprint, isBuilt, isWalkable } from "../walls";
+import {
+  WallState,
+  builtForm,
+  isBlueprint,
+  isBuilt,
+  isWalkable,
+  wallBuildTicks,
+  wallItem,
+  wallMaterial,
+} from "../walls";
 import { markEnclosureStale } from "../walls/enclosure";
 import { markChunkDirty, tileIndex } from "../world/world";
 import { abandonTask, finishTask, releaseTask } from "./tasks";
@@ -188,30 +201,39 @@ function stepPoolWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
 /**
  * Advance along the route by one tick's worth of walking.
  *
- * A route is planned once and then followed, so ground can stop being walkable
- * underneath it — a palisade segment finishing across it is the common case now
- * that blueprints are walkable and every route is free to cross a drawn run.
- * Stepping onto the next tile is therefore gated on it still being passable,
- * and a stale route is re-planned to the same destination rather than
- * abandoned: the route went stale, the errand usually did not. This is the
- * "repath when a step is blocked" rule `docs/specs/2026-09-01-tick-and-labour.md`
- * asks for; without it a walker strolls straight through standing wall.
+ * A route is planned once and then followed, so the ground can stop being
+ * *steppable* underneath it. Two ways that happens, and the gate below covers
+ * both: a palisade segment finishing across the route (the common case, since
+ * blueprints are walkable and every route is free to cross a drawn run), and —
+ * since the stone tier brought ground-changing labour — a **cliff forming
+ * mid-route**, when a terraform step or a quarried outcrop moves a tile's
+ * height while somebody is walking to it. So the step is checked for
+ * passability *and* for the one-block height rule the pathfinder itself
+ * enforces, measured from the walker's current tile; a stale route is
+ * re-planned to the same destination rather than abandoned, because the route
+ * went stale and the errand usually did not.
  *
  * Returns true only when there is genuinely no way round, which is the
  * caller's cue to hand the task back.
  */
 function walk(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   const size = sim.world.size;
+  const cx = Math.floor(c.x);
+  const cy = Math.floor(c.y);
   // Someone standing on ground that is *already* impassable is walking an
   // escape route, and those deliberately cut through blocked tiles (see
   // `escapePath`). Only a walker on legal ground is held to a legal route.
-  const escaping = !passable(sim.world, sim.wallMap, occ, Math.floor(c.x), Math.floor(c.y));
+  const escaping = !passable(sim.world, sim.wallMap, occ, cx, cy);
   let budget = WALK_TILES_PER_TICK;
   while (budget > 0 && c.step < c.path.length) {
     const tile = c.path[c.step];
     const tx = tile % size;
     const ty = (tile - tx) / size;
-    if (!escaping && !passable(sim.world, sim.wallMap, occ, tx, ty)) {
+    // Re-read the height each iteration: one tick's budget can carry a walker
+    // over a tile boundary, and measuring the next step from the tile they
+    // have already left would refuse legal steps at a slope.
+    const fromH = sim.world.hmap[tileIndex(Math.floor(c.x), Math.floor(c.y), size)];
+    if (!escaping && !canStepTo(sim.world, sim.wallMap, occ, tx, ty, fromH)) {
       const goal = c.path[c.path.length - 1];
       const around = findPath(sim, occ, Math.floor(c.x), Math.floor(c.y), new Set([goal]));
       c.path = around ?? [];
@@ -273,7 +295,7 @@ function claim(sim: Sim, occ: Occupancy, c: Colonist): boolean {
 
 /** Where a task's work begins, for distance ranking. */
 function taskAnchor(sim: Sim, t: Task): [number, number] | null {
-  if (t.kind === TaskKind.Chop || t.kind === TaskKind.Raze) return [t.x, t.y];
+  if (isTileWork(t.kind)) return [t.x, t.y];
   if (t.kind === TaskKind.Build) {
     const b = findBuilding(sim, t.building);
     return b ? [b.x, b.y] : null;
@@ -309,9 +331,24 @@ function fetchesFirst(kind: number): boolean {
     kind === TaskKind.BuildWall;
 }
 
+/** Work done *at* a tile rather than on a building or an item. */
+function isTileWork(kind: number): boolean {
+  return (
+    kind === TaskKind.Chop ||
+    kind === TaskKind.Mine ||
+    kind === TaskKind.Terraform ||
+    kind === TaskKind.Raze
+  );
+}
+
 function firstGoal(sim: Sim, occ: Occupancy, task: Task): Set<number> | null {
   if (task.kind === TaskKind.Chop) return reachTile(sim, occ, task.x, task.y);
-  if (task.kind === TaskKind.Raze) return adjacentToTile(sim, occ, task.x, task.y);
+  // Razing, quarrying and levelling are all worked from a *neighbouring* tile,
+  // never from the tile itself: an outcrop is a cliff you cut from below, and
+  // ground about to move under your feet is ground to be standing beside.
+  if (task.kind === TaskKind.Raze || task.kind === TaskKind.Mine || task.kind === TaskKind.Terraform) {
+    return adjacentToTile(sim, occ, task.x, task.y);
+  }
   if (task.kind === TaskKind.Build) {
     const b = findBuilding(sim, task.building);
     return b ? adjacentToBuilding(sim, occ, b) : null;
@@ -334,6 +371,10 @@ function act(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   switch (task.kind) {
     case TaskKind.Chop:
       return actChop(sim, occ, c, task);
+    case TaskKind.Mine:
+      return actMine(sim, occ, c, task);
+    case TaskKind.Terraform:
+      return actTerraform(sim, occ, c, task);
     case TaskKind.Build:
       return actBuild(sim, occ, c, task);
     case TaskKind.BuildWall:
@@ -366,6 +407,93 @@ function actChop(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   // occupancy set only ever holds building footprints — so the log lands
   // exactly where the tree was.
   spawnItem(sim, ItemType.Log, task.x, task.y, occ);
+  clearWorker(c);
+  finishTask(sim, task);
+}
+
+/**
+ * Quarry one outcrop tile: work it from the tile beside it, and when the last
+ * tick lands the rock comes out **and the outcrop comes down**. The second
+ * reward is deliberate — an outcrop mined out is stone plus a flat build site,
+ * which is what makes the map's rock worth walking to (docs/CONCEPT.md: room
+ * to build and resources you can see but don't yet own are the same pull).
+ *
+ * The tile drops to its lowest orthogonal land neighbour's height, so the
+ * result is always step-reachable from that neighbour and quarrying can never
+ * strand anybody in a pit. The rubble lands on the tile just vacated, the chop
+ * precedent — and all of it on the one tile, since the drop spiral takes the
+ * first free tile and items do not block each other.
+ */
+function actMine(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
+  if (!canMine(sim, task.x, task.y)) {
+    // Somebody else brought it down, or it stopped being rock.
+    abandonTask(sim, occ, task);
+    return;
+  }
+  c.phase = Phase.Working;
+  faceTile(c, task.x, task.y);
+  if (++c.work < MINE_TICKS) return;
+
+  const height = erodesTo(sim, task.x, task.y);
+  if (height === null) {
+    abandonTask(sim, occ, task);
+    return;
+  }
+  const i = tileIndex(task.x, task.y, sim.world.size);
+  setHeight(sim, task.x, task.y, height);
+  // Nothing grows on an outcrop, so this only ever tidies up a hand-set layer.
+  sim.world.treeMap[i] = 0;
+  sim.mineMap[i] = 0;
+  markChunkDirty(sim.world, task.x, task.y);
+  for (let n = 0; n < MINE_ROCK; n++) spawnItem(sim, ItemType.Rock, task.x, task.y, occ);
+  clearWorker(c);
+  finishTask(sim, task);
+}
+
+/**
+ * Level one tile toward its stored target, **one height step per stint**. The
+ * task lives until the tile arrives, so a four-block cut is four stints by
+ * whoever is free — and it is charged in labour alone, never in materials
+ * (docs/CONCEPT.md).
+ *
+ * Eligibility is re-checked at every step, not just at designation: a wall or
+ * a building raised across the area since cancels the rest of the job. It is
+ * `keepsTerraforming` rather than `canTerraform` that is re-asked, so a log
+ * dropped on the tile rides the height change instead of quietly cancelling
+ * the job — which is what the eviction below used to do to it. And anybody
+ * standing on the tile is moved off it before the ground moves, because a tile
+ * lowered under an idle colonist can leave them in a pit no path leads out of.
+ */
+function actTerraform(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
+  const i = tileIndex(task.x, task.y, sim.world.size);
+  const target = sim.terraformMap[i] - 1;
+  if (!sim.terraformMap[i] || !keepsTerraforming(sim, task.x, task.y)) {
+    // Undesignated, or no longer levellable: drop the mark and the task with it.
+    sim.terraformMap[i] = 0;
+    abandonTask(sim, occ, task);
+    return;
+  }
+  const h = sim.world.hmap[i];
+  if (h === target) {
+    sim.terraformMap[i] = 0;
+    clearWorker(c);
+    finishTask(sim, task);
+    return;
+  }
+  c.phase = Phase.Working;
+  faceTile(c, task.x, task.y);
+  if (++c.work < TERRAFORM_TICKS) return;
+
+  // The ground waits for the tile to actually clear: the eviction hands out a
+  // route, and a route is walked on the next tick, so moving the height now is
+  // what would drop somebody into the pit this job is digging.
+  if (stepOffTile(sim, occ, task.x, task.y)) return;
+  setHeight(sim, task.x, task.y, h + (target > h ? 1 : -1));
+  markChunkDirty(sim.world, task.x, task.y);
+  c.work = 0;
+  if (sim.world.hmap[i] !== target) return;
+  // Arrived: the designation is spent and the task is done.
+  sim.terraformMap[i] = 0;
   clearWorker(c);
   finishTask(sim, task);
 }
@@ -444,8 +572,7 @@ function actBuildWall(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  const gate = sim.wallMap[i] === WallState.GateBp;
-  if (++c.work < (gate ? GATE_BUILD_TICKS : WALL_BUILD_TICKS)) return;
+  if (++c.work < wallBuildTicks(sim.wallMap[i])) return;
 
   // The segment goes up *first*, so the sweep and the eviction below see the
   // tile as the obstacle it has just become.
@@ -468,7 +595,8 @@ function actBuildWall(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   finishTask(sim, task);
 }
 
-/** Tear one built segment down: quick work, and the log comes back. */
+/** Tear one built segment down: quick work, and its own material comes back —
+ *  a log from timber, a block from stone. */
 function actRaze(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   const i = tileIndex(task.x, task.y, sim.world.size);
   if (!isBuilt(sim.wallMap[i])) {
@@ -479,13 +607,14 @@ function actRaze(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   faceTile(c, task.x, task.y);
   if (++c.work < RAZE_TICKS) return;
 
+  const refund = wallItem(wallMaterial(sim.wallMap[i]));
   sim.wallMap[i] = WallState.None;
   sim.razeMap[i] = 0;
   markChunkDirty(sim.world, task.x, task.y);
   markEnclosureStale(sim);
   // The tile has just become free, so the drop spiral starts on it — the chop
   // precedent, where the log lands where the tree stood.
-  spawnItem(sim, ItemType.Log, task.x, task.y, occ);
+  spawnItem(sim, refund, task.x, task.y, occ);
   clearWorker(c);
   finishTask(sim, task);
 }
@@ -593,6 +722,45 @@ export function evictFromTile(sim: Sim, occ: Occupancy, x: number, y: number): v
     if (Math.floor(c.x) !== x || Math.floor(c.y) !== y) continue;
     stepAside(sim, occ, c, x, y);
   }
+}
+
+/**
+ * Get anyone standing on a tile off it because its **height** is about to
+ * change — the ground stays walkable, so it is not an eviction in the wall
+ * sense, but staying put through a four-block cut can leave a colonist in a
+ * pit whose walls are two steps high, and no path leads out of that.
+ *
+ * `escapePath` cannot do this job: it only fires for a walker whose tile is
+ * *impassable*, and a tile about to be lowered is perfectly passable. So the
+ * errand is handed back exactly as an eviction does (the carried log drops
+ * where they stand — the same cost a finishing wall segment already charges),
+ * and then they are walked to any free neighbour.
+ *
+ * Returns **true while somebody is still on the tile with a way off it**, which
+ * is the caller's cue to leave the ground where it is for another tick. A route
+ * is walked on the *following* tick, so moving the ground the moment the route
+ * was handed out is what strands them: one step down turns a neighbour at +1
+ * into a neighbour at +2, and a colonist whose only legal neighbours were the
+ * high ones is then in a pit `findPath` cannot get them out of — for good, since
+ * every later step of the same job digs it deeper. Somebody with no route at all
+ * is *already* stuck, so the work is not held up for them.
+ */
+export function stepOffTile(sim: Sim, occ: Occupancy, x: number, y: number): boolean {
+  let leaving = false;
+  for (const c of sim.colonists) {
+    if (c.inside) continue;
+    if (Math.floor(c.x) !== x || Math.floor(c.y) !== y) continue;
+    stepAside(sim, occ, c, x, y);
+    if (c.path.length <= c.step) {
+      const out = findPath(sim, occ, x, y, neighbourGoals(sim, occ, [[x, y]]));
+      if (out && out.length) {
+        c.path = out;
+        c.step = 0;
+      }
+    }
+    if (c.path.length > c.step) leaving = true;
+  }
+  return leaving;
 }
 
 /**

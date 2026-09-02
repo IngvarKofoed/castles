@@ -1,4 +1,5 @@
 import { BUILDING_DEFS, canPlace, defOf, footprint } from "./buildings";
+import { canMine, canTerraform, isTargetHeight } from "./ground";
 import { groundItem } from "./items";
 import { evictFromFootprint, leaveBuilding } from "./labour/colonists";
 import { abandonTask, releaseTask } from "./labour/tasks";
@@ -16,7 +17,7 @@ import {
   type Colonist,
   type Sim,
 } from "./store";
-import { WallState, canPlaceWall } from "./walls";
+import { WallState, blueprintFor, canPlaceWall, type WallMaterial } from "./walls";
 import { markEnclosureStale } from "./walls/enclosure";
 import { markChunkDirty, tileIndex, type World } from "./world/world";
 
@@ -48,16 +49,33 @@ export type Command =
   | { kind: "cancelBlueprint"; building: number }
   | { kind: "staff"; building: number }
   | { kind: "unstaff"; building: number }
+  /** Mark rock outcrops for quarrying. Additive, exactly as `designateChop`. */
+  | { kind: "designateMine"; tiles: number[] }
+  | { kind: "cancelMine"; x: number; y: number }
+  /**
+   * Level an area to one height. Unlike the other designations this one is
+   * **not** additive: a tile already marked has its stored target *overwritten*,
+   * because the target came off the tile the player pressed on and fixing a
+   * mis-pressed area has to be one more drag rather than a tile-by-tile
+   * clean-up. `cancelTerraform` is still how a single tile is taken back.
+   */
+  | { kind: "designateTerraform"; tiles: number[]; target: number }
+  | { kind: "cancelTerraform"; x: number; y: number }
   /**
    * A drawn wall run, as one command — the same "one gesture, one entry in the
    * log" rule `designateChop` follows. The tool sends only the tiles it judged
    * valid, so one bad tile in the middle of a drag costs that segment and not
    * the run; the sim re-checks each of them anyway, because a command may be
    * replayed against a world a tick older than the preview.
+   *
+   * `material` is carried by the command rather than held as a mode, so there
+   * is no toggle whose forgotten setting raises the wrong wall: the rail has a
+   * button per material and each one says what it costs.
    */
-  | { kind: "placeWall"; tiles: number[] }
-  | { kind: "placeGate"; tiles: number[] }
-  /** Mark wall segments for dismantling. Additive, like `designateChop`. */
+  | { kind: "placeWall"; tiles: number[]; material: WallMaterial }
+  | { kind: "placeGate"; tiles: number[]; material: WallMaterial }
+  /** Mark wall segments for dismantling. Additive, like `designateChop`, and
+   *  material-blind — a segment refunds whatever it was made of. */
   | { kind: "designateRaze"; tiles: number[] }
   | { kind: "cancelRaze"; x: number; y: number };
 
@@ -79,10 +97,18 @@ function applyCommand(sim: Sim, command: Command): void {
       return staff(sim, command.building);
     case "unstaff":
       return unstaff(sim, command.building);
+    case "designateMine":
+      return designateMineTiles(sim, command.tiles);
+    case "cancelMine":
+      return designateMine(sim, command.x, command.y, 0);
+    case "designateTerraform":
+      return designateTerraformTiles(sim, command.tiles, command.target);
+    case "cancelTerraform":
+      return clearTerraform(sim, command.x, command.y);
     case "placeWall":
-      return placeWalls(sim, command.tiles, WallState.PalisadeBp);
+      return placeWalls(sim, command.tiles, blueprintFor(command.material, false));
     case "placeGate":
-      return placeWalls(sim, command.tiles, WallState.GateBp);
+      return placeWalls(sim, command.tiles, blueprintFor(command.material, true));
     case "designateRaze":
       return designateRazeTiles(sim, command.tiles);
     case "cancelRaze":
@@ -119,6 +145,78 @@ function designate(sim: Sim, x: number, y: number, on: number): void {
     for (const task of [...sim.tasks]) {
       if (task.kind === TaskKind.Chop && task.x === x && task.y === y) abandonTask(sim, occ, task);
     }
+  }
+}
+
+/** Mark a whole selection of outcrops. Only tiles that can actually be
+ *  quarried take — a sea stack with nowhere to stand is refused here rather
+ *  than becoming a task that retries forever (`canMine`). */
+function designateMineTiles(sim: Sim, tiles: readonly number[]): void {
+  const size = sim.world.size;
+  for (const i of tiles) {
+    if (!Number.isInteger(i) || i < 0 || i >= sim.mineMap.length) continue;
+    designateMine(sim, i % size, Math.floor(i / size), 1);
+  }
+}
+
+function designateMine(sim: Sim, x: number, y: number, on: number): void {
+  if (!inBounds(sim.world, x, y)) return;
+  const i = tileIndex(x, y, sim.world.size);
+  if (on && !canMine(sim, x, y)) return;
+  if (sim.mineMap[i] === on) return;
+  sim.mineMap[i] = on;
+  // Half of this mark is baked — a doomed outcrop's top face bakes
+  // gold-shifted, the styleguide's two-marks rule — so marking one is a
+  // geometry change, exactly as marking a tree is.
+  markChunkDirty(sim.world, x, y);
+  if (!on) {
+    const occ = occupancy(sim);
+    for (const task of [...sim.tasks]) {
+      if (task.kind === TaskKind.Mine && task.x === x && task.y === y) abandonTask(sim, occ, task);
+    }
+  }
+}
+
+/**
+ * Designate an area for levelling to one height.
+ *
+ * The target came off the tile the player pressed on, so it is the same for
+ * every tile of the drag; tiles already at it, and tiles that cannot be
+ * levelled at all, are simply skipped (the marquee's rust-skip rule). A tile
+ * that already carries a *different* target is **overwritten** rather than
+ * left alone, which is what makes re-dragging the fix for a mis-pressed area.
+ */
+function designateTerraformTiles(sim: Sim, tiles: readonly number[], target: number): void {
+  if (!isTargetHeight(target)) return;
+  const size = sim.world.size;
+  for (const i of tiles) {
+    if (!Number.isInteger(i) || i < 0 || i >= sim.terraformMap.length) continue;
+    const x = i % size;
+    const y = (i - x) / size;
+    if (!canTerraform(sim, x, y)) continue;
+    if (sim.world.hmap[i] === target) continue;
+    if (sim.terraformMap[i] === target + 1) continue;
+    sim.terraformMap[i] = target + 1;
+    // Any task on the old target is stale: the tile it was walking toward is
+    // going somewhere else now, and its stint restarts against the new figure.
+    cancelTerraformTasks(sim, x, y);
+  }
+}
+
+function clearTerraform(sim: Sim, x: number, y: number): void {
+  if (!inBounds(sim.world, x, y)) return;
+  const i = tileIndex(x, y, sim.world.size);
+  if (!sim.terraformMap[i]) return;
+  sim.terraformMap[i] = 0;
+  cancelTerraformTasks(sim, x, y);
+}
+
+/** No chunk to dirty: a levelling mark is drawn as an overlay and nothing
+ *  about it is baked, so unlike chop, mine and raze it changes no geometry. */
+function cancelTerraformTasks(sim: Sim, x: number, y: number): void {
+  const occ = occupancy(sim);
+  for (const task of [...sim.tasks]) {
+    if (task.kind === TaskKind.Terraform && task.x === x && task.y === y) abandonTask(sim, occ, task);
   }
 }
 
@@ -186,6 +284,8 @@ function place(sim: Sim, kind: BuildingKindValue, x: number, y: number): void {
     reservedIncoming: 0,
     acceptLog: 1,
     acceptPlank: 1,
+    acceptRock: 1,
+    acceptBlock: 1,
     worker: -1,
     millProgress: -1,
   };

@@ -4,9 +4,12 @@ import {
   canPlace,
   defOf,
   footprint,
+  recipeOf,
   storedCount,
   workTile,
 } from "../buildings";
+import { GOODS, GOOD_LIST, stockpileAccepts } from "../goods";
+import { canMine, canTerraform, isTargetHeight } from "../ground";
 import { groundItemsAt } from "../items";
 import {
   BuildingKind,
@@ -14,22 +17,14 @@ import {
   ItemType,
   Loc,
   type Building,
-  type BuildingKindValue,
   type Colonist,
   type Item,
   type Sim,
 } from "../store";
-import {
-  BUILD_TICKS,
-  DAY_TICKS,
-  MILL_TICKS,
-  SAWMILL_INPUT_CAP,
-  SAWMILL_OUTPUT_CAP,
-  STOCKPILE_PER_TILE,
-  WALL_LOG_COST,
-} from "../tuning";
-import { WallState, canPlaceWall, razeMarked, wallAt } from "../walls";
+import { BUILD_TICKS, DAY_TICKS, STOCKPILE_PER_TILE, WALL_ITEM_COST } from "../tuning";
+import { WallState, canPlaceWall, isGateway, isStoneWall, razeMarked, wallAt, wallItem } from "../walls";
 import { enclosedLand } from "../walls/enclosure";
+import { tileIndex } from "../world/world";
 
 /**
  * What the player is allowed to know.
@@ -45,9 +40,22 @@ import { enclosedLand } from "../walls/enclosure";
 
 export type { Building, Colonist, Item, Sim };
 export { BuildingKind, BuildingState, ItemType, Loc, BUILDING_DEFS, defOf, footprint, workTile, canPlace };
-export type { BuildingKindValue };
-export { WallState, canPlaceWall, wallAt };
-export { WALL_LOG_COST };
+export type { BuildingKindValue, ItemTypeValue } from "../store";
+/**
+ * The wall predicates the renderer is allowed: what a segment is made of,
+ * whether it is a gateway, whether it is still a drawing. Exported so
+ * `render/` can pick a model per segment without ever comparing a wall byte to
+ * a state — which is the rule that let the stone tier append four states
+ * without touching a consumer (`sim/walls`).
+ */
+export { WallState, canPlaceWall, wallAt, isGateway, isStoneWall };
+export { isBlueprint as wallIsBlueprint } from "../walls";
+export { GOODS, GOOD_LIST };
+export type { GoodDef } from "../goods";
+/** What one wall segment costs, and of what. The rail's cost captions read
+ *  these rather than hard-coding "1 log" twice and "1 block" twice. */
+export { WALL_ITEM_COST, wallItem };
+export type { WallMaterial } from "../walls";
 
 export function colonists(sim: Sim): readonly Colonist[] {
   return sim.colonists;
@@ -63,8 +71,9 @@ export function items(sim: Sim): readonly Item[] {
 
 /** The ribbon's numbers. */
 export interface Readout {
-  logs: number;
-  planks: number;
+  /** How much of each good the colony holds, indexed by `ItemType` — every
+   *  good the game has, so a new one appears on the ribbon by existing. */
+  goods: number[];
   /** Everyone. */
   folk: number;
   /** Pool workers not currently on a task — the number staffing a slot eats into. */
@@ -82,11 +91,12 @@ export interface Readout {
 }
 
 export function readout(sim: Sim): Readout {
-  let logs = 0;
-  let planks = 0;
+  const goods = GOOD_LIST.map(() => 0);
   for (const it of sim.items) {
-    if (it.type === ItemType.Log) logs++;
-    else planks++;
+    // Indexed by type rather than counted into named locals: an `else`
+    // branch counting "everything that isn't a log" as planks is exactly the
+    // shape that broke the moment a third good existed.
+    if (it.type >= 0 && it.type < goods.length) goods[it.type]++;
   }
   let pool = 0;
   let idle = 0;
@@ -96,8 +106,7 @@ export function readout(sim: Sim): Readout {
     if (c.task < 0) idle++;
   }
   return {
-    logs,
-    planks,
+    goods,
     folk: sim.colonists.length,
     idle,
     pool,
@@ -112,6 +121,33 @@ export function isDesignated(sim: Sim, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= sim.world.size || y >= sim.world.size) return false;
   return sim.chopMap[y * sim.world.size + x] === 1;
 }
+
+/** Is this outcrop marked for quarrying? */
+export function isMineMarked(sim: Sim, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= sim.world.size || y >= sim.world.size) return false;
+  return sim.mineMap[y * sim.world.size + x] === 1;
+}
+
+/** Is this tile marked for levelling? */
+export function isTerraformMarked(sim: Sim, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= sim.world.size || y >= sim.world.size) return false;
+  return sim.terraformMap[y * sim.world.size + x] !== 0;
+}
+
+/**
+ * The ground's own height — what the terraform tool captures from the tile the
+ * player presses on, and turns into the whole drag's target. Knowledge rather
+ * than truth in the strict sense: the shape of the land is something you can
+ * see by looking at it.
+ */
+export function groundHeight(sim: Sim, x: number, y: number): number {
+  if (x < 0 || y < 0 || x >= sim.world.size || y >= sim.world.size) return 0;
+  return sim.world.hmap[tileIndex(x, y, sim.world.size)];
+}
+
+/** Can these tools act on this tile at all? The tools ask before designating,
+ *  so an ineligible tile ghosts as skipped instead of silently doing nothing. */
+export { canMine, canTerraform, isTargetHeight };
 
 export function hasTree(sim: Sim, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= sim.world.size || y >= sim.world.size) return false;
@@ -130,6 +166,14 @@ export function chopLayer(sim: Sim): Uint8Array {
 
 export function treeLayer(sim: Sim): Uint8Array {
   return sim.world.treeMap;
+}
+
+export function mineLayer(sim: Sim): Uint8Array {
+  return sim.mineMap;
+}
+
+export function terraformLayer(sim: Sim): Uint8Array {
+  return sim.terraformMap;
 }
 
 export function wallLayer(sim: Sim): Uint8Array {
@@ -165,6 +209,14 @@ export function hasWall(sim: Sim, x: number, y: number): boolean {
   return wallAt(sim, x, y) !== WallState.None;
 }
 
+/** One good a building holds, for the panel to list. */
+export interface StoredGood {
+  type: number;
+  name: string;
+  count: number;
+  accepted: boolean;
+}
+
 /** Everything the inspector panel shows about one building. */
 export interface Inspection {
   id: number;
@@ -184,49 +236,71 @@ export interface Inspection {
    * only things telling the player someone is in there.
    */
   worker: "none" | "walking" | "inside";
-  storedLogs: number;
-  storedPlanks: number;
+  /**
+   * Every good in the building, in `ItemType` order — the stockpile panel
+   * walks this rather than naming logs and planks, which is what keeps a new
+   * good from needing a new row of hard-coded UI.
+   */
+  stored: StoredGood[];
+  storedTotal: number;
   capacity: number;
+  /** The workshop's chain, or null for anything that produces nothing. Its
+   *  names are what the panel's chain chips read. */
+  chain: { input: string; output: string } | null;
+  inputCount: number;
   inputCap: number;
+  outputCount: number;
   outputCap: number;
-  /** 0..1 through the current cut, or -1 when the mill is not cutting. */
+  /** 0..1 through the current batch, or -1 when the workshop is not working. */
   milling: number;
   /**
-   * Why a staffed mill is not cutting, for the panel to say plainly. The panel
-   * is the only place the game ever explains a stall — no alerts, no colour
-   * changes — so it has to name the real reason rather than guess at the
-   * commonest one.
+   * Why a staffed workshop is not working, for the panel to say plainly. The
+   * panel is the only place the game ever explains a stall — no alerts, no
+   * colour changes — so it has to name the real reason rather than guess at
+   * the commonest one. "no-input" rather than "no logs", because the mason
+   * stalls on rock.
    */
-  stall: "none" | "no-logs" | "output-full";
+  stall: "none" | "no-input" | "output-full";
 }
 
 export function inspect(sim: Sim, id: number): Inspection | null {
   const b = sim.buildings.find((x) => x.id === id);
   if (!b) return null;
   const def = defOf(b);
-  const logs = storedCount(sim, b.id, ItemType.Log);
-  const planks = storedCount(sim, b.id, ItemType.Plank);
+  const recipe = recipeOf(b);
+  const stored = GOOD_LIST.map((good) => ({
+    type: good.type,
+    name: good.name,
+    count: storedCount(sim, b.id, good.type),
+    accepted: stockpileAccepts(b, good.type),
+  }));
+  const held = (type: number): number => stored.find((s) => s.type === type)?.count ?? 0;
+  const inputCount = recipe ? held(recipe.input) : 0;
+  const outputCount = recipe ? held(recipe.output) : 0;
   return {
     id: b.id,
     name: def.name,
     kind: b.kind,
     state: b.state,
     progress: Math.min(1, b.progress / BUILD_TICKS),
-    delivered: logs,
+    delivered: held(ItemType.Log),
     cost: def.cost,
     hasSlot: def.hasSlot,
     staffed: b.worker >= 0,
     worker: workerState(sim, b),
-    storedLogs: logs,
-    storedPlanks: planks,
+    stored,
+    storedTotal: stored.reduce((n, s) => n + s.count, 0),
     capacity: b.kind === BuildingKind.Stockpile ? b.w * b.h * STOCKPILE_PER_TILE : 0,
-    inputCap: SAWMILL_INPUT_CAP,
-    outputCap: SAWMILL_OUTPUT_CAP,
-    milling: b.millProgress < 0 ? -1 : Math.min(1, b.millProgress / MILL_TICKS),
+    chain: recipe ? { input: GOODS[recipe.input].name, output: GOODS[recipe.output].name } : null,
+    inputCount,
+    inputCap: recipe?.inputCap ?? 0,
+    outputCount,
+    outputCap: recipe?.outputCap ?? 0,
+    milling: !recipe || b.millProgress < 0 ? -1 : Math.min(1, b.millProgress / recipe.ticks),
     stall:
-      b.kind !== BuildingKind.Sawmill || b.worker < 0 || b.millProgress >= 0 ? "none"
-      : planks >= SAWMILL_OUTPUT_CAP ? "output-full"
-      : "no-logs",
+      !recipe || b.worker < 0 || b.millProgress >= 0 ? "none"
+      : outputCount >= recipe.outputCap ? "output-full"
+      : "no-input",
   };
 }
 

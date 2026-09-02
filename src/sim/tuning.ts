@@ -37,25 +37,61 @@ export const BUILD_TICKS = 4 * TICK_HZ;
 export const MILL_TICKS = 5 * TICK_HZ;
 
 /**
- * Walls: a palisade segment is 2 s, a gate 6 s, tearing either down 1 s.
- * The gate costs more *labour* than a palisade and the same materials — one
- * log for any segment — because multi-log delivery to a grid tile needs
- * per-tile ledger bookkeeping the grid deliberately does not have. That
- * arrives with the stone tier, which needs it anyway.
+ * Quarrying one outcrop tile: 6 s of work for `MINE_ROCK` rock, and the ground
+ * it stood on. Slower than a chop because the second reward is the point — an
+ * outcrop mined out is stone *and* a flat build site.
+ */
+export const MINE_TICKS = 6 * TICK_HZ;
+export const MINE_ROCK = 4;
+
+/**
+ * The mason: 6 s and `ROCK_PER_BLOCK` rock per block. The ratio is the stone
+ * tier's cost dial — a segment costs one block whatever this says, so making
+ * stone dearer means raising this (or `MINE_TICKS`), never the segment.
+ */
+export const MASON_TICKS = 6 * TICK_HZ;
+export const ROCK_PER_BLOCK = 2;
+
+/**
+ * Terraforming: 3 s of pool labour per tile per height step, and **no
+ * materials at all** (docs/CONCEPT.md — levelling is charged in people-hours,
+ * which is the scarcest currency there is). A four-step drop is four of these.
+ */
+export const TERRAFORM_TICKS = 3 * TICK_HZ;
+
+/** Heights terraforming and mining may leave a tile at. The world's shape is
+ *  generation's job: no lowering into water, no raising into rock. */
+export const GROUND_MIN = 2;
+export const GROUND_MAX = 6;
+
+/**
+ * Walls: a palisade segment is 2 s, a wooden gate 6 s, and stone twice
+ * either — the permanent tier is meant to be *slow*, which is what keeps the
+ * palisade worth throwing up first. Tearing anything down is 1 s.
+ *
+ * A segment costs one item whatever its material (`WALL_ITEM_COST`), because
+ * multi-item delivery to a grid tile needs the per-tile ledger the grid
+ * deliberately does not have. The stone tier's real cost lives upstream
+ * instead: `MINE_TICKS`, `ROCK_PER_BLOCK`, and the walk from the outcrop.
  */
 export const WALL_BUILD_TICKS = 2 * TICK_HZ;
 export const GATE_BUILD_TICKS = 6 * TICK_HZ;
+export const STONE_BUILD_TICKS = 4 * TICK_HZ;
+export const STONE_GATE_BUILD_TICKS = 12 * TICK_HZ;
 export const RAZE_TICKS = 1 * TICK_HZ;
 
-/** Logs a wall segment costs. One, gates included — see above. */
-export const WALL_LOG_COST = 1;
+/** Items a wall segment costs: one log, or one block for stone. Gates
+ *  included — a gate costs more labour, never more material. */
+export const WALL_ITEM_COST = 1;
 
 /**
  * The one fixed global order a pool worker works down: **build > build-wall >
- * haul-to-site > haul-to-input > chop > raze > haul-to-store.** Buildings
- * first because they are rarer and dearer; walls ahead of general hauling so a
- * drawn line visibly gets worked; raze below chop so tearing down never
- * starves building up; tidying last.
+ * haul-to-site > haul-to-input > chop > mine > raze > terraform >
+ * haul-to-store.** Buildings first because they are rarer and dearer; walls
+ * ahead of general hauling so a drawn line visibly gets worked; mining beside
+ * chopping, since both are raw material flowing in; raze below both so tearing
+ * down never starves building up; terraforming is ground-keeping and outranks
+ * only the tidying.
  *
  * The numbers are `TaskKind` values written out, because this file may not
  * import that enum as a value (see the header). They are type-checked against
@@ -69,7 +105,9 @@ export const TASK_PRIORITY: readonly TaskKindValue[] = [
   1, // HaulToSite
   2, // HaulToInput
   3, // Chop
+  7, // Mine
   6, // Raze
+  8, // Terraform
   4, // HaulToStore
 ];
 
@@ -84,9 +122,9 @@ export const TASK_COOLDOWN_JITTER = TICK_HZ;
 /** Stockpile: items per footprint tile. */
 export const STOCKPILE_PER_TILE = 8;
 
-/** Sawmill buffers. */
-export const SAWMILL_INPUT_CAP = 2;
-export const SAWMILL_OUTPUT_CAP = 2;
+/** Workshop buffers — both workshops carry the same two-in, two-out shape. */
+export const WORKSHOP_INPUT_CAP = 2;
+export const WORKSHOP_OUTPUT_CAP = 2;
 
 /** Tiles around the map centre generation keeps clear of trees, so the
  * opening view is buildable and the starting folk have room. */

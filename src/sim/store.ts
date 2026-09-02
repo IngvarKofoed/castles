@@ -20,6 +20,10 @@ import { generate, tileIndex, Terrain, type World } from "./world/world";
 export const ItemType = {
   Log: 0,
   Plank: 1,
+  /** Quarried from a rock outcrop; the mason's input. */
+  Rock: 2,
+  /** Cut stone; one raises one segment of stone wall. */
+  Block: 3,
 } as const;
 export type ItemTypeValue = (typeof ItemType)[keyof typeof ItemType];
 
@@ -38,6 +42,8 @@ export type LocValue = (typeof Loc)[keyof typeof Loc];
 export const BuildingKind = {
   Stockpile: 0,
   Sawmill: 1,
+  /** The second slot workshop: rock into blocks. */
+  Mason: 2,
 } as const;
 export type BuildingKindValue = (typeof BuildingKind)[keyof typeof BuildingKind];
 
@@ -71,6 +77,10 @@ export const TaskKind = {
   HaulToStore: 4,
   BuildWall: 5,
   Raze: 6,
+  /** Quarry a rock outcrop down to buildable ground. */
+  Mine: 7,
+  /** Move one tile one height step toward its stored target. */
+  Terraform: 8,
 } as const;
 export type TaskKindValue = (typeof TaskKind)[keyof typeof TaskKind];
 
@@ -152,10 +162,17 @@ export interface Building {
    * reads `stored + reservedIncoming` so it never over-orders.
    */
   reservedIncoming: number;
-  /** Stockpile filters, 0/1. Toggling them is later sugar; the fields exist
-   *  now so persistence freezes the final shape. */
+  /**
+   * Stockpile filters, 0/1 — one per `ItemType`, read through
+   * `stockpileAccepts` (goods.ts) rather than by name. Toggling them is later
+   * sugar; the fields exist now so persistence freezes the final shape. A new
+   * good means a new field *and* a migration rung that stamps it on to every
+   * building already saved, or old stockpiles refuse it forever.
+   */
   acceptLog: number;
   acceptPlank: number;
+  acceptRock: number;
+  acceptBlock: number;
   /** Slot worker, or -1. */
   worker: number;
   /**
@@ -195,6 +212,15 @@ export interface Sim {
   /** 1 where the player has marked a tree for chopping. Player intent, so it
    *  lives beside the world rather than in it. */
   chopMap: Uint8Array;
+  /** 1 where the player has marked a rock outcrop for quarrying — `chopMap`'s
+   *  pattern, applied to stone. */
+  mineMap: Uint8Array;
+  /**
+   * Terraform intent: **target height plus one**, 0 meaning no designation.
+   * Plus one because 0 has to mean "none" and 0 is not a legal height, so a
+   * bare target could not express an undesignated tile.
+   */
+  terraformMap: Uint8Array;
   /**
    * One `WallState` per tile — the wall graph, as a grid rather than as
    * hundreds of 1×1 entities. It lives in `Sim` rather than `World` because it
@@ -264,6 +290,8 @@ export function createSim(seed: number): Sim {
     buildings: [],
     tasks: [],
     chopMap: new Uint8Array(world.size * world.size),
+    mineMap: new Uint8Array(world.size * world.size),
+    terraformMap: new Uint8Array(world.size * world.size),
     wallMap: new Uint8Array(world.size * world.size),
     razeMap: new Uint8Array(world.size * world.size),
     insideMap: new Uint8Array(world.size * world.size),

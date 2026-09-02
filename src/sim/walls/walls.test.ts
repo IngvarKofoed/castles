@@ -3,8 +3,8 @@ import { applyCommands } from "../commands";
 import { dropTile, spawnItem } from "../items";
 import { generateTasks } from "../labour/tasks";
 import { occupancy } from "../path";
-import { BuildingKind, BuildingState, ItemType, Loc, TaskKind, createSim, type Sim } from "../store";
-import { flatSim } from "../test-sim";
+import { ItemType, Loc, TaskKind, createSim, type Sim } from "../store";
+import { flatSim, testBuilding } from "../test-sim";
 import { advanceTick } from "../tick";
 import { Terrain, tileIndex } from "../world/world";
 import { WallState, canPlaceWall } from "./index";
@@ -46,21 +46,7 @@ describe("wall placement", () => {
     sim.world.treeMap[at(sim, 8, 5)] = 1;
     sim.wallMap[at(sim, 9, 5)] = WallState.PalisadeBp;
     spawnItem(sim, ItemType.Log, 10, 5);
-    sim.buildings.push({
-      id: 99,
-      kind: BuildingKind.Stockpile,
-      x: 11,
-      y: 5,
-      w: 2,
-      h: 2,
-      state: BuildingState.Active,
-      progress: 0,
-      reservedIncoming: 0,
-      acceptLog: 1,
-      acceptPlank: 1,
-      worker: -1,
-      millProgress: -1,
-    });
+    sim.buildings.push(testBuilding({ x: 11, y: 5 }));
 
     for (const x of [6, 7, 8, 9, 10, 11]) expect(canPlaceWall(sim, x, 5)).toBe(false);
     expect(canPlaceWall(sim, -1, 5)).toBe(false);
@@ -77,7 +63,7 @@ describe("wall placement", () => {
     const sim = flatSim(16);
     sim.world.treeMap[at(sim, 7, 5)] = 1;
     const tiles = [4, 5, 6, 7, 8].map((x) => at(sim, x, 5));
-    applyCommands(sim, [{ kind: "placeWall", tiles }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles, material: "timber" }]);
 
     for (const x of [4, 5, 6, 8]) expect(sim.wallMap[at(sim, x, 5)]).toBe(WallState.PalisadeBp);
     expect(sim.wallMap[at(sim, 7, 5)]).toBe(WallState.None);
@@ -88,7 +74,7 @@ describe("wall placement", () => {
 
   it("places a gate as a single tile, and ignores junk indices", () => {
     const sim = flatSim(16);
-    applyCommands(sim, [{ kind: "placeGate", tiles: [at(sim, 5, 5), -1, 99999] }]);
+    applyCommands(sim, [{ kind: "placeGate", tiles: [at(sim, 5, 5), -1, 99999], material: "timber" }]);
     expect(sim.wallMap[at(sim, 5, 5)]).toBe(WallState.GateBp);
   });
 });
@@ -96,7 +82,7 @@ describe("wall placement", () => {
 describe("raising a wall", () => {
   it("hires nobody until a log is free, then exactly one builder per segment", () => {
     const sim = peopledSim();
-    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8), at(sim, 9, 8)] }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8), at(sim, 9, 8)], material: "timber" }]);
     generateTasks(sim);
     expect(sim.tasks.filter((t) => t.kind === TaskKind.BuildWall)).toHaveLength(0);
 
@@ -117,7 +103,7 @@ describe("raising a wall", () => {
   it("carries the log to the segment, consumes it at completion, and blocks the tile", () => {
     const sim = peopledSim();
     spawnItem(sim, ItemType.Log, 6, 8);
-    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)] }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)], material: "timber" }]);
 
     let carried = false;
     for (let t = 0; t < 200 && sim.wallMap[at(sim, 8, 8)] !== WallState.Palisade; t++) {
@@ -137,7 +123,7 @@ describe("raising a wall", () => {
   it("builds a gate too, and it stays walkable once standing", () => {
     const sim = peopledSim();
     spawnItem(sim, ItemType.Log, 6, 8);
-    applyCommands(sim, [{ kind: "placeGate", tiles: [at(sim, 8, 8)] }]);
+    applyCommands(sim, [{ kind: "placeGate", tiles: [at(sim, 8, 8)], material: "timber" }]);
     for (let t = 0; t < 300 && sim.wallMap[at(sim, 8, 8)] !== WallState.Gate; t++) advanceTick(sim);
     expect(sim.wallMap[at(sim, 8, 8)]).toBe(WallState.Gate);
   });
@@ -146,7 +132,7 @@ describe("raising a wall", () => {
     const sim = peopledSim();
     // A log lying on the tile *before* the blueprint went down — the case
     // `canPlaceWall` cannot refuse, because the blueprint came second.
-    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)] }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)], material: "timber" }]);
     const stray = spawnItem(sim, ItemType.Log, 8, 8)!;
     stray.x = 8;
     stray.y = 8;
@@ -172,7 +158,7 @@ describe("dismantling", () => {
   it("tears a blueprint up on the spot and drops the log the builder was carrying", () => {
     const sim = peopledSim();
     spawnItem(sim, ItemType.Log, 6, 8);
-    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)] }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)], material: "timber" }]);
     // Run until somebody is actually carrying the log toward the segment.
     let holder = -1;
     for (let t = 0; t < 100 && holder < 0; t++) {
@@ -196,7 +182,7 @@ describe("dismantling", () => {
   it("works a built segment down and gives the log back", () => {
     const sim = peopledSim();
     spawnItem(sim, ItemType.Log, 6, 8);
-    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)] }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)], material: "timber" }]);
     for (let t = 0; t < 300 && sim.wallMap[at(sim, 8, 8)] !== WallState.Palisade; t++) advanceTick(sim);
     expect(sim.items).toHaveLength(0);
 
@@ -212,7 +198,7 @@ describe("dismantling", () => {
 
   it("only marks tiles that hold a wall, and a second click takes the mark back", () => {
     const sim = peopledSim();
-    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)] }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles: [at(sim, 8, 8)], material: "timber" }]);
     applyCommands(sim, [{ kind: "designateRaze", tiles: [at(sim, 8, 8), at(sim, 9, 9)] }]);
     expect(sim.razeMap[at(sim, 8, 8)]).toBe(1);
     expect(sim.razeMap[at(sim, 9, 9)]).toBe(0);
@@ -336,12 +322,12 @@ describe("a closed ring, end to end", () => {
     }
     // Plenty of logs, out of the way of the run itself.
     for (let i = 0; i < 30; i++) spawnItem(sim, ItemType.Log, 3 + (i % 4), 3 + Math.floor(i / 4));
-    applyCommands(sim, [{ kind: "placeWall", tiles }]);
+    applyCommands(sim, [{ kind: "placeWall", tiles, material: "timber" }]);
     // One tile of the run becomes the gate instead: raze-then-place, which is
     // how a palisade is ever converted.
     applyCommands(sim, [{ kind: "designateRaze", tiles: [at(sim, 11, 14)] }]);
     generateTasks(sim);
-    applyCommands(sim, [{ kind: "placeGate", tiles: [at(sim, 11, 14)] }]);
+    applyCommands(sim, [{ kind: "placeGate", tiles: [at(sim, 11, 14)], material: "timber" }]);
 
     for (let t = 0; t < 4000; t++) {
       advanceTick(sim);

@@ -14,7 +14,7 @@ import {
 } from "../store";
 import { advanceTick } from "../tick";
 import { inspect } from "../know";
-import { SAWMILL_INPUT_CAP, SAWMILL_OUTPUT_CAP, TASK_PRIORITY } from "../tuning";
+import { TASK_PRIORITY, WORKSHOP_INPUT_CAP, WORKSHOP_OUTPUT_CAP } from "../tuning";
 import { generateTasks } from "./tasks";
 
 const SEED = 20260901;
@@ -72,7 +72,9 @@ describe("the priority table", () => {
       "HaulToSite",
       "HaulToInput",
       "Chop",
+      "Mine",
       "Raze",
+      "Terraform",
       "HaulToStore",
     ]);
   });
@@ -120,7 +122,7 @@ describe("task generation is idempotent", () => {
     for (let i = 0; i < 8; i++) spawnItem(sim, ItemType.Log, x + 5, y);
 
     for (let i = 0; i < 20; i++) generateTasks(sim);
-    expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToInput).length).toBe(SAWMILL_INPUT_CAP);
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToInput).length).toBe(WORKSHOP_INPUT_CAP);
   });
 
   it("reserves each item for exactly one task", () => {
@@ -326,7 +328,7 @@ describe("the mill says why it stopped", () => {
   it("reports an empty input as waiting for logs", () => {
     const sim = createSim(SEED);
     const mill = staffedMill(sim);
-    expect(inspect(sim, mill.id)?.stall).toBe("no-logs");
+    expect(inspect(sim, mill.id)?.stall).toBe("no-input");
   });
 
   it("reports a full output buffer as such, not as missing logs", () => {
@@ -334,7 +336,7 @@ describe("the mill says why it stopped", () => {
     const mill = staffedMill(sim);
     // Logs waiting *and* nowhere to put a plank: the mill is idle for the
     // opposite reason to the one an input check would report.
-    for (let i = 0; i < SAWMILL_OUTPUT_CAP; i++) {
+    for (let i = 0; i < WORKSHOP_OUTPUT_CAP; i++) {
       const plank = spawnItem(sim, ItemType.Plank, mill.x + 4, mill.y)!;
       plank.loc = Loc.Stored;
       plank.holder = mill.id;
@@ -345,10 +347,10 @@ describe("the mill says why it stopped", () => {
 
     for (let t = 0; t < 60; t++) advanceTick(sim);
     const view = inspect(sim, mill.id)!;
-    expect(view.storedLogs).toBeGreaterThan(0);
+    expect(view.inputCount).toBeGreaterThan(0);
     expect(view.stall).toBe("output-full");
     // And it really is stopped: no plank was produced past the cap.
-    expect(view.storedPlanks).toBe(SAWMILL_OUTPUT_CAP);
+    expect(view.outputCount).toBe(WORKSHOP_OUTPUT_CAP);
   });
 
   it("reports nothing wrong while it is cutting", () => {

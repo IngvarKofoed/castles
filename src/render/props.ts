@@ -1,6 +1,6 @@
 import { hash } from "../sim/world/noise";
-import { BuildingKind, BuildingState, WallState, type Building } from "../sim/know";
-import { OVERLAY, PROP, PROP_JITTER, lerpHex } from "./palette";
+import { BuildingKind, BuildingState, isGateway, isStoneWall, wallIsBlueprint, type Building } from "../sim/know";
+import { DESIGNATED_TINT, OVERLAY, PROP, PROP_JITTER, lerpHex } from "./palette";
 
 /**
  * The voxel props baked into chunk geometry: trees, buildings and walls.
@@ -58,14 +58,6 @@ function anchorJitter(b: Box, jx: number, jz: number): Box {
 
 /** Block height in world units — one voxel step. Shared with the mesher. */
 export const BH = 0.5;
-
-/**
- * How far a designated tree's canopy shifts toward the gold accent. Enough to
- * pick a marked wood out at a distance, small enough that the tree still reads
- * as a tree rather than as an overlay — the base diamond is the precise mark,
- * this is the one you can see from across the map.
- */
-const DESIGNATED_TINT = 0.15;
 
 /**
  * One tree on tile (tx, ty), standing on ground of height `h` blocks.
@@ -189,6 +181,10 @@ export const WallLink = { West: 1, East: 2, North: 4, South: 8 } as const;
 /** Palisade height in world units, and the gate's taller frame. */
 const WALL_TOP = 2.2 * BH;
 const GATE_TOP = 2.9 * BH;
+/** Stone stands a little taller than timber, and its gateway taller again —
+ *  the permanent tier should read as the permanent tier from across the map. */
+const STONE_TOP = 2.6 * BH;
+const STONE_GATE_TOP = 3.2 * BH;
 
 /**
  * A palisade's four possible arms.
@@ -272,31 +268,64 @@ export function wallBoxes(
   const spanX = (long: number, short: number): number => (axisX ? long : short);
   const spanZ = (long: number, short: number): number => (axisX ? short : long);
 
-  if (state === WallState.PalisadeBp || state === WallState.GateBp) {
+  const stone = isStoneWall(state);
+  const gate = isGateway(state);
+
+  if (wallIsBlueprint(state)) {
     // The building blueprint's grammar, at one tile: a scraped plate and a
     // stake at each end of the run. A *gate* blueprint stands its stakes
     // taller and joins them with a crossbar, so a planned gate is visible as a
-    // gate in a drawn line rather than only once it is standing.
-    const gate = state === WallState.GateBp;
+    // gate in a drawn line rather than only once it is standing. Stone
+    // blueprints are the identical grammar in the stone palette — a drawn
+    // stone line has to be tellable from a drawn timber one *before* anybody
+    // spends a block on it.
     const post = gate ? 1.1 * BH : 0.55 * BH;
-    out.push(box(x, g, z, 0.86, 0.06, 0.86, mark(PROP.stake), 0, 0.85));
+    const peg = stone ? PROP.stone : PROP.stake;
+    out.push(box(x, g, z, 0.86, 0.06, 0.86, mark(peg), 0, 0.85));
     for (const s of [-1, 1]) {
-      out.push(box(along(s * 0.34), g, across(s * 0.34), 0.13, post, 0.13, mark(PROP.stake)));
+      out.push(box(along(s * 0.34), g, across(s * 0.34), stone ? 0.17 : 0.13, post, stone ? 0.17 : 0.13, mark(peg)));
     }
     if (gate) {
-      out.push(box(x, g + post, z, spanX(0.8, 0.1), 0.12 * BH, spanZ(0.8, 0.1), mark(PROP.stake), 0, 0.9));
+      out.push(box(x, g + post, z, spanX(0.8, 0.1), 0.12 * BH, spanZ(0.8, 0.1), mark(peg), 0, 0.9));
     }
     return;
   }
 
-  if (state === WallState.Gate) {
+  if (gate) {
+    // A gateway is two piers either side of the opening under a lintel,
+    // leaving the middle open, because the gap runs *through* the wall and
+    // that is the way folk walk. Stone makes it a squared arch: heavier piers,
+    // a deeper lintel, and a second course above it.
+    const top = stone ? STONE_GATE_TOP : GATE_TOP;
+    const pier = stone ? 0.3 : 0.24;
     for (const s of [-1, 1]) {
       out.push(
-        box(along(s * 0.38), g, across(s * 0.38), spanX(0.24, 0.3), GATE_TOP, spanZ(0.24, 0.3), mark(PROP.trunk)),
+        box(
+          along(s * 0.36),
+          g,
+          across(s * 0.36),
+          spanX(pier, 0.34),
+          top,
+          spanZ(pier, 0.34),
+          mark(stone ? PROP.stone : PROP.trunk),
+          0,
+          stone ? 0.97 : 1,
+        ),
       );
     }
-    // The lintel, spanning the two posts and overhanging them a little.
-    out.push(box(x, g + GATE_TOP, z, spanX(1.0, 0.34), 0.36 * BH, spanZ(1.0, 0.34), mark(PROP.timber), 0, 0.94));
+    // The lintel, spanning the two piers and overhanging them a little.
+    out.push(
+      box(x, g + top, z, spanX(1.0, 0.4), 0.36 * BH, spanZ(1.0, 0.4), mark(stone ? PROP.stoneWarm : PROP.timber), 0, 0.94),
+    );
+    if (stone) {
+      // The capstone course: what turns two posts and a beam into an arch.
+      out.push(box(x, g + top + 0.36 * BH, z, spanX(0.76, 0.3), 0.2 * BH, spanZ(0.76, 0.3), mark(PROP.stone), 0, 0.9));
+    }
+    return;
+  }
+
+  if (stone) {
+    stoneCourses(tx, ty, g, seed, out, links, mark);
     return;
   }
 
@@ -343,6 +372,101 @@ export function wallBoxes(
         ),
       );
     }
+  }
+}
+
+/** Stone wall cross-section, as fractions of a tile. */
+const STONE_THICK = 0.66;
+/** The capping lip, wider than the courses under it — the mockup's wall-walk
+ *  lip, which is what stops a stone run reading as an extruded slab. */
+const STONE_LIP = 0.78;
+const STONE_LIP_DEPTH = 0.22 * BH;
+/** Two courses under the lip. Three read as busy at the zoom the game opens
+ *  at, one reads as a slab. */
+const STONE_COURSES = 2;
+
+/**
+ * A stone segment: **courses of masonry, arm per linked side**, exactly the
+ * structure the palisade uses — so corners, T-junctions and crosses come out
+ * right for the same reason, and a stone line meeting a timber one lines up.
+ *
+ * What makes it read as stone rather than as timber in grey is the coursing: a
+ * centre block and one half-tile block per arm, stacked twice with the two
+ * courses in different tones and offset a hair in thickness, then capped by a
+ * wider lip. The tones come off a per-tile hash, so a long wall weathers
+ * unevenly without any of that being stored.
+ */
+function stoneCourses(
+  tx: number,
+  ty: number,
+  g: number,
+  seed: number,
+  out: Box[],
+  links: number,
+  mark: (colour: number) => number,
+): void {
+  const x = tx + 0.5;
+  const z = ty + 0.5;
+  const arms = links === 0 ? WallLink.West | WallLink.East : links;
+  const courseHeight = (STONE_TOP - STONE_LIP_DEPTH) / STONE_COURSES;
+
+  for (let c = 0; c < STONE_COURSES; c++) {
+    const j = hash(tx * 2 + c, ty * 2 + c, seed ^ WALL_SALT);
+    // Alternating tone per course, with the hash deciding which way round —
+    // so neighbouring tiles do not stripe in lockstep.
+    const colour = (c + (j > 0.5 ? 1 : 0)) % 2 === 0 ? PROP.stone : PROP.stoneWarm;
+    const shade = 0.94 + j * 0.08;
+    // Each course sits a touch narrower than the one below: a straight batter,
+    // which is what stops the silhouette reading as a printed slab.
+    const thick = STONE_THICK - c * 0.05;
+    const y = g + c * courseHeight;
+    out.push(anchorJitter(box(x, y, z, thick, courseHeight, thick, mark(colour), 0, shade), x, z));
+    for (const arm of ARMS) {
+      if (!(arms & arm.bit)) continue;
+      out.push(
+        anchorJitter(
+          box(
+            x + arm.dx * ARM_MID,
+            y,
+            z + arm.dz * ARM_MID,
+            arm.dx !== 0 ? ARM_LEN : thick,
+            courseHeight,
+            arm.dz !== 0 ? ARM_LEN : thick,
+            mark(colour),
+            0,
+            shade,
+          ),
+          // One member, one wobble: the arms and the centre block are the same
+          // course and must not show a seam where they meet.
+          x,
+          z,
+        ),
+      );
+    }
+  }
+
+  // The lip, overhanging the courses on every linked side.
+  const lipY = g + STONE_COURSES * courseHeight;
+  out.push(anchorJitter(box(x, lipY, z, STONE_LIP, STONE_LIP_DEPTH, STONE_LIP, mark(PROP.stone), 0, 1), x, z));
+  for (const arm of ARMS) {
+    if (!(arms & arm.bit)) continue;
+    out.push(
+      anchorJitter(
+        box(
+          x + arm.dx * ARM_MID,
+          lipY,
+          z + arm.dz * ARM_MID,
+          arm.dx !== 0 ? ARM_LEN : STONE_LIP,
+          STONE_LIP_DEPTH,
+          arm.dz !== 0 ? ARM_LEN : STONE_LIP,
+          mark(PROP.stone),
+          0,
+          1,
+        ),
+        x,
+        z,
+      ),
+    );
   }
 }
 

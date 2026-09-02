@@ -1,5 +1,5 @@
 import { Terrain, type World } from "./world/world";
-import type { Sim } from "./store";
+import { BuildingKind, BuildingState, type Building, type Sim } from "./store";
 
 /**
  * A tiny flat world with nothing on it, for tests that want to block exactly
@@ -33,9 +33,39 @@ export function flatSim(size = 12, height = 4): Sim {
     buildings: [],
     tasks: [],
     chopMap: new Uint8Array(n),
+    mineMap: new Uint8Array(n),
+    terraformMap: new Uint8Array(n),
     wallMap: new Uint8Array(n),
     razeMap: new Uint8Array(n),
     insideMap: new Uint8Array(n),
     enclosureDirty: 0,
+  };
+}
+
+/**
+ * A finished 2×2 stockpile, for tests that need a building in the way rather
+ * than a colony that built one. Here for the same reason `flatSim` is: a
+ * hand-written `Building` literal in a test file goes quietly stale the moment
+ * the entity grows a field, and the accept flags are exactly the kind of field
+ * that keeps being added.
+ */
+export function testBuilding(patch: Partial<Building> = {}): Building {
+  return {
+    id: 99,
+    kind: BuildingKind.Stockpile,
+    x: 0,
+    y: 0,
+    w: 2,
+    h: 2,
+    state: BuildingState.Active,
+    progress: 0,
+    reservedIncoming: 0,
+    acceptLog: 1,
+    acceptPlank: 1,
+    acceptRock: 1,
+    acceptBlock: 1,
+    worker: -1,
+    millProgress: -1,
+    ...patch,
   };
 }
