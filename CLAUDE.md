@@ -125,7 +125,7 @@ This section is inert unless you actually run a multi-agent workflow.
 
 ### Where commits land
 
-**Direct to `main`** — when you commit, commit straight to `main`; don't open branches or PRs unless asked. No remote is configured yet; once one exists, push only when asked — a bare "commit" is not a push.
+**Direct to `main`** — when you commit, commit straight to `main`; don't open branches or PRs unless asked. `origin` is `git@github.com:IngvarKofoed/castles.git`; **push only when asked — a bare "commit" is not a push.**
 
 **This setting only chooses *where* commits go — not *when* to make them.** Commit only when the user asks; finishing a change is not a cue to commit it. When you do commit, each commit is one complete change including its changelog entry file — never leave the tree half-committed.
 
