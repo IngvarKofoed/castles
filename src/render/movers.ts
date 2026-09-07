@@ -22,9 +22,12 @@ import {
   mineLayer,
   razeLayer,
   terraformLayer,
+  monsters,
   BUILDING_DEFS,
+  MonsterKind,
   type BuildingKindValue,
   type ItemTypeValue,
+  type MonsterKindValue,
   type Sim,
 } from "../sim/know";
 import { WORLD_SIZE, tileIndex } from "../sim/world/world";
@@ -109,6 +112,9 @@ const KEYLINE_GROWTH = 0.05;
 const CLOTH = [PROP.tunic, PROP.wool, PROP.smock];
 
 const MAX_COLONISTS = 64;
+/** Two boxes each, and the lair pass targets a couple of dozen dens — sized
+ *  well clear of that so a denser map never silently drops one. */
+const MAX_MONSTERS = 128;
 const MAX_ITEMS = 1024;
 const MAX_OVERLAY = 8192;
 /**
@@ -191,6 +197,56 @@ const BODY = { w: 0.44, h: 0.5, y: 0 };
 const HEAD = { w: 0.32, h: 0.26, y: 0.5 };
 const CARRY = { w: 0.32, h: 0.26, y: 0.8 };
 
+/**
+ * The Wilds, at folk scale so the comparison is immediate.
+ *
+ * The two kinds have to be tellable apart across the map, because reading them
+ * is the player's entire toolkit (docs/CONCEPT.md): an **orc** is a lean green
+ * figure of about a colonist's height, a **troll** is a bulky grey one half
+ * again taller. Silhouette and hue, not decoration — nothing here is outlined,
+ * tinted rust, or marked in any HUD colour, because a monster is a thing in the
+ * world rather than a warning about one.
+ */
+interface MonsterModel {
+  /** Trunk, and the head that sits on it — the colonist's two boxes, restyled. */
+  readonly body: { w: number; h: number; color: number };
+  readonly head: { w: number; h: number; color: number };
+}
+
+const MONSTER_MODELS: Record<MonsterKindValue, MonsterModel> = {
+  [MonsterKind.Orc]: {
+    body: { w: 0.38, h: 0.52, color: PROP.orcRag },
+    head: { w: 0.29, h: 0.24, color: PROP.orcHide },
+  },
+  [MonsterKind.Troll]: {
+    body: { w: 0.62, h: 0.78, color: PROP.trollRag },
+    head: { w: 0.46, h: 0.36, color: PROP.trollHide },
+  },
+};
+
+/**
+ * How a resting monster draws: squat and spread, so "asleep" reads without a
+ * single HUD element saying so — and shifted to the **mouth of its den**.
+ *
+ * The shift is not decoration. A hunched figure is shorter than the den mound
+ * it shares a tile with, so drawn on its stored position it is simply inside
+ * the prop and invisible — a monster the player cannot see is the one thing
+ * this game must never have. At the mouth it lies in front of the mound, which
+ * is both visible and the better picture.
+ */
+const DORMANT_SQUASH = 0.5;
+const DORMANT_SPREAD = 1.25;
+/**
+ * **Must stay under half a tile.** A resting monster sits at exactly
+ * `lair + 0.5`, so anything from 0.5 up pushes the drawn figure into the *next*
+ * tile — and two things then read from the wrong one: `monsterAtTile` matches
+ * on the monster's own floored position, so clicking the sleeper you can see
+ * selects nothing; and the ground height under it is sampled a tile south, so
+ * on a slope it floats or sinks. At 0.45 the figure still clears the den mound
+ * (which ends 0.4 out) and still belongs to its own tile.
+ */
+const DORMANT_FRONT = 0.45;
+
 /** One tile of a placement preview, and whether it may actually be placed. */
 export interface GhostTile {
   x: number;
@@ -227,7 +283,7 @@ export class MoverRenderer {
     private readonly scene: Scene,
     private readonly sim: Sim,
   ) {
-    this.solids = solidLayer(scene, MAX_COLONISTS * 3 + MAX_ITEMS);
+    this.solids = solidLayer(scene, MAX_COLONISTS * 3 + MAX_MONSTERS * 2 + MAX_ITEMS);
     this.markKeyline = overlayLayer(scene, MAX_OVERLAY, KEYLINE, 0.5);
     this.markFill = overlayLayer(scene, MAX_OVERLAY, GOLD, 0.13);
     this.markEdge = overlayLayer(scene, MAX_OVERLAY, GOLD, 0.85);
@@ -276,6 +332,7 @@ export class MoverRenderer {
   sync(alpha: number, ghost: Ghost | null, showEnclosure = false): void {
     for (const l of this.layers) l.used = 0;
     this.drawColonists(alpha);
+    this.drawMonsters(alpha);
     this.drawGoods();
     this.drawDesignations();
     if (showEnclosure) this.drawEnclosure();
@@ -338,6 +395,55 @@ export class MoverRenderer {
       if (c.carrying >= 0) {
         put(this.solids, x, base + CARRY.y, y, CARRY.w, CARRY.h, CARRY.w, c.heading, PROP.crate);
       }
+    }
+  }
+
+  /**
+   * The Wilds, interpolated between ticks exactly as the folk are — a monster
+   * moves in the world, so it is drawn moving.
+   *
+   * It reads `sim/know`'s projection rather than the store: what comes back is
+   * position, kind, heading and a two-way stance, and the exact clock a monster
+   * is running never leaves the sim (docs/ARCHITECTURE.md, truth vs knowledge).
+   * That is the whole reason the renderer cannot accidentally draw a countdown
+   * over a den, which is what would quietly delete the watchtower mechanic.
+   */
+  private drawMonsters(alpha: number): void {
+    for (const m of monsters(this.sim)) {
+      const model = MONSTER_MODELS[m.kind as MonsterKindValue] ?? MONSTER_MODELS[MonsterKind.Orc];
+      // Asleep at the den: squat, spread, and drawn at its mouth rather than on
+      // top of it — so the difference between a monster that can hurt you and
+      // one that cannot is visible from across the map without the HUD saying a
+      // word.
+      const dormant = m.stance === "dormant";
+      const x = m.px + (m.x - m.px) * alpha;
+      const y = m.py + (m.y - m.py) * alpha + (dormant ? DORMANT_FRONT : 0);
+      const base = this.groundY(x, y);
+      const squash = dormant ? DORMANT_SQUASH : 1;
+      const spread = dormant ? DORMANT_SPREAD : 1;
+      const bodyH = model.body.h * squash;
+      put(
+        this.solids,
+        x,
+        base,
+        y,
+        model.body.w * spread,
+        bodyH,
+        model.body.w * spread,
+        m.heading,
+        model.body.color,
+      );
+      put(
+        this.solids,
+        x,
+        base + bodyH,
+        y,
+        model.head.w * spread,
+        model.head.h * squash,
+        model.head.w * spread,
+        m.heading,
+        model.head.color,
+      );
     }
   }
 

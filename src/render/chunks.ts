@@ -1,6 +1,16 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material, type Object3D, type Scene as ThreeScene } from "three";
 import { chunkCoords, chunkCount } from "../sim/world/chunks";
-import { buildings, chopLayer, mineLayer, razeLayer, wallLayer, type Sim } from "../sim/know";
+import {
+  buildings,
+  chopLayer,
+  damageLayer,
+  graveLayer,
+  lairs,
+  mineLayer,
+  razeLayer,
+  wallLayer,
+  type Sim,
+} from "../sim/know";
 import { meshChunk, meshWaterChunk, type ChunkGeometry, type Scene, type WaterGeometry } from "./mesher";
 
 /**
@@ -83,6 +93,9 @@ export class ChunkRenderer {
       mineMap: mineLayer(this.sim),
       wallMap: wallLayer(this.sim),
       razeMap: razeLayer(this.sim),
+      damageMap: damageLayer(this.sim),
+      graveMap: graveLayer(this.sim),
+      lairs: lairs(this.sim),
     };
 
     const terrainGeom = toGeometry(meshChunk(input, cx, cy));

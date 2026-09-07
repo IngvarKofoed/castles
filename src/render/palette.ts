@@ -40,6 +40,23 @@ export const PROP = {
   smock: 0x5f9438,
   wool: 0xc4763f,
   stake: 0x7a5a3c,
+  /**
+   * The Wilds. Orcs read green and lean, trolls grey and bulky — the split has
+   * to be legible at a glance, because reading the map is the player's whole
+   * toolkit (docs/CONCEPT.md). Deliberately *not* rust or red: these are things
+   * in the world, not warnings, and the HUD's colour law owns the alarm.
+   */
+  orcHide: 0x5c7a3a,
+  orcRag: 0x4a5230,
+  trollHide: 0x7d8286,
+  trollRag: 0x5c6165,
+  /** A den: a dark mound of earth with bones showing. */
+  den: 0x3f3a2c,
+  denMouth: 0x241f18,
+  bone: 0xcfc4a8,
+  /** A grave marker: weathered board and turned earth. */
+  graveBoard: 0x7d6b4e,
+  graveEarth: 0x4a4231,
 } as const;
 
 /** Per-prop colour wobble, so a wood doesn't read as poured concrete. */
@@ -79,6 +96,15 @@ export const GOOD_HEX: Record<ItemTypeValue, number> = {
  * the mine-marked rock face so the three cannot drift apart.
  */
 export const DESIGNATED_TINT = 0.15;
+
+/**
+ * How dark a bitten segment goes, per third of damage — sound, past a third,
+ * past two thirds. Multiplicative on the member's own colour, so a chewed
+ * palisade reads as *worn timber* rather than as a coloured overlay: the world
+ * stays the world, and the panel is still where numbers live
+ * (docs/STYLEGUIDE.md, Tone).
+ */
+export const DAMAGE_SHADE = [1, 0.82, 0.64] as const;
 
 /** Straight-line blend between two packed sRGB hex colours. */
 export function lerpHex(a: number, b: number, t: number): number {

@@ -1,5 +1,13 @@
 import { Terrain, type World } from "./world/world";
-import { BuildingKind, BuildingState, type Building, type Sim } from "./store";
+import {
+  BuildingKind,
+  BuildingState,
+  MonsterKind,
+  MonsterPhase,
+  type Building,
+  type Monster,
+  type Sim,
+} from "./store";
 
 /**
  * A tiny flat world with nothing on it, for tests that want to block exactly
@@ -32,13 +40,58 @@ export function flatSim(size = 12, height = 4): Sim {
     items: [],
     buildings: [],
     tasks: [],
+    // No lairs: the flat world is for tests that want to place exactly what
+    // they mean to place, and a generated wilderness is the opposite of that.
+    // Threat tests push their own monsters in with `testMonster`.
+    monsters: [],
     chopMap: new Uint8Array(n),
     mineMap: new Uint8Array(n),
     terraformMap: new Uint8Array(n),
     wallMap: new Uint8Array(n),
     razeMap: new Uint8Array(n),
+    wallDamageMap: new Uint8Array(n),
+    graveMap: new Uint8Array(n),
     insideMap: new Uint8Array(n),
     enclosureDirty: 0,
+  };
+}
+
+/**
+ * A monster standing at its own lair, prowling, with no circuit — for tests
+ * that want a threat in a known place rather than a generated wilderness. Here
+ * for the same reason `flatSim` and `testBuilding` are: a hand-written
+ * `Monster` literal in a test file goes stale the moment the entity grows a
+ * field.
+ */
+export function testMonster(patch: Partial<Monster> = {}): Monster {
+  // The spread below wins for `x`/`y`, so the derived fields are computed from
+  // whichever the caller actually gave: a bare `lairX` centres the monster on
+  // its den, and an explicit `x` keeps `px` in step with it rather than half a
+  // tile away — half of `CATCH_RANGE`, and enough to bias a range assertion.
+  const x = patch.x ?? (patch.lairX ?? 0) + 0.5;
+  const y = patch.y ?? (patch.lairY ?? 0) + 0.5;
+  return {
+    id: 900,
+    kind: MonsterKind.Orc,
+    x,
+    y,
+    px: x,
+    py: y,
+    heading: 0,
+    lairX: Math.floor(x),
+    lairY: Math.floor(y),
+    circuit: [],
+    leg: 0,
+    phase: MonsterPhase.Prowl,
+    phaseTicks: 10_000,
+    restTicks: 1200,
+    prowlTicks: 10_000,
+    target: -1,
+    targetTile: -1,
+    biteTicks: 0,
+    path: [],
+    step: 0,
+    ...patch,
   };
 }
 

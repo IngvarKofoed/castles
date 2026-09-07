@@ -8,14 +8,18 @@ import { WallState, canPlaceWall, isStoneWall } from "../walls";
 import { tileIndex } from "../world/world";
 import { decode } from "./codec";
 import {
+  FIXTURE_SEED,
   FIXTURE_SEED_V3,
+  FIXTURE_SEED_V4,
   V1_TICKS,
   V2_TICKS,
   V3_TICKS,
+  V4_TICKS,
   replay,
   v1Script,
   v2Script,
   v3Script,
+  v4Script,
 } from "./fixtures/recipe";
 
 /**
@@ -43,8 +47,13 @@ import {
  *   quarry designation, a levelling area mid-job, and a raze mark. On its own
  *   seed, because the stone chain needs an outcrop within walking distance —
  *   see `fixtures/recipe.ts`.
+ * - **v4**, written 2026-09-05 for the threat tier: two dozen monsters
+ *   mid-rhythm with their routes and phase clocks in flight, and a standing
+ *   palisade still carrying its bite damage with a live repair task queued
+ *   against it. On the encounter seed, because the default seed's wilds are
+ *   forty tiles out and would never reach a fixture's colony.
  *
- * Neither is an empty world: an empty store would round-trip past almost every
+ * None is an empty world: an empty store would round-trip past almost every
  * mistake this file exists to catch.
  *
  * **The pinned hashes alone cannot raise that alarm**, which is the trap here:
@@ -59,14 +68,22 @@ import {
 const V1 = new URL("./fixtures/v1.castles", import.meta.url);
 const V2 = new URL("./fixtures/v2.castles", import.meta.url);
 const V3 = new URL("./fixtures/v3.castles", import.meta.url);
+const V4 = new URL("./fixtures/v4.castles", import.meta.url);
+
+type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
+
+/** The entity kinds a pre-threat recipe can still be asked about. Monsters are
+ *  excluded because those three recipes replay in an empty wilderness — see
+ *  `replay`'s `peaceful` flag, which explains why. */
+const OLD_KINDS: readonly EntityKind[] = ["colonists", "items", "buildings", "tasks"];
 
 /** Every store key, and every key of one entity of each kind, from a save. */
-function shapeOf(sim: Sim): Record<string, string[]> {
+function shapeOf(sim: Sim, kinds: readonly EntityKind[] = OLD_KINDS): Record<string, string[]> {
   const out: Record<string, string[]> = {
     store: Object.keys(sim).sort(),
     world: Object.keys(sim.world).sort(),
   };
-  for (const key of ["colonists", "items", "buildings", "tasks"] as const) {
+  for (const key of kinds) {
     // A frozen file can only vouch for the kinds it actually contains, and a
     // recipe can only compare against the kinds it still produces — so assert
     // both are non-empty rather than letting the comparison pass vacuously.
@@ -101,10 +118,18 @@ describe("the committed v1 save", () => {
     // `terraformMap` and stamps `acceptRock`/`acceptBlock` on to every
     // building already in the file
     // (docs/changelog/2026-09-02-stone-and-terraform.md). A v1 save now walks
-    // two rungs to get here, and the assertion below is what says the second
-    // one actually ran.
+    // several rungs to get here, and the assertions below are what say the
+    // later ones actually ran.
+    //
+    // cf8c3fd7 → c1b9ffd1 at SAVE_VERSION 4: the 3 → 4 rung adds
+    // `wallDamageMap` and `graveMap`, and runs the lair pass over a world
+    // regenerated from the save's *seed* — not the played-on layers the file
+    // carries, which would give a migrated colony a different wilderness than a
+    // fresh game (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
     const sim = await decode(readFileSync(V1));
-    expect(hashSim(sim)).toBe("cf8c3fd7");
+    expect(hashSim(sim)).toBe("c1b9ffd1");
+    // A v1 colony wakes up in a wilderness rather than in an empty world.
+    expect(sim.monsters.length).toBeGreaterThan(0);
     // The half of that rung nothing else would catch: a pre-v3 stockpile that
     // came through with the flags missing would refuse rock and blocks for the
     // rest of its life, and no test but this one would notice.
@@ -182,9 +207,12 @@ describe("the committed v2 save", () => {
   it("decodes to the exact store it was written from", async () => {
     // 680d0d2e → 02dba047 at SAVE_VERSION 3, for the same 2 → 3 rung the v1
     // pin above records: two zeroed layers, and the accept flags stamped on to
-    // this file's stockpile and mill.
+    // this file's stockpile and mill. Then 02dba047 → c74cb502 at
+    // SAVE_VERSION 4, for the 3 → 4 rung that gives an old colony its wilds —
+    // drawn from a world regenerated from the save's seed, not from the played
+    // one, which is what keeps that wilderness equal to a fresh game's.
     const sim = await decode(readFileSync(V2));
-    expect(hashSim(sim)).toBe("02dba047");
+    expect(hashSim(sim)).toBe("41f2beab");
     for (const b of sim.buildings) {
       expect(b.acceptRock).toBe(1);
       expect(b.acceptBlock).toBe(1);
@@ -225,9 +253,20 @@ describe("the committed v3 save", () => {
     expect([...sim.razeMap].filter((v) => v)).toHaveLength(1);
   });
 
-  it("decodes to the exact store it was written from", async () => {
+  it("decodes to the store the v4 migration turns it into", async () => {
+    // b7480025 → 7dcf3387 at SAVE_VERSION 4: the 3 → 4 rung adds
+    // `wallDamageMap` and `graveMap` and, crucially, **runs the lair pass over
+    // the save's own world**, so a v3 colony wakes up in a wilderness rather
+    // than in an empty one (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
+    // The file is untouched and stays so.
     const sim = await decode(readFileSync(V3));
-    expect(hashSim(sim)).toBe("b7480025");
+    expect(hashSim(sim)).toBe("7dcf3387");
+    // The half of that rung nothing else would catch: a migrated colony that
+    // came through with an empty `monsters` array would be a save of a game
+    // that has no threats in it at all, and nothing would ever say so.
+    expect(sim.monsters.length).toBeGreaterThan(0);
+    expect(sim.wallDamageMap.some((v) => v !== 0)).toBe(false);
+    expect(sim.graveMap.some((v) => v !== 0)).toBe(false);
   });
 
   it("keeps running from where it was saved, and finishes what it was doing", async () => {
@@ -245,6 +284,51 @@ describe("the committed v3 save", () => {
   });
 });
 
+describe("the committed v4 save", () => {
+  it("still loads, with its wilds mid-rhythm and its wall still wounded", async () => {
+    const sim = await decode(readFileSync(V4));
+    expect(sim.tick).toBe(V4_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED_V4);
+
+    // A full wilderness, every monster carrying its own hours and its own
+    // route — the state a save would most plausibly lose.
+    expect(sim.monsters.length).toBeGreaterThan(0);
+    expect(new Set(sim.monsters.map((m) => m.restTicks)).size).toBeGreaterThan(1);
+    for (const m of sim.monsters) {
+      expect(m.phaseTicks).toBeGreaterThanOrEqual(0);
+      expect(m.circuit.length).toBeGreaterThan(0);
+    }
+    // Routes in flight, which is the other thing a save could quietly lose.
+    expect(sim.monsters.some((m) => m.path.length > 0)).toBe(true);
+
+    // A wounded segment the monster has walked away from, and somebody queued
+    // to mend it — the state between a prowl ending and the repair landing.
+    expect([...sim.wallDamageMap].filter((v) => v > 0).length).toBeGreaterThan(0);
+    expect(sim.tasks.some((t) => t.kind === TaskKind.Repair)).toBe(true);
+    // The grave layer rides along empty — see `fixtures/recipe.ts` for why this
+    // tick and not a later one.
+    expect([...sim.graveMap].filter(Boolean)).toHaveLength(0);
+    expect(sim.colonists).toHaveLength(5);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V4));
+    expect(hashSim(sim)).toBe("c32c98b0");
+  });
+
+  it("keeps running from where it was saved, and the siege resolves", async () => {
+    const sim = await decode(readFileSync(V4));
+    const wounded = [...sim.wallDamageMap].findIndex((v) => v > 0);
+    const was = sim.wallDamageMap[wounded];
+    for (let t = 0; t < 600; t++) advanceTick(sim);
+    expect(sim.tick).toBe(V4_TICKS + 600);
+    // The clocks kept running and the labour loop picked the siege back up:
+    // the wounded segment is mended or gone, not frozen where the save left it.
+    expect(sim.monsters.some((m) => m.phaseTicks !== m.restTicks && m.phaseTicks !== m.prowlTicks)).toBe(true);
+    expect(sim.wallDamageMap[wounded]).not.toBe(was);
+  });
+});
+
 /**
  * The drift alarm the pinned hashes cannot sound. A failure here means the
  * store grew or lost a field since a fixture was frozen, so that save no
@@ -252,17 +336,26 @@ describe("the committed v3 save", () => {
  * `SAVE_VERSION` and add the rung that fills the gap.
  */
 describe("the fixtures still have the store shape this build produces", () => {
-  it("v1, through its migration", async () => {
-    expect(shapeOf(await decode(readFileSync(V1)))).toEqual(shapeOf(replay(v1Script, V1_TICKS)));
+  it("v1, through its migrations", async () => {
+    expect(shapeOf(await decode(readFileSync(V1)))).toEqual(shapeOf(replay(v1Script, V1_TICKS, FIXTURE_SEED, true)));
   });
 
-  it("v2, through its migration", async () => {
-    expect(shapeOf(await decode(readFileSync(V2)))).toEqual(shapeOf(replay(v2Script, V2_TICKS)));
+  it("v2, through its migrations", async () => {
+    expect(shapeOf(await decode(readFileSync(V2)))).toEqual(shapeOf(replay(v2Script, V2_TICKS, FIXTURE_SEED, true)));
   });
 
-  it("v3, natively", async () => {
+  it("v3, through its migration", async () => {
     expect(shapeOf(await decode(readFileSync(V3)))).toEqual(
-      shapeOf(replay(v3Script, V3_TICKS, FIXTURE_SEED_V3)),
+      shapeOf(replay(v3Script, V3_TICKS, FIXTURE_SEED_V3, true)),
+    );
+  });
+
+  it("v4, natively — monsters included", async () => {
+    // The one comparison that can carry the monster key set, because it is the
+    // only recipe written for a world that has any.
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V4)), kinds)).toEqual(
+      shapeOf(replay(v4Script, V4_TICKS, FIXTURE_SEED_V4), kinds),
     );
   });
 });

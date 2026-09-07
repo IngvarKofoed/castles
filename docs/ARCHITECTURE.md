@@ -97,25 +97,33 @@ is already nearly that format.
   rock as features rather than topography.
 - **Enclosure is computed, not prescribed.** There are no rings — the player
   chooses where to expand. "Inside" is derived from the wall graph:
-  flood-fill from the map edge, and anything unreached is enclosed; a gate
-  counts as wall. This test is the load-bearing primitive — safety, buildable
-  ground, and the gap-in-the-wall failure all hang off it — so it must never
-  run per-frame or per-consumer. It is **event-driven**: the whole fill runs
-  at most once per tick, batching every segment that completed or fell that
-  tick, and not at all on a quiet tick. That is what "incremental" bought,
-  and at 256² a full BFS is sub-millisecond, so a region-incremental re-flood
-  was measured as unnecessary and deferred behind the same API
-  (`docs/specs/2026-09-02-palisade-walls.md`).
+  flood-fill **from the map edge and from every monster lair**, and anything
+  unreached is enclosed; a gate counts as wall. This test is the load-bearing
+  primitive — safety, buildable ground, and the gap-in-the-wall failure all
+  hang off it — so it must never run per-frame or per-consumer. It is
+  **event-driven**: the whole fill runs at most once per tick, batching every
+  segment that completed or fell that tick, and not at all on a quiet tick.
+  That is what "incremental" bought, and at 256² a full BFS is sub-millisecond,
+  so a region-incremental re-flood was measured as unnecessary and deferred
+  behind the same API (`docs/specs/2026-09-02-palisade-walls.md`). Seeding from
+  lairs is what stops a stone box round a den reading as calm ground: a monster
+  may be **contained** — by stone, or by digging its den into a pit — and only
+  never killed, removed, or made safe to stand beside. Nothing may be *built*
+  on a lair tile, which is what keeps that seed unblockable; levelling one is
+  left legal on purpose, as siegecraft priced in labour
+  (`docs/specs/2026-09-04-monsters.md`).
 - Walls are a **grid layer** (`sim.wallMap`, one state per tile) rather than
   per-segment entities: a castle is hundreds of segments, and the flood-fill,
   the mesher and the pathfinder all read grids. Consumers go through
   `isBlocking` / `isWalkable` predicates, so appending states costs them
-  nothing. Wall segments will carry hit points (palisade and unfinished stone
-  are damageable; finished stone is not) — that field arrives with threats
-  and its own migration, not before there is anything to damage them.
-  Construction progress lives on the builder, not the segment, because one
-  log and one work stint is the whole of a palisade. The mockups' walls are
-  just props.
+  nothing. Bite damage arrived with threats as a **second grid layer**
+  (`sim.wallDamageMap`) rather than as hit points on a segment, and it stores
+  *damage* rather than remaining health: 0 is pristine, so a new segment costs
+  no write, and the max-HP numbers stay tunables instead of being frozen into
+  every save. `isDamageable` names the set (palisade, wooden gate and every
+  blueprint; finished stone never). Construction progress lives on the builder,
+  not the segment, because one log and one work stint is the whole of a
+  palisade. The mockups' walls are just props.
 - Pathfinding is A* on the tile grid with per-chunk locality; hierarchical
   refinement only when a profiler demands it.
 

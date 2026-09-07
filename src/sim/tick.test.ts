@@ -26,6 +26,16 @@ function scriptedRun(ticks: number): Store {
 }
 
 /**
+ * The full run, computed once and shared by every assertion that only *reads*
+ * it. The run is by far the expensive part of this file, and it got dearer
+ * again when the world gained two dozen monsters to step — a run per test was
+ * affordable before and is not now. Anything that mutates its store, or that
+ * needs a second independent run to compare against, still builds its own.
+ */
+let cached: Store | null = null;
+const scripted = (): Store => (cached ??= scriptedRun(1500));
+
+/**
  * Designate a handful of trees, place a stockpile, place a sawmill, staff it.
  *
  * The log is keyed to exact ticks and every choice it makes is a pure function
@@ -231,9 +241,7 @@ function nearestSite(
 
 describe("determinism", () => {
   it("replays a scripted command log to a byte-identical store", () => {
-    const a = scriptedRun(1500);
-    const b = scriptedRun(1500);
-    expect(hashSim(a)).toBe(hashSim(b));
+    expect(hashSim(scripted())).toBe(hashSim(scriptedRun(1500)));
   });
 
   it("holds the golden hash", () => {
@@ -279,7 +287,16 @@ describe("determinism", () => {
     // assertions below are what say the number moved for those and not for
     // something quiet — most of all the plank assertion, which still passes
     // with *two* workshops staffed and three colonists left in the pool.
-    expect(hashSim(scriptedRun(1500))).toBe("430213d1");
+    //
+    // 430213d1 → 8aabfdb3 with the threat tier
+    // (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md). A shape
+    // change: the store gained `monsters`, `wallDamageMap` and `graveMap`, and
+    // this seed's nearest den is forty-odd tiles from the colony, so nothing in
+    // the run below ever meets one — every behavioural assertion in this file
+    // is unchanged and still passes, which is what says so. The tier's own
+    // determinism pin is `threats/encounter.test.ts`, on a seed picked for
+    // having a lair close enough to matter.
+    expect(hashSim(scripted())).toBe("8aabfdb3");
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {
@@ -313,7 +330,7 @@ describe("determinism", () => {
 
 describe("the labour loop", () => {
   it("runs designate → chop → haul → build → mill → plank end to end", () => {
-    const sim = scriptedRun(1500);
+    const sim = scripted();
     const r = readout(sim);
 
     const stockpile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
@@ -343,7 +360,7 @@ describe("the labour loop", () => {
     // The new command's own observable, so it is not merely hash noise: nine
     // tiles from one gesture — a six-long leg, a corner, and three more — and
     // the colony working them 80 ticks later.
-    const sim = scriptedRun(1500);
+    const sim = scripted();
     const size = sim.world.size;
     const placed: [number, number][] = [];
     for (let i = 0; i < sim.wallMap.length; i++) {
@@ -374,7 +391,7 @@ describe("the labour loop", () => {
     // The new commands' own observables, so the hash move is not merely noise.
     // One `scriptedRun` for all three, because the run is the expensive part
     // of this file and every test in it pays for another.
-    const sim = scriptedRun(1500);
+    const sim = scripted();
 
     // Stone, and told apart from timber by state rather than by tile: the
     // material rides on the command, so nothing in the wall layer is
@@ -401,7 +418,7 @@ describe("the labour loop", () => {
   });
 
   it("leaves no orphaned reservations when the queue drains", () => {
-    const sim = scriptedRun(1500);
+    const sim = scripted();
     for (const item of sim.items) {
       if (item.reservedBy < 0) continue;
       expect(sim.tasks.some((t) => t.id === item.reservedBy)).toBe(true);
@@ -424,7 +441,7 @@ describe("the labour loop", () => {
   });
 
   it("keeps every item somewhere legal", () => {
-    const sim = scriptedRun(1500);
+    const sim = scripted();
     for (const item of sim.items) {
       if (item.loc === Loc.Ground) {
         expect(item.holder).toBe(-1);
@@ -438,7 +455,7 @@ describe("the labour loop", () => {
   });
 
   it("only ever turns logs into planks inside a staffed mill", () => {
-    const sim = scriptedRun(1500);
+    const sim = scripted();
     const planks = sim.items.filter((it) => it.type === ItemType.Plank);
     expect(planks.length).toBeGreaterThan(0);
     // Nothing produced planks before the mill was staffed at tick 1200.

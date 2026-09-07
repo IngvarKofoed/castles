@@ -1,7 +1,9 @@
 import { buildingAt } from "../buildings";
-import { ItemType, Loc, type ItemTypeValue, type Sim } from "../store";
+import { ItemType, Loc, lairAt, type ItemTypeValue, type Sim } from "../store";
 import {
   GATE_BUILD_TICKS,
+  GATE_HP,
+  PALISADE_HP,
   STONE_BUILD_TICKS,
   STONE_GATE_BUILD_TICKS,
   WALL_BUILD_TICKS,
@@ -72,35 +74,55 @@ interface WallDef {
   readonly material: WallMaterial;
   /** A gateway: it has a side you walk through, and costs more labour. */
   readonly gate: boolean;
+  /**
+   * Bite damage this state can take before it comes down, and 0 for a state a
+   * monster cannot touch at all — **finished stone, of either shape**. A
+   * blueprint is 0 for the opposite reason: it is sticks, and one bite is the
+   * whole of it, so `isDamageable` and this number are deliberately not
+   * complements (docs/CONCEPT.md — the wall is absolute once it is stone).
+   */
+  readonly maxDamage: number;
+  /** Would a prowling monster attack this? Palisade, wooden gate, and every
+   *  blueprint of either material. */
+  readonly damageable: boolean;
 }
 
 const WALL_DEFS: Record<WallStateValue, WallDef> = {
   [WallState.None]: {
     blocks: false, walkable: true, blueprint: false, built: WallState.None, material: "timber", gate: false,
+    maxDamage: 0, damageable: false,
   },
   [WallState.PalisadeBp]: {
     blocks: false, walkable: true, blueprint: true, built: WallState.Palisade, material: "timber", gate: false,
+    maxDamage: 0, damageable: true,
   },
   [WallState.Palisade]: {
     blocks: true, walkable: false, blueprint: false, built: WallState.Palisade, material: "timber", gate: false,
+    maxDamage: PALISADE_HP, damageable: true,
   },
   [WallState.GateBp]: {
     blocks: false, walkable: true, blueprint: true, built: WallState.Gate, material: "timber", gate: true,
+    maxDamage: 0, damageable: true,
   },
   [WallState.Gate]: {
     blocks: true, walkable: true, blueprint: false, built: WallState.Gate, material: "timber", gate: true,
+    maxDamage: GATE_HP, damageable: true,
   },
   [WallState.StoneBp]: {
     blocks: false, walkable: true, blueprint: true, built: WallState.Stone, material: "stone", gate: false,
+    maxDamage: 0, damageable: true,
   },
   [WallState.Stone]: {
     blocks: true, walkable: false, blueprint: false, built: WallState.Stone, material: "stone", gate: false,
+    maxDamage: 0, damageable: false,
   },
   [WallState.StoneGateBp]: {
     blocks: false, walkable: true, blueprint: true, built: WallState.StoneGate, material: "stone", gate: true,
+    maxDamage: 0, damageable: true,
   },
   [WallState.StoneGate]: {
     blocks: true, walkable: true, blueprint: false, built: WallState.StoneGate, material: "stone", gate: true,
+    maxDamage: 0, damageable: false,
   },
 };
 
@@ -137,6 +159,47 @@ export function isBuilt(state: number): boolean {
 /** What a blueprint becomes when its last work tick lands. */
 export function builtForm(state: number): number {
   return defOf(state).built;
+}
+
+/**
+ * Would a prowling monster attack this? Palisade, wooden gate, and every
+ * blueprint of either material — the set CONCEPT names: "they can wreck what
+ * isn't finished, and they will." **Finished stone is immune**, which is pillar
+ * one made mechanical rather than promised.
+ */
+export function isDamageable(state: number): boolean {
+  return defOf(state).damageable;
+}
+
+/** Damage this state takes before it comes down, or 0 for a state that never
+ *  accumulates damage — immune stone, and a blueprint, which dies in one bite
+ *  rather than at a threshold. */
+export function wallMaxDamage(state: number): number {
+  return defOf(state).maxDamage;
+}
+
+/**
+ * Is there bite damage on this tile worth sending somebody to?
+ *
+ * Both halves matter. Damage with no maximum behind it is damage on a state
+ * that cannot hold any — a blueprint, or a segment that came down — and a
+ * repair task for that would be a colonist walking to nothing, forever.
+ */
+export function wallNeedsRepair(sim: Sim, i: number): boolean {
+  return sim.wallDamageMap[i] > 0 && wallMaxDamage(sim.wallMap[i]) > 0;
+}
+
+/**
+ * How wrecked a segment looks, in thirds: 0 sound, 1 past a third gone, 2 past
+ * two thirds. The renderer bakes this into the segment's timber, so a bite only
+ * dirties the chunk when the tier *crosses* — 40 bites per palisade would
+ * otherwise mean 40 chunk rebuilds for a change nobody can see.
+ */
+export function damageTier(state: number, damage: number): number {
+  const max = wallMaxDamage(state);
+  if (max <= 0 || damage <= 0) return 0;
+  if (damage * 3 < max) return 0;
+  return damage * 3 < max * 2 ? 1 : 2;
 }
 
 /** What a segment of this state is made of — the item its construction
@@ -189,7 +252,9 @@ export function razeMarked(sim: Sim, x: number, y: number): boolean {
  * `canPlace`'s checks minus flatness, which is moot for a 1×1 footprint:
  * segments follow the terrain, and a height step between neighbouring segments
  * is a hillside palisade rather than a defect. Grass or sand, no tree, no
- * water, no rock, no building, no existing wall, no ground item.
+ * water, no rock, no building, no existing wall, no ground item — and **never a
+ * lair tile**, because a den you could brick over is a monster you could
+ * permanently neutralize.
  */
 export function canPlaceWall(sim: Sim, x: number, y: number): boolean {
   const { size, tmap, treeMap } = sim.world;
@@ -199,6 +264,7 @@ export function canPlaceWall(sim: Sim, x: number, y: number): boolean {
   if (treeMap[i]) return false;
   if (sim.wallMap[i] !== WallState.None) return false;
   if (buildingAt(sim, x, y)) return false;
+  if (lairAt(sim, x, y)) return false;
   for (const it of sim.items) {
     if (it.loc === Loc.Ground && it.x === x && it.y === y) return false;
   }

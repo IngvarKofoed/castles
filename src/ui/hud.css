@@ -103,6 +103,49 @@
   align-self: stretch;
   background: var(--line-soft);
 }
+
+/* ---------- threat meter and rhythm bar ---------- */
+
+/*
+ * One recipe, two places (docs/STYLEGUIDE.md): five rust segments in a
+ * `line-soft` trough. Unlit segments are the *trough*, never a dimmer rust —
+ * a meter that is never fully off reads as a permanent low alarm, and this
+ * game does not have those. No transition either: the value is quantized to
+ * fifths on purpose, and a step is not animation.
+ *
+ * Rust because danger is one of the costly things, which is the reading that
+ * widened when threats arrived rather than a fourth colour being invented.
+ */
+.bars {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.bars i {
+  width: 9px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--line-soft);
+  display: inline-block;
+}
+.bars i.on {
+  background: var(--rust);
+}
+.threat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The caption sits in the ribbon's own faint caps label style, so a monster
+ * announcing itself looks exactly as loud as the word "logs". */
+.threat u {
+  text-decoration: none;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  white-space: nowrap;
+}
 .clock {
   margin-left: auto;
   display: flex;
@@ -267,6 +310,11 @@
 .tag.blueprint {
   background: rgba(126, 122, 104, 0.18);
   color: var(--ink-dim);
+}
+/* A monster's kind tag. Rust, as everything costly is. */
+.tag.threat {
+  background: rgba(184, 80, 58, 0.18);
+  color: var(--rust-ink);
 }
 
 .chain {

@@ -3,6 +3,7 @@ import { stepWorkshops } from "./economy/workshop";
 import { stepColonists } from "./labour/colonists";
 import { generateTasks } from "./labour/tasks";
 import type { Sim } from "./store";
+import { stepMonsters } from "./threats/monsters";
 import { settleEnclosure } from "./walls/enclosure";
 
 /**
@@ -16,13 +17,21 @@ import { settleEnclosure } from "./walls/enclosure";
  *    colony exactly.
  * 2. **Task generation.** The queue is topped up against the world as the
  *    commands left it, so a building placed this tick is already hiring.
- * 3. **Colonists.** Pool and slot workers act, in id order.
- * 4. **Workshops.** Production runs after its workers have moved, so a log
+ * 3. **Colonists.** Pool and slot workers act — and flee — in id order.
+ * 4. **Monsters.** After the folk have moved and before anything is produced.
+ *    That placement is load-bearing in both directions: a catch always tests
+ *    *post-move* positions, so a colonist who ran this tick is judged on where
+ *    they got to; and a colonist's flee decision always reads the monster
+ *    positions the previous tick ended with, so neither side ever moves twice
+ *    against the other. A stale read is not the same as an unfair one.
+ * 5. **Workshops.** Production runs after its workers have moved, so a log
  *    delivered this tick can start milling this tick.
- * 5. **Enclosure.** Last, and only if something moved the wall graph this
- *    tick — a placement, a segment finished, a segment torn down. Batching it
- *    here means however many segments changed cost one flood-fill, and a quiet
- *    tick costs none; every tick boundary still ends with `insideMap` current.
+ * 6. **Enclosure.** Last, and only if something moved the wall graph this
+ *    tick — a placement, a segment finished, a segment torn down, **a segment
+ *    bitten to pieces**. Batching it here means however many segments changed
+ *    cost one flood-fill, and a quiet tick costs none; every tick boundary
+ *    still ends with `insideMap` current, which is what makes a breach shrink
+ *    the calm zone with no breach-specific code anywhere.
  *
  * The tick counter advances first, so a system asking `sim.tick` sees the tick
  * it is simulating rather than the one just finished.
@@ -32,6 +41,7 @@ export function advanceTick(sim: Sim, commands: readonly Command[] = []): void {
   sim.tick++;
   generateTasks(sim);
   stepColonists(sim);
+  stepMonsters(sim);
   stepWorkshops(sim);
   settleEnclosure(sim);
 }

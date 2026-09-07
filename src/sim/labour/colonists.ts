@@ -34,17 +34,23 @@ import {
   type Building,
   type Colonist,
   type Item,
+  type Monster,
   type Sim,
   type Task,
 } from "../store";
+import { clearDamage, repairWall } from "../threats/damage";
+import { abandonForFlight, fleeRoute, fleeing, threatNear } from "../threats/flee";
+import { clearGrave } from "../threats/graves";
 import {
   BUILD_TICKS,
   CHOP_TICKS,
   MINE_ROCK,
   MINE_TICKS,
   RAZE_TICKS,
+  REPAIR_HP_PER_SECOND,
   TASK_PRIORITY,
   TERRAFORM_TICKS,
+  TICK_HZ,
   WALK_TILES_PER_TICK,
 } from "../tuning";
 import {
@@ -56,6 +62,7 @@ import {
   wallBuildTicks,
   wallItem,
   wallMaterial,
+  wallNeedsRepair,
 } from "../walls";
 import { markEnclosureStale } from "../walls/enclosure";
 import { markChunkDirty, tileIndex } from "../world/world";
@@ -74,9 +81,47 @@ export function stepColonists(sim: Sim): void {
   for (const c of sim.colonists) {
     c.px = c.x;
     c.py = c.y;
+    // The flee check runs *before* task work and overrides everything, slot
+    // workers included: a pair of hands is the game's only scarce currency and
+    // no errand is worth one. `threatNear` answers null for anyone on inside
+    // ground or indoors, so on a calm tick this costs one map read.
+    const monster = threatNear(sim, c);
+    if (monster) {
+      flee(sim, occ, c, monster);
+      continue;
+    }
     if (c.slot >= 0) stepSlotWorker(sim, occ, c);
     else stepPoolWorker(sim, occ, c);
   }
+}
+
+/**
+ * Drop everything and run for the walls.
+ *
+ * The task goes back through the standard release-and-drop, so the log lands
+ * where they were standing and the queue tops itself up again the moment they
+ * are safe. A slot worker keeps their slot — the workshop is still theirs, they
+ * are simply not in it — and `stepSlotWorker` walks them back once the prowler
+ * has gone.
+ *
+ * The route is re-planned only when the last one has run out, which is what
+ * "re-evaluated per repath" buys: a bounded BFS every tick per fleeing colonist
+ * would be the most expensive thing in the game precisely when the most is
+ * happening.
+ */
+function flee(sim: Sim, occ: Occupancy, c: Colonist, from: Monster): void {
+  abandonForFlight(sim, occ, c);
+  // Re-plan unless they are *already* walking somewhere safe. Testing the route
+  // rather than the task is what catches a slot worker or a step-aside walker:
+  // those carry a live route with no task behind it, so dropping the task
+  // leaves them strolling their old line straight past the monster.
+  if (!fleeing(sim, c)) {
+    const route = fleeRoute(sim, occ, c, from);
+    c.path = [];
+    c.step = 0;
+    if (route && route.length) c.path = route;
+  }
+  if (c.path.length > c.step) walk(sim, occ, c);
 }
 
 /**
@@ -337,7 +382,8 @@ function isTileWork(kind: number): boolean {
     kind === TaskKind.Chop ||
     kind === TaskKind.Mine ||
     kind === TaskKind.Terraform ||
-    kind === TaskKind.Raze
+    kind === TaskKind.Raze ||
+    kind === TaskKind.Repair
   );
 }
 
@@ -346,7 +392,12 @@ function firstGoal(sim: Sim, occ: Occupancy, task: Task): Set<number> | null {
   // Razing, quarrying and levelling are all worked from a *neighbouring* tile,
   // never from the tile itself: an outcrop is a cliff you cut from below, and
   // ground about to move under your feet is ground to be standing beside.
-  if (task.kind === TaskKind.Raze || task.kind === TaskKind.Mine || task.kind === TaskKind.Terraform) {
+  if (
+    task.kind === TaskKind.Raze ||
+    task.kind === TaskKind.Mine ||
+    task.kind === TaskKind.Terraform ||
+    task.kind === TaskKind.Repair
+  ) {
     return adjacentToTile(sim, occ, task.x, task.y);
   }
   if (task.kind === TaskKind.Build) {
@@ -381,6 +432,8 @@ function act(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
       return actBuildWall(sim, occ, c, task);
     case TaskKind.Raze:
       return actRaze(sim, occ, c, task);
+    case TaskKind.Repair:
+      return actRepair(sim, occ, c, task);
     default:
       return actHaul(sim, occ, c, task);
   }
@@ -489,6 +542,9 @@ function actTerraform(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   // what would drop somebody into the pit this job is digging.
   if (stepOffTile(sim, occ, task.x, task.y)) return;
   setHeight(sim, task.x, task.y, h + (target > h ? 1 : -1));
+  // Ground worked flat takes any grave with it, silently. A marker that
+  // refused the shovel would be a mechanic, and a death is just the loss.
+  clearGrave(sim, task.x, task.y);
   markChunkDirty(sim.world, task.x, task.y);
   c.work = 0;
   if (sim.world.hmap[i] !== target) return;
@@ -610,11 +666,50 @@ function actRaze(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   const refund = wallItem(wallMaterial(sim.wallMap[i]));
   sim.wallMap[i] = WallState.None;
   sim.razeMap[i] = 0;
+  // Damage belongs to the segment, not to the ground: leave it lying here and
+  // the next palisade raised on this tile would be born half-eaten.
+  clearDamage(sim, i);
   markChunkDirty(sim.world, task.x, task.y);
   markEnclosureStale(sim);
   // The tile has just become free, so the drop spiral starts on it — the chop
   // precedent, where the log lands where the tree stood.
   spawnItem(sim, refund, task.x, task.y, occ);
+  clearWorker(c);
+  finishTask(sim, task);
+}
+
+/**
+ * Work bite damage back out of a standing segment, **paid for in labour and
+ * nothing else** (docs/CONCEPT.md — the counterplay to a monster is people).
+ *
+ * The rate is whole points on a cadence rather than a fraction per tick, so the
+ * damage layer stays integral and `REPAIR_HP_PER_SECOND` means exactly what it
+ * says however the tick rate is retuned: work accumulates at the rate and pays
+ * out a point each time it has bought one.
+ *
+ * The dynamic this creates, stated because it is the tier's whole shape: a
+ * biting monster **camps** its segment for its entire prowl, and `FLEE_RANGE`
+ * keeps the outside ground beside it lethal — so a mid-siege repair only works
+ * from the **inside face**, where the repairer stands on enclosed ground and
+ * does not flee. A closed ring can therefore be held against a prowl, which is
+ * CONCEPT's outlasting delivered; an unclosed push cannot be face-repaired
+ * against a camper, which leaves exactly the concept's triad — build the other
+ * segments faster, write this one off, or fall back.
+ */
+function actRepair(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
+  const i = tileIndex(task.x, task.y, sim.world.size);
+  if (!wallNeedsRepair(sim, i)) {
+    // Somebody else finished it, or the segment came down while they walked.
+    abandonTask(sim, occ, task);
+    return;
+  }
+  c.phase = Phase.Working;
+  faceTile(c, task.x, task.y);
+  c.work += REPAIR_HP_PER_SECOND;
+  if (c.work < TICK_HZ) return;
+  const points = Math.floor(c.work / TICK_HZ);
+  c.work -= points * TICK_HZ;
+  if (!repairWall(sim, i, points)) return;
   clearWorker(c);
   finishTask(sim, task);
 }

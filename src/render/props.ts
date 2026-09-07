@@ -1,6 +1,6 @@
 import { hash } from "../sim/world/noise";
 import { BuildingKind, BuildingState, isGateway, isStoneWall, wallIsBlueprint, type Building } from "../sim/know";
-import { DESIGNATED_TINT, OVERLAY, PROP, PROP_JITTER, lerpHex } from "./palette";
+import { DAMAGE_SHADE, DESIGNATED_TINT, OVERLAY, PROP, PROP_JITTER, lerpHex } from "./palette";
 
 /**
  * The voxel props baked into chunk geometry: trees, buildings and walls.
@@ -255,6 +255,30 @@ export function wallBoxes(
   state: number,
   links: number,
   razeMarked = false,
+  damage = 0,
+): void {
+  // Bite damage darkens the whole segment, in thirds, and takes its top rail
+  // off once it is past two of them. `damage` is the *tier* rather than the raw
+  // number, so the mesher only rebakes on a crossing — forty bites per palisade
+  // would otherwise be forty chunk rebuilds for a change nobody can see.
+  const tier = Math.min(DAMAGE_SHADE.length - 1, Math.max(0, damage));
+  const first = out.length;
+  wallMembers(tx, ty, h, seed, out, state, links, razeMarked, tier);
+  if (tier === 0) return;
+  const wear = DAMAGE_SHADE[tier];
+  for (let i = first; i < out.length; i++) out[i].shade *= wear;
+}
+
+function wallMembers(
+  tx: number,
+  ty: number,
+  h: number,
+  seed: number,
+  out: Box[],
+  state: number,
+  links: number,
+  razeMarked: boolean,
+  tier: number,
 ): void {
   const g = h * BH;
   const x = tx + 0.5;
@@ -352,6 +376,10 @@ export function wallBoxes(
     if (!(arms & arm.bit)) continue;
     stake(arm.dx * STAKE_OUT, arm.dz * STAKE_OUT, arm.s);
     for (const fy of RAIL_HEIGHTS) {
+      // Past two thirds gone the upper rail is simply missing: darkening alone
+      // reads as shadow at the opening zoom, and a gap in the silhouette is
+      // what actually says "this is coming apart".
+      if (tier >= 2 && fy === RAIL_HEIGHTS[RAIL_HEIGHTS.length - 1]) continue;
       out.push(
         anchorJitter(
           box(
@@ -468,6 +496,60 @@ function stoneCourses(
       ),
     );
   }
+}
+
+const LAIR_SALT = 0x9e3779b1;
+
+/**
+ * A den on tile (tx, ty): a dark mound of turned earth with a black mouth in
+ * it and a couple of bones lying about.
+ *
+ * A landmark rather than a warning. It is baked into the chunk mesh like a tree
+ * because it never moves — one monster per lair and monsters cannot be killed,
+ * so this is as static as world content gets — and it reads at distance by
+ * silhouette and by being the one dark thing on open grass. Nothing about it
+ * pulses or glows: the world is the world, and the ribbon's meter is where the
+ * game says anything about danger (docs/STYLEGUIDE.md, Tone).
+ */
+export function lairBoxes(tx: number, ty: number, h: number, seed: number, out: Box[]): void {
+  const g = h * BH;
+  const x = tx + 0.5;
+  const z = ty + 0.5;
+  const j = hash(tx, ty, seed ^ LAIR_SALT);
+  const rot = (j - 0.5) * 0.6;
+
+  // The mound, in two courses so it domes rather than reading as a slab. It is
+  // narrower than a full tile on purpose: the bones below have to sit *outside*
+  // it or they are enclosed geometry nobody ever sees.
+  out.push(box(x, g, z, 0.8, 0.52 * BH, 0.8, PROP.den, rot));
+  out.push(box(x, g + 0.52 * BH, z, 0.52, 0.36 * BH, 0.52, PROP.den, rot, 0.9));
+  // The mouth: a dark hollow cut into the south face, which is the face the
+  // camera can see at every tilt the game allows. It overhangs the mound a
+  // little so it reads as an opening rather than as a shadow.
+  out.push(box(x, g, z + 0.32, 0.38, 0.42 * BH, 0.3, PROP.denMouth, rot, 0.8));
+  // Bones. Two, small, and at opposite corners clear of the mound — enough to
+  // say what lives here without turning a landmark into a diorama.
+  out.push(box(x - 0.42, g, z - 0.3, 0.26, 0.1 * BH, 0.08, PROP.bone, rot + 0.7));
+  out.push(box(x + 0.38, g, z + 0.32, 0.2, 0.09 * BH, 0.08, PROP.bone, rot - 1.1));
+}
+
+/**
+ * A grave on tile (tx, ty): turned earth and a leaning board.
+ *
+ * Small on purpose. CONCEPT is explicit that a death is *just the loss* — the
+ * folk readout shrinking is the game's whole obituary — so this is a marker the
+ * player may happen to walk past, not a monument that asks for anything. It
+ * blocks nothing and clears silently under a building or a shovel.
+ */
+export function graveBoxes(tx: number, ty: number, h: number, seed: number, out: Box[]): void {
+  const g = h * BH;
+  const x = tx + 0.5;
+  const z = ty + 0.5;
+  const j = hash(tx, ty, seed ^ LAIR_SALT);
+  const lean = (j - 0.5) * 0.5;
+  out.push(box(x, g, z, 0.46, 0.1 * BH, 0.62, PROP.graveEarth, lean, 0.95));
+  out.push(box(x, g + 0.1 * BH, z - 0.16, 0.26, 0.44 * BH, 0.07, PROP.graveBoard, lean));
+  out.push(box(x, g + 0.4 * BH, z - 0.16, 0.4, 0.09 * BH, 0.07, PROP.graveBoard, lean, 0.92));
 }
 
 function treeStyle(tx: number, ty: number, seed: number): number {

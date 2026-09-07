@@ -18,7 +18,7 @@ import {
   type Task,
 } from "../store";
 import { TASK_COOLDOWN_JITTER, TASK_COOLDOWN_TICKS } from "../tuning";
-import { WallState, isBlueprint, isBuilt, wallItem, wallMaterial } from "../walls";
+import { WallState, isBlueprint, isBuilt, wallItem, wallMaterial, wallNeedsRepair } from "../walls";
 import { markEnclosureStale } from "../walls/enclosure";
 import { nextRand } from "../world/rng";
 import { markChunkDirty, tileIndex } from "../world/world";
@@ -250,21 +250,23 @@ function razeTile(
 }
 
 /**
- * The four designation layers — chop, mine, raze, terraform — in **one walk of
- * the grid**, one task per marked tile, plus the tidy-up for a mark whose
- * subject has gone away.
+ * The four designation layers — chop, mine, raze, terraform — **and wall
+ * damage**, in one walk of the grid: one task per marked or wounded tile, plus
+ * the tidy-up for a mark whose subject has gone away.
  *
  * One walk rather than one per layer because the walk *is* the cost: at 256²
- * the loop overhead dwarfs the four byte reads inside it, and this is the
- * hottest thing in the tick. It is also why the earlier three-scan version was
+ * the loop overhead dwarfs the byte reads inside it, and this is the hottest
+ * thing in the tick. It is also why the earlier three-scan version was
  * already the recorded thing to index first
  * (docs/changelog/2026-09-02-palisade-walls.md); merging is the cheap half of
- * that, and it leaves the queue with two grid scans in total rather than five.
+ * that, and it is why bite damage joined this pass rather than adding a scan
+ * of its own.
  *
  * **Their relative order is immaterial and that is load-bearing** — none of
- * the four reserves an item, so nothing here competes for a log the way
+ * the five reserves an item, so nothing here competes for a log the way
  * build-wall and the hauls do. What decides which of them a colonist actually
- * picks up is `TASK_PRIORITY` at claim time, not the order they were made in.
+ * picks up is `TASK_PRIORITY` at claim time, not the order they were made in,
+ * which is exactly why repair can be generated last and still outrank hauling.
  * A future designation kind that *does* reserve something must not join this
  * pass; it belongs at its own place in the priority run above.
  */
@@ -274,16 +276,40 @@ function generateDesignations(sim: Sim): void {
   const mining = tileTasks(sim, TaskKind.Mine, size);
   const razing = tileTasks(sim, TaskKind.Raze, size);
   const levelling = tileTasks(sim, TaskKind.Terraform, size);
+  const repairing = tileTasks(sim, TaskKind.Repair, size);
   let occ: Occupancy | null = null;
+
+  // Repair is the one tile task whose *subject* can vanish without leaving a
+  // mark behind: a segment bitten to pieces takes its damage to zero as it
+  // falls, so the grid walk below never reaches that tile again and the tidy-up
+  // there can never fire. Left alone the task outlives the wall — and it sits
+  // above hauling, so somebody claims it and walks to open ground before
+  // discovering there is nothing to mend.
+  for (const task of [...sim.tasks]) {
+    if (task.kind !== TaskKind.Repair) continue;
+    const i = tileIndex(task.x, task.y, size);
+    if (wallNeedsRepair(sim, i)) continue;
+    occ ??= occupancy(sim);
+    abandonTask(sim, occ, task);
+    repairing.delete(i);
+  }
 
   for (let i = 0; i < sim.chopMap.length; i++) {
     const chop = sim.chopMap[i];
     const mine = sim.mineMap[i];
     const raze = sim.razeMap[i];
     const level = sim.terraformMap[i];
-    if (!chop && !mine && !raze && !level) continue;
+    const hurt = sim.wallDamageMap[i];
+    if (!chop && !mine && !raze && !level && !hurt) continue;
     const x = i % size;
     const y = (i - x) / size;
+
+    // A wounded segment wants exactly one repairer, deduplicated by tile like
+    // every other tile task. Nothing to hand it: repair is labour alone.
+    if (hurt) {
+      if (!wallNeedsRepair(sim, i)) sim.wallDamageMap[i] = 0;
+      else if (!repairing.has(i)) addTask(sim, TaskKind.Repair, null, null, x, y);
+    }
 
     if (chop) {
       if (!sim.world.treeMap[i]) {

@@ -8,7 +8,11 @@ import {
   ItemType,
   WALL_ITEM_COST,
   inspect,
+  monsterName,
+  monsters,
   readout,
+  rhythm,
+  threat,
   wallItem,
   type BuildingKindValue,
   type ItemTypeValue,
@@ -149,14 +153,33 @@ export class Hud {
   private readonly onKeyDown: (e: KeyboardEvent) => void;
 
   private tool_: Tool = { kind: "none" };
-  private selected = -1;
+  /**
+   * What the inspector is showing. Two shapes now — a building, or a monster —
+   * because a den's inhabitant is a thing worth watching and nothing else in
+   * the game is inspectable.
+   */
+  private selected: { kind: "building" | "monster"; id: number } | null = null;
   /** Last rendered inspector signature, so the panel only rebuilds on change. */
   private lastPanel = "";
+  /**
+   * The monster the threat meter is currently watching.
+   *
+   * The pick **holds** until that monster goes back to sleep, so the bar cannot
+   * flicker between two clocks mid-siege — and the memory lives *here* rather
+   * than in the store, because which monster a particular meter is watching is
+   * a property of the meter and not of the world. `sim/know` owns the policy
+   * and is handed last frame's answer; it reads the store and never writes it.
+   */
+  private watching = -1;
+  private readonly threatBars: HTMLElement;
+  private readonly threatCaption: HTMLElement;
 
   constructor(
     private readonly sim: Sim,
     private readonly ports: HudPorts,
   ) {
+    this.threatBars = el("div", { class: "bars", role: "img" });
+    this.threatCaption = el("u", {}, "wilds quiet");
     this.root = el("div", { id: "hud" });
     this.root.append(this.buildRibbon(), this.buildRail());
     this.inspector = el("aside", { class: "panel inspector", "aria-live": "polite" });
@@ -216,8 +239,8 @@ export class Hud {
       this.hideMarquee();
       return;
     }
-    if (this.selected >= 0) {
-      this.selected = -1;
+    if (this.selected) {
+      this.selected = null;
       return;
     }
     this.ports.toggleMenu();
@@ -226,7 +249,7 @@ export class Hud {
   /** Clear the active tool and any selection — a right-click. */
   clear(): void {
     this.setTool({ kind: "none" });
-    this.selected = -1;
+    this.selected = null;
     this.hideMarquee();
   }
 
@@ -248,8 +271,15 @@ export class Hud {
     this.marquee.hidden = true;
   }
 
+  /** Show a building in the inspector, or nothing when the id is -1. */
   select(buildingId: number): void {
-    this.selected = buildingId;
+    this.selected = buildingId >= 0 ? { kind: "building", id: buildingId } : null;
+  }
+
+  /** Show a monster in the inspector — watching one creature's rounds, which
+   *  is the per-monster version of the ribbon's meter. */
+  selectMonster(id: number): void {
+    this.selected = { kind: "monster", id };
   }
 
   /** Refresh the readouts. Called every frame; rebuilds only what changed. */
@@ -268,7 +298,27 @@ export class Hud {
     this.menuButton.setAttribute("aria-pressed", String(this.ports.menuOpen()));
 
     this.updateLabour(r.folk, r.pool);
+    this.updateThreat();
     this.updateInspector();
+  }
+
+  /**
+   * The threat meter. `sim/know` picks the monster and works out how much of
+   * its clock is left; the HUD only hands back which one it was showing, so
+   * the pick holds while that monster is out.
+   */
+  private updateThreat(): void {
+    const t = threat(this.sim, this.watching);
+    this.watching = t.monster;
+    const want = `${t.lit}/${t.buckets}|${t.caption}`;
+    // Guarded, because `update()` runs every frame and this is DOM.
+    if (this.threatBars.dataset.state === want) return;
+    this.threatBars.dataset.state = want;
+    this.threatBars.replaceChildren(
+      ...Array.from({ length: t.buckets }, (_, i) => el("i", i < t.lit ? { class: "on" } : {})),
+    );
+    this.threatBars.setAttribute("aria-label", t.caption);
+    this.threatCaption.textContent = t.caption;
   }
 
   // ---------------------------------------------------------------- ribbon
@@ -287,6 +337,14 @@ export class Hud {
     ribbon.append(el("span", { class: "divider" }));
     // The game's progress bar: buildable ground the wall has actually claimed.
     ribbon.append(this.count("enclosed", "enclosed"));
+
+    // And the one thing on the ribbon that is not a count: how long until the
+    // wilds matter. Five rust segments and a quiet caption — the whole of the
+    // game's alarm vocabulary (docs/STYLEGUIDE.md).
+    ribbon.append(el("span", { class: "divider" }));
+    const threatBox = el("span", { class: "threat" });
+    threatBox.append(this.threatBars, this.threatCaption);
+    ribbon.append(threatBox);
 
     const clock = el("span", { class: "clock" });
     const speed = el("span", { class: "speed", role: "group", "aria-label": "Game speed" });
@@ -392,7 +450,7 @@ export class Hud {
 
   private setTool(tool: Tool): void {
     this.tool_ = tool;
-    if (tool.kind !== "none") this.selected = -1;
+    if (tool.kind !== "none") this.selected = null;
     const active = tool.kind === "none" ? "" : toolKey(tool);
     for (const [key, b] of this.toolButtons) {
       b.setAttribute("aria-pressed", String(key === active));
@@ -402,16 +460,17 @@ export class Hud {
   // ------------------------------------------------------------- inspector
 
   private updateInspector(): void {
-    if (this.selected < 0) {
-      this.inspector.hidden = true;
-      this.lastPanel = "";
+    if (!this.selected) {
+      this.hideInspector();
       return;
     }
-    const b = inspect(this.sim, this.selected);
+    if (this.selected.kind === "monster") {
+      this.updateMonsterPanel(this.selected.id);
+      return;
+    }
+    const b = inspect(this.sim, this.selected.id);
     if (!b) {
-      this.selected = -1;
-      this.inspector.hidden = true;
-      this.lastPanel = "";
+      this.hideInspector();
       return;
     }
     this.inspector.hidden = false;
@@ -431,6 +490,60 @@ export class Hud {
     this.lastPanel = signature;
 
     this.inspector.replaceChildren(...this.panelFor(b));
+  }
+
+  private hideInspector(): void {
+    this.selected = null;
+    this.inspector.hidden = true;
+    this.lastPanel = "";
+  }
+
+  /**
+   * One monster's panel: what kind it is, whether it is up, and how far through
+   * its hours it is — the same coarse five-bucket bar the ribbon uses, because
+   * they are the same claim at different scopes.
+   *
+   * **No action button.** There is nothing a player may do to a monster; an
+   * inspector with no button is the honest way to say so, and adding one would
+   * be the first crack in avoidance-only.
+   */
+  private updateMonsterPanel(id: number): void {
+    const seen = monsters(this.sim).find((m) => m.id === id);
+    const r = seen ? rhythm(this.sim, id) : null;
+    if (!seen || !r) {
+      this.hideInspector();
+      return;
+    }
+    this.inspector.hidden = false;
+
+    const signature = `m${id}|${seen.stance}|${r.phase}|${r.bucket}`;
+    if (signature === this.lastPanel) return;
+    this.lastPanel = signature;
+
+    const name = monsterName(seen.kind);
+    const head = el("div", { class: "insp-head" });
+    head.append(el("h3", {}, name));
+    head.append(el("span", { class: "tag threat" }, name));
+    this.inspector.replaceChildren(
+      head,
+      rows([["Stance", seen.stance === "dormant" ? "resting" : "out"]]),
+      // `bucket + 1`, not `bucket`: the buckets are 0-based, so passing the raw
+      // value left the bar unable to reach full however far through its hours a
+      // monster got.
+      //
+      // This bar and the ribbon's meter deliberately measure **different
+      // things**, and the difference is worth stating because they sit on one
+      // screen: this one is *phase progress* — how far through whatever it is
+      // doing — so it fills as the phase runs out whichever phase that is. The
+      // ribbon's is *danger remaining*, so it fills toward a waking and drains
+      // toward a leaving. A monster walking home therefore reads full here (its
+      // rounds are over) and empty there (it can no longer hurt you). Do not
+      // "reconcile" them.
+      bars(r.bucket + 1, r.buckets, RHYTHM_LABEL[r.phase]),
+      // The house voice, and the whole of what the base game will tell you:
+      // watch it long enough and you learn its hours. Watchtowers narrow this.
+      note("its hours are read off the map, never exactly"),
+    );
   }
 
   private panelFor(b: NonNullable<ReturnType<typeof inspect>>): Node[] {
@@ -582,6 +695,28 @@ function rows(pairs: [string, string][]): HTMLElement {
 
 function note(message: string): HTMLElement {
   return el("div", { class: "row note" }, message);
+}
+
+/** What a monster's rhythm bar is measuring, in the house voice. */
+const RHYTHM_LABEL: Record<"resting" | "prowling" | "homeward", string> = {
+  resting: "toward waking",
+  prowling: "through its rounds",
+  homeward: "heading home",
+};
+
+/**
+ * The five-segment rust bar, shared by the ribbon's threat meter and a
+ * monster's rhythm (docs/STYLEGUIDE.md). Unlit segments are the trough, never
+ * a dimmer rust: a bar that is never fully off reads as a standing alarm.
+ */
+function bars(lit: number, total: number, label: string): HTMLElement {
+  const box = el("div", { class: "rows" });
+  const bar = el("div", { class: "bars", role: "img", "aria-label": label });
+  for (let i = 0; i < total; i++) bar.append(el("i", i < lit ? { class: "on" } : {}));
+  const row = el("div", { class: "row" });
+  row.append(el("span", {}, label));
+  box.append(row, bar);
+  return box;
 }
 
 function meter(fraction: number): HTMLElement {

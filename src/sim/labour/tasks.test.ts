@@ -69,6 +69,10 @@ describe("the priority table", () => {
     expect(TASK_PRIORITY.map(nameOf)).toEqual([
       "Build",
       "BuildWall",
+      // A breach outranks hauling and chopping — the counterplay to a monster
+      // is people, so repair has to actually get people — but never an active
+      // build that may be one segment from closing a ring.
+      "Repair",
       "HaulToSite",
       "HaulToInput",
       "Chop",

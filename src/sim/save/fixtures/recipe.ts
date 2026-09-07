@@ -135,9 +135,82 @@ export function v3Script(sim: Sim): Command[] {
   }
 }
 
-/** Rebuild a fixture's colony with whatever the store looks like today. */
-export function replay(script: (sim: Sim) => Command[], ticks: number, seed = FIXTURE_SEED): Sim {
+/**
+ * v4: the threat tier, on a seed whose nearest den sits fourteen tiles from the
+ * colony — the same seed `threats/encounter.test.ts` picks, and for the same
+ * reason: the default fixture seed's wilds are forty tiles out and would never
+ * touch the colony inside a fixture's lifetime.
+ *
+ * What it carries: two dozen monsters mid-rhythm with their routes and phase
+ * clocks in flight, and a standing palisade still carrying its **bite damage**
+ * with a live repair task queued against it — plus the walls, items, tasks and
+ * reservations the older fixtures prove.
+ *
+ * Caught at 1100, in the gap between the first prowl walking home and the
+ * repairer finishing, rather than later: no tick on this seed holds damage, a
+ * repair task *and* a grave at once, because the damage is mended before the
+ * prowl that kills anybody arrives. The damage layer and a live `Repair` task
+ * are the states nothing else in the format exercises, so they win the tie;
+ * `graveMap` rides along as zeros, which the codec treats exactly as it treats
+ * the eight layers beside it, and graves themselves are pinned in
+ * `threats/flee.test.ts` and the encounter run.
+ */
+export const FIXTURE_SEED_V4 = 20260981;
+export const V4_TICKS = 1100;
+
+export function v4Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 24) }];
+    case 5:
+      return [{ kind: "place", building: 0, x: 126, y: 126 }];
+    // Standing before the den's first full prowl, so it is bitten rather than
+    // eaten as sticks — which is the whole of what this fixture is for.
+    case 400:
+      return [{ kind: "placeWall", tiles: denRun(sim, 0), material: "timber" }];
+    default:
+      return [];
+  }
+}
+
+/** A seven-tile run partway between the colony and the nearest den. Derived
+ *  from the store, like every other site in this file. */
+function denRun(sim: Sim, offset: number): number[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  if (!sim.monsters.length) return [];
+  const m = sim.monsters.reduce((a, b) =>
+    Math.hypot(a.lairX - centre, a.lairY - centre) <= Math.hypot(b.lairX - centre, b.lairY - centre) ? a : b,
+  );
+  const cx = Math.round(centre + (m.lairX - centre) * 0.55);
+  const cy = Math.round(centre + (m.lairY - centre) * 0.55) + offset;
+  const out: number[] = [];
+  for (let k = -3; out.length < 7 && k < 7; k++) {
+    if (canPlaceWall(sim, cx + k, cy)) out.push(tileIndex(cx + k, cy, size));
+  }
+  return out;
+}
+
+/**
+ * Rebuild a fixture's colony with whatever the store looks like today.
+ *
+ * `peaceful` empties the wilds before the first tick, and the three pre-v4
+ * recipes use it. They were written for a world with no monsters in it, and
+ * replaying them in one is not what they were ever meant to demonstrate: on a
+ * seed with a den near the colony the whole colony can be caught and killed
+ * inside a fixture's lifetime, which leaves the shape comparison with no
+ * colonist to read a key set off. The shape test asks "does this build's store
+ * have the fields the file has" — the wilderness is a confound in that
+ * question, not a signal.
+ */
+export function replay(
+  script: (sim: Sim) => Command[],
+  ticks: number,
+  seed = FIXTURE_SEED,
+  peaceful = false,
+): Sim {
   const sim = createSim(seed);
+  if (peaceful) sim.monsters = [];
   for (let t = 0; t < ticks; t++) advanceTick(sim, script(sim));
   return sim;
 }

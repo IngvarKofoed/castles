@@ -16,14 +16,38 @@ import {
   BuildingState,
   ItemType,
   Loc,
+  MonsterKind,
+  MonsterPhase,
+  findMonster,
   type Building,
   type Colonist,
   type Item,
+  type Monster,
   type Sim,
 } from "../store";
-import { BUILD_TICKS, DAY_TICKS, STOCKPILE_PER_TILE, WALL_ITEM_COST } from "../tuning";
-import { WallState, canPlaceWall, isGateway, isStoneWall, razeMarked, wallAt, wallItem } from "../walls";
+import { defOfMonster, monsterAt } from "../threats";
+import {
+  BUILD_TICKS,
+  DAY_TICKS,
+  RHYTHM_FUZZ,
+  STOCKPILE_PER_TILE,
+  THREAT_BUCKETS,
+  THREAT_RANGE,
+  WALL_ITEM_COST,
+} from "../tuning";
+import {
+  WallState,
+  canPlaceWall,
+  damageTier,
+  isDamageable,
+  isGateway,
+  isStoneWall,
+  razeMarked,
+  wallAt,
+  wallItem,
+} from "../walls";
 import { enclosedLand } from "../walls/enclosure";
+import { hash } from "../world/noise";
 import { tileIndex } from "../world/world";
 
 /**
@@ -320,3 +344,314 @@ export function buildingAtTile(sim: Sim, x: number, y: number): Building | null 
 export function groundItems(sim: Sim, x: number, y: number): Item[] {
   return groundItemsAt(sim, x, y);
 }
+
+// ------------------------------------------------------------------ threats
+//
+// The one place in the game where truth and knowledge genuinely differ.
+//
+// A monster's *position* is not hidden — CONCEPT says threats roam "in plain
+// sight", and reading the map is the player's entire toolkit. What is hidden is
+// the exact clock: schedules show **approximately**, and precision is
+// buildable. So `rhythm` below is deliberately coarse and deliberately wrong by
+// a little, and the exact timers, the circuit and the notice radii never leave
+// `sim/`. Watchtowers (4b) narrow the fuzz and change nothing else — that is
+// the whole product boundary, and it is one function wide on purpose.
+
+/** What the renderer may know about a monster. */
+export interface MonsterView {
+  id: number;
+  kind: number;
+  x: number;
+  y: number;
+  px: number;
+  py: number;
+  heading: number;
+  /**
+   * Two stances, because two is what the eye can tell apart: asleep at the den,
+   * or up and about. A monster on its way home reads as `out`, which is honest
+   * — it is visibly out there — and the rhythm below is where the player learns
+   * that it is leaving.
+   */
+  stance: "dormant" | "out";
+}
+
+export function monsters(sim: Sim): MonsterView[] {
+  return sim.monsters.map(view);
+}
+
+function view(m: Monster): MonsterView {
+  return {
+    id: m.id,
+    kind: m.kind,
+    x: m.x,
+    y: m.y,
+    px: m.px,
+    py: m.py,
+    heading: m.heading,
+    stance: m.phase === MonsterPhase.Rest ? "dormant" : "out",
+  };
+}
+
+/** Which monster the player just clicked, if any — the tile→monster resolution
+ *  beside `buildingAtTile`. */
+export function monsterAtTile(sim: Sim, x: number, y: number): MonsterView | null {
+  const m = monsterAt(sim, x, y);
+  return m ? view(m) : null;
+}
+
+/** Every den on the map, for the mesher to bake. A lair is a landmark, not a
+ *  secret: you can see where a thing lives. */
+export function lairs(sim: Sim): { x: number; y: number }[] {
+  return sim.monsters.map((m) => ({ x: m.lairX, y: m.lairY }));
+}
+
+export function monsterName(kind: number): string {
+  return defOfMonster(kind).name;
+}
+
+/**
+ * How far through its current phase a monster is — **coarse, and off by a
+ * little on purpose**.
+ *
+ * The true timer is bucketed into fifths and shifted by a per-monster error of
+ * up to `RHYTHM_FUZZ`, derived here from the monster's id and the world seed
+ * and stored nowhere: it is a property of what the player can *work out*, not
+ * of the world. So the display is honest about the rhythm — watch a troll and
+ * you learn its hours — and never exact about the minute, which is precisely
+ * what CONCEPT reserves for watchtowers to sell back.
+ *
+ * The output is quantized after the shift, so it is never sharper than a fifth
+ * whatever the error happened to be.
+ */
+export interface Rhythm {
+  phase: "resting" | "prowling" | "homeward";
+  /** 0 .. `buckets` − 1, how much of the phase is spent. */
+  bucket: number;
+  buckets: number;
+}
+
+const RHYTHM_SALT = 0x2545f491;
+
+export function rhythm(sim: Sim, id: number): Rhythm | null {
+  const m = findMonster(sim, id);
+  if (!m) return null;
+  if (m.phase === MonsterPhase.GoingHome) {
+    return { phase: "homeward", bucket: THREAT_BUCKETS - 1, buckets: THREAT_BUCKETS };
+  }
+  const resting = m.phase === MonsterPhase.Rest;
+  const length = Math.max(1, resting ? m.restTicks : m.prowlTicks);
+  const spent = 1 - Math.min(1, Math.max(0, m.phaseTicks / length));
+  const error = (hash(m.id, RHYTHM_SALT, sim.world.seed) - 0.5) * 2 * RHYTHM_FUZZ;
+  const bucket = Math.min(THREAT_BUCKETS - 1, Math.max(0, Math.floor((spent + error) * THREAT_BUCKETS)));
+  return { phase: resting ? "resting" : "prowling", bucket, buckets: THREAT_BUCKETS };
+}
+
+/** What the ribbon's threat meter shows. */
+export interface Threat {
+  /** The monster the meter is tracking, or -1 when nothing is near. */
+  monster: number;
+  kind: number;
+  /** Segments lit, 0 .. `buckets`. Fills toward a waking, drains toward a
+   *  leaving. Empty only on a map with no monsters at all. */
+  lit: number;
+  buckets: number;
+  /**
+   * One quiet line: the kind, and a **coarse verbal time** off the same fuzzed
+   * bucket the bar shows — "troll wakes in a day or two", "orc prowling, gone
+   * within the day". Words rather than digits, because the estimate is a fifth
+   * of a phase wide by design and a minutes-and-seconds readout would spend
+   * 4b's whole product before it exists. Prefixed "far wilds:" when the den
+   * being tracked is beyond `THREAT_RANGE`, which is the meter saying *this is
+   * the wilderness, not your doorstep*. Never an alarm.
+   */
+  caption: string;
+}
+
+/** Nothing to track: no monsters at all, or no colony to anchor on. */
+const QUIET: Threat = { monster: -1, kind: -1, lit: 0, buckets: THREAT_BUCKETS, caption: "wilds quiet" };
+
+/**
+ * The colony's most relevant monster, and how much of its clock is left.
+ *
+ * The pick, in order: one **currently biting the colony's walls**, because
+ * nothing is more relevant than that; else the nearest prowler within
+ * `THREAT_RANGE` of the colony anchor; else the soonest-waking den within that
+ * same range; else **the nearest den on the map, however far**. The anchor is
+ * the centroid of the buildings, or of the colonists while there are no
+ * buildings yet — a colony is where its things are.
+ *
+ * That last rung is what keeps the bar from ever going blank while a monster
+ * exists: "time to monsters" was the whole point, and a colony that has walked
+ * somewhere quiet still wants to know how long quiet lasts. It is deliberately
+ * the **nearest** den rather than the soonest-waking one anywhere — with two
+ * dozen staggered rhythms something is always about to wake, so a
+ * soonest-waking fallback would sit permanently full and mean nothing.
+ *
+ * `held` is the monster the caller was shown last, and it **wins as long as it
+ * is still out**. That is what stops the bar flickering between two clocks
+ * mid-siege. It is passed in rather than remembered here because `know/` reads
+ * the store and never writes it, and which monster a *particular* meter is
+ * watching is a property of that meter, not of the world.
+ */
+export function threat(sim: Sim, held = -1): Threat {
+  if (!sim.monsters.length) return QUIET;
+  const anchor = colonyAnchor(sim);
+  if (!anchor) return QUIET;
+
+  // The hold is a tie-break, not an override. A monster with its teeth in the
+  // colony's walls outranks whatever the meter was watching a frame ago —
+  // otherwise the bar reports some distant prowler's clock through the one
+  // event it exists to report, which is the opposite of not flickering.
+  const fresh = choose(sim, anchor);
+  const keep = held >= 0 ? findMonster(sim, held) : null;
+  const picked =
+    fresh && biting(sim, fresh) ? fresh
+    : keep && keep.phase !== MonsterPhase.Rest ? keep
+    : fresh;
+  if (!picked) return QUIET;
+  const r = rhythm(sim, picked.id);
+  if (!r) return QUIET;
+
+  const name = defOfMonster(picked.kind).name.toLowerCase();
+  // Measured on the *den*, not on where the monster has wandered to: the prefix
+  // says which wilderness this is, and a den is where a wilderness is.
+  const far = lairDistance(picked, anchor) > THREAT_RANGE;
+  const say = (line: string): string => (far ? `far wilds: ${line}` : line);
+
+  if (r.phase === "resting") {
+    // Filling toward a waking: "time to monsters".
+    return {
+      monster: picked.id,
+      kind: picked.kind,
+      lit: r.bucket + 1,
+      buckets: r.buckets,
+      caption: say(`${name} wakes ${when(r, picked.restTicks)}`),
+    };
+  }
+  if (r.phase === "homeward") {
+    return {
+      monster: picked.id,
+      kind: picked.kind,
+      lit: 0,
+      buckets: r.buckets,
+      caption: say(`${name} heading home`),
+    };
+  }
+  // Draining toward a going-home: "time until it's gone".
+  return {
+    monster: picked.id,
+    kind: picked.kind,
+    lit: r.buckets - r.bucket,
+    buckets: r.buckets,
+    caption: say(`${name} prowling, gone ${when(r, picked.prowlTicks)}`),
+  };
+}
+
+/**
+ * How long is left of a phase, in words.
+ *
+ * Built from the **bucketed** estimate rather than the true timer, so the
+ * phrase inherits exactly the fuzz the bar shows and cannot be sharper than it:
+ * a fifth of a phase is the resolution the base game sells, and 4b's towers
+ * narrow that one number without touching anything here. Words rather than
+ * digits for the same reason — a figure invites arithmetic the estimate cannot
+ * support.
+ *
+ * The bands are in game-days because that is the clock the ribbon already keeps
+ * beside it, and a monster's hours run from a quarter of a day to three.
+ */
+function when(r: Rhythm, phaseTicks: number): string {
+  const left = ((r.buckets - r.bucket) / r.buckets) * phaseTicks;
+  const days = left / DAY_TICKS;
+  if (days <= 0.35) return "any moment now";
+  if (days <= 1) return "within the day";
+  if (days <= 2) return "in a day or two";
+  return "in a few days";
+}
+
+/** Chebyshev tiles from the colony anchor to a monster's den. */
+function lairDistance(m: Monster, [ax, ay]: [number, number]): number {
+  return Math.max(Math.abs(m.lairX + 0.5 - ax), Math.abs(m.lairY + 0.5 - ay));
+}
+
+/** Is this monster's teeth in a wall right now? */
+function biting(sim: Sim, m: Monster): boolean {
+  return m.phase === MonsterPhase.Prowl && m.targetTile >= 0 && isDamageable(sim.wallMap[m.targetTile]);
+}
+
+function choose(sim: Sim, anchor: [number, number]): Monster | null {
+  const [ax, ay] = anchor;
+  let chewing: Monster | null = null;
+  let nearest: Monster | null = null;
+  let nearestD = Infinity;
+  let waking: Monster | null = null;
+  let wakingIn = Infinity;
+  let anywhere: Monster | null = null;
+  let anywhereD = Infinity;
+
+  for (const m of sim.monsters) {
+    const lairD = lairDistance(m, anchor);
+    // The last rung, gathered for every monster whatever it is doing: the
+    // nearest den on the map, so the ladder always lands somewhere.
+    if (lairD < anywhereD || (lairD === anywhereD && anywhere !== null && m.id < anywhere.id)) {
+      anywhere = m;
+      anywhereD = lairD;
+    }
+    if (m.phase === MonsterPhase.Rest) {
+      if (lairD <= THREAT_RANGE && m.phaseTicks < wakingIn) {
+        waking = m;
+        wakingIn = m.phaseTicks;
+      }
+      continue;
+    }
+    if (m.phase !== MonsterPhase.Prowl) continue;
+    // Ties break by id everywhere here, so the pick never depends on array
+    // order — which is what makes the meter reproducible in a replay.
+    if (biting(sim, m) && (!chewing || m.id < chewing.id)) chewing = m;
+    const d = Math.max(Math.abs(m.x - ax), Math.abs(m.y - ay));
+    if (d <= THREAT_RANGE && (d < nearestD || (d === nearestD && nearest !== null && m.id < nearest.id))) {
+      nearest = m;
+      nearestD = d;
+    }
+  }
+  return chewing ?? nearest ?? waking ?? anywhere;
+}
+
+/** Where the colony *is*: the centroid of its buildings, or of its folk while
+ *  it has not built anything yet. Null for a colony with neither, which is a
+ *  colony that has been wiped out. */
+function colonyAnchor(sim: Sim): [number, number] | null {
+  if (sim.buildings.length) {
+    let x = 0;
+    let y = 0;
+    for (const b of sim.buildings) {
+      x += b.x + b.w / 2;
+      y += b.y + b.h / 2;
+    }
+    return [x / sim.buildings.length, y / sim.buildings.length];
+  }
+  if (!sim.colonists.length) return null;
+  let x = 0;
+  let y = 0;
+  for (const c of sim.colonists) {
+    x += c.x;
+    y += c.y;
+  }
+  return [x / sim.colonists.length, y / sim.colonists.length];
+}
+
+/**
+ * The wall damage layer and the predicate that turns it into something to
+ * draw. The renderer bakes a segment's wear in thirds, so it reads the tier
+ * rather than the raw number and never compares a wall byte to a state.
+ */
+export function damageLayer(sim: Sim): Uint8Array {
+  return sim.wallDamageMap;
+}
+
+export function graveLayer(sim: Sim): Uint8Array {
+  return sim.graveMap;
+}
+
+export { damageTier, MonsterKind };
+export type { MonsterKindValue } from "../store";

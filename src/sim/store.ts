@@ -1,3 +1,4 @@
+import { spawnLairs } from "./threats/lairs";
 import { STARTING_COLONISTS } from "./tuning";
 import { generate, tileIndex, Terrain, type World } from "./world/world";
 
@@ -81,8 +82,79 @@ export const TaskKind = {
   Mine: 7,
   /** Move one tile one height step toward its stored target. */
   Terraform: 8,
+  /** Work bite damage back out of a standing segment. Labour only. */
+  Repair: 9,
 } as const;
 export type TaskKindValue = (typeof TaskKind)[keyof typeof TaskKind];
+
+/**
+ * The two kinds of monster. **The split is stats-only** — notice range, speed
+ * and bite, all in `sim/threats/` — because CONCEPT records orcs and trolls as
+ * emergent from numbers rather than from kind-specific targeting rules: an orc
+ * is fast enough to catch a fleeing worker, a troll hits hard enough to ruin a
+ * wall, and neither has a rule the other lacks.
+ *
+ * Here beside the other enums, and append-only for the same reason: the number
+ * is written into every save.
+ */
+export const MonsterKind = { Orc: 0, Troll: 1 } as const;
+export type MonsterKindValue = (typeof MonsterKind)[keyof typeof MonsterKind];
+
+/**
+ * A monster's rhythm — the *when* of danger (docs/specs/2026-09-04-monsters.md).
+ *
+ * `Rest` notices nothing, chases nothing and bites nothing; all danger lives in
+ * `Prowl`; `GoingHome` is already harmless, which is what makes CONCEPT's "hold
+ * until it leaves" safe to trust. An attack ends only when the prowl clock
+ * does — nothing the player does drives a monster off.
+ */
+export const MonsterPhase = { Rest: 0, Prowl: 1, GoingHome: 2 } as const;
+export type MonsterPhaseValue = (typeof MonsterPhase)[keyof typeof MonsterPhase];
+
+/**
+ * One monster. Plain store data like everything else, and **everything it will
+ * ever do is seeded at spawn**: the periods, the phase offset and the circuit
+ * are drawn once from a stream derived from the world seed, so the tick loop
+ * needs no runtime randomness at all and a monster keeps learnable hours.
+ */
+export interface Monster {
+  id: number;
+  /** One of `MonsterKind.*`. */
+  kind: number;
+  /** Continuous tile coordinates, as a colonist's are, with the previous
+   *  tick's position beside them for the renderer to interpolate through. */
+  x: number;
+  y: number;
+  px: number;
+  py: number;
+  heading: number;
+  /** Home tile: where it rests, and the one tile of ground that can never
+   *  read as "inside" however much stone surrounds it (see walls/enclosure). */
+  lairX: number;
+  lairY: number;
+  /** Waypoint tile indices, walked in order while prowling. */
+  circuit: number[];
+  /** Index into `circuit`. */
+  leg: number;
+  /** One of `MonsterPhase.*`. */
+  phase: number;
+  /** Ticks left in this phase. Meaningless while `GoingHome`, which ends on
+   *  arrival rather than on a clock. */
+  phaseTicks: number;
+  /** This monster's own seeded period lengths — its hours. */
+  restTicks: number;
+  prowlTicks: number;
+  /** Colonist being chased, or -1. */
+  target: number;
+  /** Wall tile index being bitten, or -1. */
+  targetTile: number;
+  /** Ticks accumulated toward the next bite. */
+  biteTicks: number;
+  /** Stored route and the index of its next tile — the colonist pattern, so a
+   *  monster plans a path when it needs one rather than every tick. */
+  path: number[];
+  step: number;
+}
 
 /** What a colonist is doing with its current task. */
 export const Phase = {
@@ -209,6 +281,12 @@ export interface Sim {
   items: Item[];
   buildings: Building[];
   tasks: Task[];
+  /**
+   * The Wilds' inhabitants. One per lair, placed at generation and never
+   * killed — CONCEPT's avoidance-only law means this array only ever changes
+   * length when a migration runs the lair pass over an old colony.
+   */
+  monsters: Monster[];
   /** 1 where the player has marked a tree for chopping. Player intent, so it
    *  lives beside the world rather than in it. */
   chopMap: Uint8Array;
@@ -231,6 +309,21 @@ export interface Sim {
   /** 1 where the player has marked a wall segment for dismantling — `chopMap`'s
    *  player-intent pattern, applied to walls. */
   razeMap: Uint8Array;
+  /**
+   * Bite damage taken by the segment on each tile — **damage, not hit points**,
+   * so 0 is pristine and a new segment is born clean without anybody writing to
+   * this layer. That also keeps the max-HP numbers (`PALISADE_HP`, `GATE_HP`)
+   * free tunables forever instead of baking a chosen maximum into every save
+   * file. Read through `sim/walls`' `isDamageable` / `wallMaxDamage`.
+   */
+  wallDamageMap: Uint8Array;
+  /**
+   * 1 where a colonist was caught and killed. A marker, never a mechanic:
+   * graves block nothing, building or levelling over one clears it silently,
+   * and a second death on a tile shares the marker (docs/CONCEPT.md — a death
+   * is just the loss, with no mourning systems attached to it).
+   */
+  graveMap: Uint8Array;
   /**
    * 1 where the wall graph encloses the tile: derived from `wallMap` by
    * `sim/walls/enclosure`, and serialized with the store like any other field
@@ -271,6 +364,25 @@ export function findTask(sim: Sim, id: number): Task | null {
   return null;
 }
 
+export function findMonster(sim: Sim, id: number): Monster | null {
+  for (const m of sim.monsters) if (m.id === id) return m;
+  return null;
+}
+
+/**
+ * The monster whose lair stands on this tile, or null.
+ *
+ * A plain field scan over an array of a couple of dozen, and it lives *here*
+ * rather than in `sim/threats/` on purpose: `walls/` and `buildings/` both have
+ * to refuse a lair tile, and either of them importing the threats folder — which
+ * reads the wall predicates — would close a cycle around `WALL_DEFS`, whose
+ * table is built in a module body.
+ */
+export function lairAt(sim: Sim, x: number, y: number): Monster | null {
+  for (const m of sim.monsters) if (m.lairX === x && m.lairY === y) return m;
+  return null;
+}
+
 /**
  * Build the opening colony: a generated world plus STARTING_COLONISTS folk
  * standing in the clearing at its centre.
@@ -289,11 +401,14 @@ export function createSim(seed: number): Sim {
     items: [],
     buildings: [],
     tasks: [],
+    monsters: [],
     chopMap: new Uint8Array(world.size * world.size),
     mineMap: new Uint8Array(world.size * world.size),
     terraformMap: new Uint8Array(world.size * world.size),
     wallMap: new Uint8Array(world.size * world.size),
     razeMap: new Uint8Array(world.size * world.size),
+    wallDamageMap: new Uint8Array(world.size * world.size),
+    graveMap: new Uint8Array(world.size * world.size),
     insideMap: new Uint8Array(world.size * world.size),
     // A wall-less world encloses nothing, so the zeroed layer above is already
     // correct — but the flag makes the first tick settle it anyway rather than
@@ -303,6 +418,12 @@ export function createSim(seed: number): Sim {
     // or not depending purely on which module a bundler happened to load first.
     enclosureDirty: 1,
   };
+
+  // The Wilds get their inhabitants before the colony gets its people, so the
+  // opening is *already* a dangerous world rather than one danger arrives in.
+  // The pass draws from its own seed-derived stream, never `rngState`, which is
+  // what lets the v4 migration reproduce it exactly over an old save.
+  spawnLairs(sim);
 
   const centre = Math.floor(world.size / 2);
   for (const [x, y] of spawnTiles(world, centre, STARTING_COLONISTS)) {

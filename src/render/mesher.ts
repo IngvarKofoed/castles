@@ -2,9 +2,19 @@ import { Color } from "three";
 import { CHUNK } from "../sim/world/chunks";
 import { Terrain, tileIndex, type World } from "../sim/world/world";
 import type { Building } from "../sim/know";
-import { WallState } from "../sim/know";
+import { WallState, damageTier } from "../sim/know";
 import { DESIGNATED_TINT, tileColor } from "./palette";
-import { BH, WallLink, buildingBoxes, propJitter, treeBoxes, wallBoxes, type Box } from "./props";
+import {
+  BH,
+  WallLink,
+  buildingBoxes,
+  graveBoxes,
+  lairBoxes,
+  propJitter,
+  treeBoxes,
+  wallBoxes,
+  type Box,
+} from "./props";
 
 export { BH };
 
@@ -43,6 +53,18 @@ export interface Scene {
    */
   readonly wallMap: Uint8Array;
   readonly razeMap: Uint8Array;
+  /**
+   * Bite damage per tile. Read through `damageTier`, so what the mesh carries
+   * is thirds rather than points — which is what lets the sim dirty a chunk
+   * only when a third is actually crossed.
+   */
+  readonly damageMap: Uint8Array;
+  /** 1 where a colonist was caught. A marker, baked like a tree because it
+   *  never moves and never does anything. */
+  readonly graveMap: Uint8Array;
+  /** Where the monsters live. A den is a landmark you can see, so it bakes
+   *  with the world rather than hiding behind knowledge. */
+  readonly lairs: readonly { x: number; y: number }[];
 }
 
 /**
@@ -183,6 +205,7 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
     for (let x = x0; x < x1; x++) {
       const i = tileIndex(x, y, size);
       if (world.treeMap[i]) treeBoxes(x, y, world.hmap[i], world.seed, boxes, scene.chopMap[i] === 1);
+      if (scene.graveMap[i]) graveBoxes(x, y, world.hmap[i], world.seed, boxes);
       const wall = scene.wallMap[i];
       if (wall === WallState.None) continue;
       const links =
@@ -190,8 +213,25 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
         (walled(x + 1, y) ? WallLink.East : 0) |
         (walled(x, y - 1) ? WallLink.North : 0) |
         (walled(x, y + 1) ? WallLink.South : 0);
-      wallBoxes(x, y, world.hmap[i], world.seed, boxes, wall, links, scene.razeMap[i] === 1);
+      wallBoxes(
+        x,
+        y,
+        world.hmap[i],
+        world.seed,
+        boxes,
+        wall,
+        links,
+        scene.razeMap[i] === 1,
+        damageTier(wall, scene.damageMap[i]),
+      );
     }
+  }
+  // Dens, emitted by the chunk their tile falls in — the buildings rule, for
+  // the same reason: a lair is one prop on one tile and there are two dozen of
+  // them on a whole map, so filtering the list beats indexing 65k tiles.
+  for (const lair of scene.lairs) {
+    if (lair.x < x0 || lair.x >= x1 || lair.y < y0 || lair.y >= y1) continue;
+    lairBoxes(lair.x, lair.y, world.hmap[tileIndex(lair.x, lair.y, size)], world.seed, boxes);
   }
   // A building is emitted whole by the chunk owning its origin tile, so a
   // footprint straddling a seam is never drawn twice or half-drawn. Every

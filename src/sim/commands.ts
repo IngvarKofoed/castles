@@ -4,6 +4,7 @@ import { groundItem } from "./items";
 import { evictFromFootprint, leaveBuilding } from "./labour/colonists";
 import { abandonTask, releaseTask } from "./labour/tasks";
 import { occupancy } from "./path";
+import { clearGrave } from "./threats/graves";
 import {
   BuildingState,
   Loc,
@@ -238,6 +239,8 @@ function placeWalls(sim: Sim, tiles: readonly number[], state: number): void {
     const y = (i - x) / size;
     if (!canPlaceWall(sim, x, y)) continue;
     sim.wallMap[i] = state;
+    // A wall drawn over a grave takes the marker with it, silently.
+    clearGrave(sim, x, y);
     markChunkDirty(sim.world, x, y);
     markEnclosureStale(sim);
   }
@@ -290,7 +293,10 @@ function place(sim: Sim, kind: BuildingKindValue, x: number, y: number): void {
     millProgress: -1,
   };
   sim.buildings.push(b);
-  for (const [tx, ty] of footprint(b)) markChunkDirty(sim.world, tx, ty);
+  for (const [tx, ty] of footprint(b)) {
+    clearGrave(sim, tx, ty);
+    markChunkDirty(sim.world, tx, ty);
+  }
   // The ground is impassable from this moment; anyone standing on it walks off.
   evictFromFootprint(sim, b);
 }

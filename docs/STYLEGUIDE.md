@@ -15,6 +15,12 @@ The game promises calm; the UI must keep it:
 - State changes are quiet text in panels — never toasts, badges, or sounds.
   ("Waiting for logs 0 / 2" is the house voice.)
 - Each color means exactly one thing (below). No pure red anywhere, ever.
+- **Danger is rust, and rust is not an alarm.** When threats arrived, the
+  choice was a fourth color or a wider reading of an existing one; rust
+  widened, from "slots & invalidity" to *the costly things* — a slot worker,
+  a refused placement and an approaching troll are all the same statement:
+  this will cost you. A fourth color would have been a fourth thing to learn,
+  and alarm red is expressly banned. The meter moves; nothing shouts.
 - Panels are moss glass: dark, translucent, hairline borders, 2px corners,
   blur behind. The world is the hero — panels hug the screen edges, the
   centre belongs to the game.
@@ -34,7 +40,7 @@ The game promises calm; the UI must keep it:
 | `gold` | `#dca23c` | **player intent**: active tool, primary action, designation, progress |
 | `gold-deep` | `#8c6a26` | quiet gold (chain arrows) |
 | `sage` | `#8fbf52` | **pool & validity**: pool workers, valid placement, idle count |
-| `rust` | `#b8503a` | **slots & invalidity**: slot workers, invalid placement (text: `#e08a72`) |
+| `rust` | `#b8503a` | **the costly things**: slot workers, invalid placement, danger (text: `#e08a72`) |
 | `timber` | `#a9713f` | log resource icon |
 | `plank` | `#d0b078` | plank resource icon |
 | `rock` | `#8a9096` | rock resource icon (quarried rubble: cool, raw) |
@@ -77,6 +83,47 @@ right edge. Padding `12px 14px 14px`, vertical gap 12px, radius 2px.
   labour meter is one segment per colonist, sage for pool, rust for slots.
 - **Resource icons**: 9px squares rotated 45°, filled with the resource's
   color.
+
+### The threat meter, and the rhythm bar
+
+Two widgets, one recipe, both **five segments of rust in a `line-soft`
+trough**, 2px gaps, 6px tall — the labour meter's anatomy with a fixed
+segment count. Unlit segments are the trough, not a dimmer rust: a meter that
+is never fully off would read as a permanent low alarm.
+
+- **Threat meter** — in the ribbon, after the enclosed count, with a faint
+  caps caption beside it in the resource-label style. It tracks the colony's
+  most relevant monster: while that monster rests the meter **fills** toward
+  its waking (*time to monsters*), while it prowls the meter **drains** toward
+  its going-home (*time until it is gone*).
+
+  **The caption is the kind plus a coarse time in words** — `TROLL WAKES IN A
+  DAY OR TWO`, `ORC PROWLING, GONE WITHIN THE DAY`, `ORC HEADING HOME` —
+  prefixed `FAR WILDS:` when the den being tracked is beyond the meter's own
+  range, which is how the bar says *this is the wilderness, not your
+  doorstep*. **The meter is never blank while a monster exists**: with nothing
+  near, it tracks the nearest den on the map rather than emptying, because
+  *time to monsters* is the thing it is for. `WILDS QUIET` at `ink-faint`, bar
+  empty, is reserved for a map with no monsters at all.
+- **Rhythm bar** — the same five segments inside a monster's inspector panel,
+  showing how far through its current phase that one monster is. This is what
+  "watching a monster's rounds" looks like as a widget.
+
+**Both are coarse on purpose, and neither ever shows a number** — not on the
+bar and not in the caption, which is why the time is a phrase and not a
+figure. CONCEPT's rule is that schedules show *approximately* and precision is
+buildable, so fifths is the resolution the base game sells and a per-monster
+error is baked into the estimate. A minutes-and-seconds readout here would
+spend the watchtower's whole product before it exists, and a digit invites
+arithmetic the estimate cannot support. Fifths is also why there is no
+transition: the bar steps, and a step is not animation. It is also why a long
+phase never reads *any moment now* — a fifth of a three-day rest is well over
+a day, and the estimate honestly does not know.
+
+**No alarm anywhere else.** A monster at the wall produces no banner, no
+toast, no colour change on any other element, and no sound. The meter moving,
+the folk readout shrinking and a grave in the grass are the entire vocabulary
+the game has for this.
 
 ## Centre modal
 
@@ -188,7 +235,11 @@ were measured against real terrain (`2026-09-01-tick-and-labour`):
   The rail is bounded by the viewport and scrolls inside itself rather than
   running off the bottom edge.
 - **Inspector** — right edge, 246px, below the ribbon; a second panel may
-  sit above the bottom edge.
+  sit above the bottom edge. It has **two shapes**: a building, and a
+  monster — display-20px kind as the title, an `ORC` / `TROLL` tag in the
+  rust tag style, a stance row (`resting` / `out`), and the rhythm bar. No
+  action button: there is nothing a player may do to a monster, and an
+  inspector with no button is the honest way to say so.
 
 ## Dialed defaults
 

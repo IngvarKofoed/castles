@@ -22,6 +22,9 @@ function makeWorld(size: number, heights: number[], terrain?: TerrainValue[]): S
     mineMap: new Uint8Array(size * size),
     wallMap: new Uint8Array(size * size),
     razeMap: new Uint8Array(size * size),
+    damageMap: new Uint8Array(size * size),
+    graveMap: new Uint8Array(size * size),
+    lairs: [],
   };
 }
 
@@ -488,6 +491,64 @@ describe("walls bake into the chunk", () => {
       expect(br).toBeGreaterThan(ar);
     }
     expect(changed).toBeGreaterThan(0);
+  });
+});
+
+describe("the threat tier bakes into the chunk", () => {
+  const flat = (size: number): Scene => makeWorld(size, new Array(size * size).fill(3));
+
+  it("puts a den where a monster lives, and only there", () => {
+    const bare = meshChunk(flat(16), 0, 0);
+    const withDen = flat(16);
+    const denned = meshChunk({ ...withDen, lairs: [{ x: 5, y: 5 }] }, 0, 0);
+    expect(denned.positions.length).toBeGreaterThan(bare.positions.length);
+    // The den is a landmark on *its* tile, not a marker spilling across its
+    // neighbours: nothing it adds stands up more than a hair outside the tile.
+    // A hair rather than nothing, because a bone lying at the mound's corner
+    // overhangs the edge by a few hundredths — as a tree's canopy does.
+    const spill = 0.1;
+    for (const v of verticesWhere(
+      denned,
+      (px, _py, pz) => px < 5 - spill || px > 6 + spill || pz < 5 - spill || pz > 6 + spill,
+    )) {
+      expect(denned.positions[v * 3 + 1]).toBeLessThanOrEqual(3 * BH + 1e-6);
+    }
+    // And it belongs to the chunk holding its tile, like a building does.
+    expect(meshChunk({ ...withDen, lairs: [{ x: 20, y: 5 }] }, 0, 0).positions).toEqual(bare.positions);
+  });
+
+  it("puts a grave where somebody died", () => {
+    const bare = meshChunk(flat(16), 0, 0);
+    const buried = flat(16);
+    buried.graveMap[7 * 16 + 7] = 1;
+    expect(meshChunk(buried, 0, 0).positions.length).toBeGreaterThan(bare.positions.length);
+  });
+
+  it("darkens a bitten segment by thirds, and takes its top rail off at the last", () => {
+    // The two halves of "ragged", measured rather than eyeballed: the colour
+    // goes down monotonically, and the silhouette actually loses a member.
+    const at = (damage: number): ChunkGeometry => {
+      const s = flat(16);
+      s.wallMap[5 * 16 + 5] = WallState.Palisade;
+      s.damageMap[5 * 16 + 5] = damage;
+      return meshChunk(s, 0, 0);
+    };
+    const sound = at(0);
+    const worn = at(20); // half of PALISADE_HP: past a third, short of two
+    const wrecked = at(36); // past two thirds
+
+    // Same geometry at the first crossing, darker timber.
+    expect(worn.positions).toEqual(sound.positions);
+    let dimmer = 0;
+    for (let v = 0; v < sound.colors.length; v++) {
+      if (worn.colors[v] === sound.colors[v]) continue;
+      expect(worn.colors[v]).toBeLessThan(sound.colors[v]);
+      dimmer++;
+    }
+    expect(dimmer).toBeGreaterThan(0);
+
+    // At the last third a rail is gone, so the shape itself says so.
+    expect(wrecked.positions.length).toBeLessThan(sound.positions.length);
   });
 });
 

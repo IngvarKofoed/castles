@@ -86,12 +86,17 @@ export const WALL_ITEM_COST = 1;
 
 /**
  * The one fixed global order a pool worker works down: **build > build-wall >
- * haul-to-site > haul-to-input > chop > mine > raze > terraform >
+ * repair > haul-to-site > haul-to-input > chop > mine > raze > terraform >
  * haul-to-store.** Buildings first because they are rarer and dearer; walls
  * ahead of general hauling so a drawn line visibly gets worked; mining beside
  * chopping, since both are raw material flowing in; raze below both so tearing
  * down never starves building up; terraforming is ground-keeping and outranks
  * only the tidying.
+ *
+ * **Repair sits directly after build-wall**, which is the whole of its
+ * placement argument: a breach outranks hauling and chopping — the counterplay
+ * to a monster is people, and it has to actually get people — but never an
+ * active build that may be one segment from closing a ring.
  *
  * The numbers are `TaskKind` values written out, because this file may not
  * import that enum as a value (see the header). They are type-checked against
@@ -102,6 +107,7 @@ export const WALL_ITEM_COST = 1;
 export const TASK_PRIORITY: readonly TaskKindValue[] = [
   0, // Build
   5, // BuildWall
+  9, // Repair
   1, // HaulToSite
   2, // HaulToInput
   3, // Chop
@@ -129,3 +135,117 @@ export const WORKSHOP_OUTPUT_CAP = 2;
 /** Tiles around the map centre generation keeps clear of trees, so the
  * opening view is buildable and the starting folk have room. */
 export const SPAWN_CLEAR_RADIUS = 8;
+
+// ------------------------------------------------------------------ threats
+//
+// The Wilds' numbers (docs/specs/2026-09-04-monsters.md). Two rules shape all
+// of them: danger is a *when* as much as a *where* — a monster is only ever
+// dangerous while prowling — and the orc/troll split is stats alone, so
+// everything below comes in pairs rather than in kind-specific behaviour.
+
+/**
+ * How dense the wilds are. The lair pass places ~`LAIR_TARGET` dens on the
+ * default map, no nearer to each other than `LAIR_SPACING`, with the chance of
+ * any one tile taking a lair rising by radius — **there is no protected radius
+ * around the start** (a deliberate call: the gradient is the only mercy, and a
+ * rare hard start is part of the game). `LAIR_CLEAR_RADIUS` excludes the spawn
+ * clearing itself, which is spawn sanity rather than safety.
+ */
+export const LAIR_TARGET = 25;
+export const LAIR_SPACING = 10;
+export const LAIR_CLEAR_RADIUS = 10;
+/** How much of a centre tile's chance survives the radial gradient. Not zero:
+ *  "rare but possible" is the promise, and zero would make it impossible. */
+export const LAIR_INNER_WEIGHT = 0.05;
+/** Weighted draws the pass may spend reaching `LAIR_TARGET`. Bounded so the
+ *  pass always terminates, generously enough that spacing rejections near the
+ *  outer band never cost the map its lairs. */
+export const LAIR_ATTEMPTS = LAIR_TARGET * 12;
+/** Chance a lair's monster is a troll, inside and outside the outer third.
+ *  Orcs anywhere; trolls weighted outward, so the deep map hits harder. */
+export const TROLL_CHANCE_INNER = 0.15;
+export const TROLL_CHANCE_OUTER = 0.6;
+/** Where the "outer band" starts, as a fraction of the island's half-width.
+ *  Trolls and the prowl-share multiplier both key off it. */
+export const OUTER_BAND = 2 / 3;
+
+/**
+ * A monster's hours. `restTicks` is drawn from two game-days ± `PERIOD_SPREAD`,
+ * `prowlTicks` from half a day ± the same — per monster, at spawn, so no two
+ * lairs tick in unison and each one's window is learnable on its own. The
+ * outward gradient multiplies the prowl share: a monster at the island's edge
+ * prowls up to twice as long as one near the middle.
+ */
+export const REST_BASE = 2 * DAY_TICKS;
+export const PROWL_BASE = DAY_TICKS / 2;
+export const PERIOD_SPREAD = 0.5;
+
+/** Waypoints a prowl circuit visits, and how far from the lair they may sit. */
+export const CIRCUIT_WAYPOINTS = 4;
+export const ROAM_RADIUS = 12;
+/** Draws a single waypoint may spend looking for standable ground before it
+ *  falls back to the lair tile. Bounded, so the pass cannot hang on a den
+ *  ringed by water. */
+export const WAYPOINT_TRIES = 6;
+
+/**
+ * How far a prowling monster notices, in tiles, Chebyshev. An acquired target
+ * then **holds** until it is broken — the wall dies, the colonist reaches
+ * inside ground or passes `NOTICE_BREAK` × the range, or the prowl clock ends.
+ * No per-tick nearest-swapping: a chasing orc does not abandon its victim for a
+ * closer fence post.
+ */
+export const ORC_NOTICE = 8;
+export const TROLL_NOTICE = 6;
+export const NOTICE_BREAK = 1.5;
+
+/** Orcs are fast enough to catch a fleeing worker; trolls are not, and never
+ *  needed to be — they are the threat to the *race*, not to the crew. */
+export const ORC_SPEED = 1.3 * WALK_TILES_PER_TICK;
+export const TROLL_SPEED = 0.5 * WALK_TILES_PER_TICK;
+
+/**
+ * The bite: an orc takes `ORC_BITE` off a segment every second, a troll
+ * `TROLL_BITE` every two. Against `PALISADE_HP` that is ~40 s of orc contact or
+ * ~20 s of troll — long enough for a repairer working the inside face to
+ * outlast a prowl, short enough that an unclosed push cannot be held.
+ */
+export const ORC_BITE = 1;
+export const ORC_BITE_TICKS = 1 * TICK_HZ;
+export const TROLL_BITE = 4;
+export const TROLL_BITE_TICKS = 2 * TICK_HZ;
+
+/** What a segment can take before it falls. Damageable states only: finished
+ *  stone cannot be touched at all, and a blueprint is sticks — one bite. */
+export const PALISADE_HP = 40;
+export const GATE_HP = 60;
+
+/** Repair: pool labour and **no materials at all** (docs/CONCEPT.md — the
+ *  counterplay to a monster is people, and charging logs would double-price a
+ *  breach). Applied as whole points on a cadence, so the layer stays integral. */
+export const REPAIR_HP_PER_SECOND = 4;
+
+/**
+ * How near a monster has to be for a colonist on unsafe ground to drop
+ * everything and run, and how deep the escape search looks for inside ground.
+ * Bounded because the search is per fleeing colonist per repath, and because a
+ * colonist forty tiles from any wall is not being saved by a longer look.
+ */
+export const FLEE_RANGE = 6;
+export const FLEE_DEPTH = 48;
+
+/** Catching means adjacent: same tile or a neighbouring one, Chebyshev. */
+export const CATCH_RANGE = 1;
+
+/**
+ * The threat meter. It tracks the colony's most relevant monster within
+ * `THREAT_RANGE` of the colony anchor, and shows it in `THREAT_BUCKETS`
+ * segments — coarse on purpose. `RHYTHM_FUZZ` is the per-monster seeded error
+ * on every rhythm estimate the player is shown: CONCEPT's rule is that
+ * schedules show *approximately* and precision is buildable, so the base game
+ * is honest about the rhythm and never exact about the minute. Watchtowers
+ * narrow this and nothing else (4b).
+ */
+export const THREAT_RANGE = 40;
+export const THREAT_BUCKETS = 5;
+export const RHYTHM_FUZZ = 0.1;

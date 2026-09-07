@@ -90,11 +90,31 @@ const NEIGHBOURS: readonly (readonly [number, number])[] = [
 ];
 
 /**
+ * Whether a walker may step onto (x, y) from a tile at height `fromH`.
+ *
+ * Colonists use `canStepTo` and need no gate at all; monsters pass one, because
+ * their only movement difference is that a standing gateway stops them
+ * (`sim/threats`). Keeping it a parameter rather than a flag means `path.ts`
+ * knows nothing about threats — the rule travels with the caller that has it.
+ */
+export type StepGate = (x: number, y: number, fromH: number) => boolean;
+
+/**
  * Shortest route from (sx, sy) to any tile in `goals`, as tile indices
  * excluding the start. Returns null when nothing is reachable, and an empty
  * array when the start already satisfies the goal.
+ *
+ * `gate` defaults to the colonist rule, and is branched on rather than
+ * defaulted into a closure so the common call allocates nothing.
  */
-export function findPath(sim: Sim, occ: Occupancy, sx: number, sy: number, goals: Set<number>): number[] | null {
+export function findPath(
+  sim: Sim,
+  occ: Occupancy,
+  sx: number,
+  sy: number,
+  goals: Set<number>,
+  gate?: StepGate,
+): number[] | null {
   const world = sim.world;
   const size = world.size;
   const start = tileIndex(sx, sy, size);
@@ -136,7 +156,7 @@ export function findPath(sim: Sim, occ: Occupancy, sx: number, sy: number, goals
     for (const [dx, dy] of NEIGHBOURS) {
       const nx = cx + dx;
       const ny = cy + dy;
-      if (!canStepTo(world, sim.wallMap, occ, nx, ny, ch)) continue;
+      if (gate ? !gate(nx, ny, ch) : !canStepTo(world, sim.wallMap, occ, nx, ny, ch)) continue;
       const n = tileIndex(nx, ny, size);
       const tentative = cg + 1;
       const known = gScore.get(n);
@@ -196,6 +216,59 @@ export function escapePath(sim: Sim, occ: Occupancy, sx: number, sy: number): nu
         // step-reachable from anywhere. Getting clear beats getting clear
         // gracefully.
         if (passable(world, sim.wallMap, occ, nx, ny)) return rebuild(cameFrom, n);
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+/**
+ * Route to the **nearest** tile satisfying `accept`, breadth-first and bounded
+ * to `maxDepth` steps.
+ *
+ * This exists because A\* cannot answer this question cheaply: `findPath` takes
+ * an explicit goal *set* and its heuristic is a scan over it, so asking it for
+ * "the nearest inside tile" would mean handing it thousands of tiles and paying
+ * for every one of them at every node expanded. A colonist fleeing a prowler
+ * asks exactly that question, every repath (docs/specs/2026-09-04-monsters.md).
+ *
+ * Same step rule as `findPath`, so a fleeing colonist cannot scale a cliff any
+ * more than a working one can; neighbours are visited in a fixed order, so the
+ * tile chosen among equals is always the same one.
+ */
+export function nearestPath(
+  sim: Sim,
+  occ: Occupancy,
+  sx: number,
+  sy: number,
+  accept: (i: number) => boolean,
+  maxDepth: number,
+): number[] | null {
+  const world = sim.world;
+  const size = world.size;
+  const start = tileIndex(sx, sy, size);
+  if (accept(start)) return [];
+
+  const seen = new Set<number>([start]);
+  const cameFrom = new Map<number, number>();
+  let frontier = [start];
+  for (let depth = 0; depth < maxDepth && frontier.length; depth++) {
+    const next: number[] = [];
+    for (const cur of frontier) {
+      const cx = cur % size;
+      const cy = (cur - cx) / size;
+      const ch = world.hmap[cur];
+      for (const [dx, dy] of NEIGHBOURS) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (!canStepTo(world, sim.wallMap, occ, nx, ny, ch)) continue;
+        const n = tileIndex(nx, ny, size);
+        if (seen.has(n)) continue;
+        seen.add(n);
+        cameFrom.set(n, cur);
+        if (accept(n)) return rebuild(cameFrom, n);
         next.push(n);
       }
     }
