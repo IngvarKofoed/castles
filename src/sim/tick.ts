@@ -2,6 +2,7 @@ import { applyCommands, type Command } from "./commands";
 import { stepWorkshops } from "./economy/workshop";
 import { stepColonists } from "./labour/colonists";
 import { generateTasks } from "./labour/tasks";
+import { stepSettlers } from "./settlers";
 import type { Sim } from "./store";
 import { stepMonsters } from "./threats/monsters";
 import { settleEnclosure } from "./walls/enclosure";
@@ -24,9 +25,15 @@ import { settleEnclosure } from "./walls/enclosure";
  *    they got to; and a colonist's flee decision always reads the monster
  *    positions the previous tick ended with, so neither side ever moves twice
  *    against the other. A stale read is not the same as an unfair one.
- * 5. **Workshops.** Production runs after its workers have moved, so a log
+ * 5. **Settlers.** The arrival loop's bookkeeping — the countdown, a spawn on
+ *    the beach, a wanderer settling, a wanderer giving up. After monsters on
+ *    purpose: a wanderer caught on the tick they would have arrived dies
+ *    rather than settling, which is the same post-move rule a catch already
+ *    obeys. Before workshops, so a settler joins the pool on the tick they
+ *    arrive rather than a tick late.
+ * 6. **Workshops.** Production runs after its workers have moved, so a log
  *    delivered this tick can start milling this tick.
- * 6. **Enclosure.** Last, and only if something moved the wall graph this
+ * 7. **Enclosure.** Last, and only if something moved the wall graph this
  *    tick — a placement, a segment finished, a segment torn down, **a segment
  *    bitten to pieces**. Batching it here means however many segments changed
  *    cost one flood-fill, and a quiet tick costs none; every tick boundary
@@ -42,6 +49,7 @@ export function advanceTick(sim: Sim, commands: readonly Command[] = []): void {
   generateTasks(sim);
   stepColonists(sim);
   stepMonsters(sim);
+  stepSettlers(sim);
   stepWorkshops(sim);
   settleEnclosure(sim);
 }

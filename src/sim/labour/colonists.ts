@@ -1,4 +1,4 @@
-import { buildingAt, defOf, footprint, workTile } from "../buildings";
+import { besideFootprint, buildingAt, defOf, footprint, storedCount, workTile } from "../buildings";
 import {
   carryItem,
   dropTile,
@@ -11,6 +11,7 @@ import {
 } from "../items";
 import { canMine, erodesTo, keepsTerraforming, setHeight } from "../ground";
 import {
+  ISLAND_WIDE,
   adjacentToBuilding,
   adjacentToTile,
   canStepTo,
@@ -48,6 +49,7 @@ import {
   MINE_TICKS,
   RAZE_TICKS,
   REPAIR_HP_PER_SECOND,
+  TASK_COOLDOWN_TICKS,
   TASK_PRIORITY,
   TERRAFORM_TICKS,
   TICK_HZ,
@@ -90,7 +92,11 @@ export function stepColonists(sim: Sim): void {
       flee(sim, occ, c, monster);
       continue;
     }
-    if (c.slot >= 0) stepSlotWorker(sim, occ, c);
+    // A wanderer is checked before the pool/slot split, because they are
+    // neither: they walk to the House that invited them and claim nothing on
+    // the way (docs/specs/2026-09-07-housing-wanderers.md).
+    if (c.dest >= 0) stepWanderer(sim, occ, c);
+    else if (c.slot >= 0) stepSlotWorker(sim, occ, c);
     else stepPoolWorker(sim, occ, c);
   }
 }
@@ -170,14 +176,74 @@ function stepSlotWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
  * This only decides when to step *inside*; production gates on `inside`, so a
  * worker who can never reach the station never starts work — same outcome as
  * before, one field instead of a distance test.
+ *
+ * Exported because a wanderer arrives by exactly this rule
+ * (`sim/settlers.ts`), and for the same reason: a House has no work tile at
+ * all, so "beside the footprint" is the only arrival test that can be asked of
+ * it. The route-exhausted check is part of the rule — somebody merely *passing*
+ * a building has not arrived at it.
  */
-function atStation(c: Colonist, b: { x: number; y: number; w: number; h: number }): boolean {
+export function atStation(c: Colonist, b: { x: number; y: number; w: number; h: number }): boolean {
   if (c.path.length > c.step) return false;
-  const cx = Math.floor(c.x);
-  const cy = Math.floor(c.y);
-  const dx = Math.max(b.x - cx, 0, cx - (b.x + b.w - 1));
-  const dy = Math.max(b.y - cy, 0, cy - (b.y + b.h - 1));
-  return Math.max(dx, dy) === 1;
+  return besideFootprint(b, Math.floor(c.x), Math.floor(c.y));
+}
+
+/**
+ * A wanderer's tick: walk toward the House that invited you, and nothing else.
+ *
+ * They never claim a task — priorities are for the pool, and a wanderer is not
+ * in it until they settle — and they never enter a building. Everything
+ * dangerous about the walk is inherited rather than written here: the flee
+ * check in `stepColonists` runs first, so a prowler sends them running like
+ * anyone on open ground, and a fleeing wanderer heading for enclosed ground may
+ * lead its orc to the gate approach. That is emergent, consistent with how a
+ * hauler behaves, and intended.
+ *
+ * Arriving and giving up are both `sim/settlers.ts`' business; this function
+ * only reports the one fact it is in a position to know — whether a route to
+ * the destination could be found — by zeroing `patience` whenever one is and
+ * counting it up when one is not. Nothing else writes that field, so a flee, an
+ * eviction or a walk simply leaves the clock where it stood: a wanderer can
+ * only ever time out for the reason the clock is named after. Its wrap doubles
+ * as the repath cadence — one A\* every `TASK_COOLDOWN_TICKS` while stuck,
+ * which is the claim cooldown's rhythm rather than a search per tick for two
+ * game-days.
+ */
+function stepWanderer(sim: Sim, occ: Occupancy, c: Colonist): void {
+  if (c.path.length > c.step) {
+    walk(sim, occ, c);
+    return;
+  }
+  const home = findBuilding(sim, c.dest);
+  const open = home !== null && home.state === BuildingState.Active;
+  // Standing beside it already: the settle happens after monsters have moved,
+  // so there is nothing to do here but stop walking.
+  if (open && atStation(c, home)) return;
+  if (open && c.patience % TASK_COOLDOWN_TICKS === 0) {
+    // `ISLAND_WIDE` rather than the default ceiling: this is the one walk in
+    // the game that crosses the map, and the default gave up mid-island on a
+    // route that existed (see `path.ts`).
+    const path = findPath(
+      sim,
+      occ,
+      Math.floor(c.x),
+      Math.floor(c.y),
+      adjacentToBuilding(sim, occ, home),
+      undefined,
+      ISLAND_WIDE,
+    );
+    if (path) {
+      c.path = path;
+      c.step = 0;
+      c.patience = 0;
+      if (path.length) walk(sim, occ, c);
+      return;
+    }
+  }
+  // Stuck: sealed out by a wall with no gate, landed on a shore no path leaves,
+  // or the destination gone. They wait where they are and the patience clock
+  // runs (`sim/settlers.ts` is what eventually sends them home).
+  c.patience++;
 }
 
 /**
@@ -751,10 +817,12 @@ function actHaul(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   storeItem(item, dest.id);
   c.carrying = -1;
   if (dest.state === BuildingState.Blueprint) {
-    const delivered = sim.items.filter(
-      (it) => it.loc === Loc.Stored && it.holder === dest.id && it.type === ItemType.Log,
-    ).length;
-    if (delivered >= defOf(dest).cost) {
+    // Counted in the material the *def* names: a House fed four planks has to
+    // flip to `Building` exactly as a sawmill fed four logs does, and counting
+    // logs here would leave one standing as a blueprint forever with its
+    // planks stacked inside it.
+    const def = defOf(dest);
+    if (storedCount(sim, dest.id, def.costType) >= def.cost) {
       dest.state = BuildingState.Building;
       for (const [x, y] of footprint(dest)) markChunkDirty(sim.world, x, y);
     }

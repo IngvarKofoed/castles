@@ -392,7 +392,11 @@ export class MoverRenderer {
       const base = this.groundY(x, y);
       put(this.solids, x, base + BODY.y, y, BODY.w, BODY.h, BODY.w, c.heading, CLOTH[c.id % CLOTH.length]);
       put(this.solids, x, base + HEAD.y, y, HEAD.w, HEAD.h, HEAD.w, c.heading, PROP.linen);
-      if (c.carrying >= 0) {
+      // The same box says "carrying something" and "walking in from the
+      // coast": a wanderer has a pack, and a traveller with a bundle on their
+      // shoulder is the whole of what marks them out. No new model, and
+      // nothing in a HUD colour — an arrival is a thing in the world.
+      if (c.carrying >= 0 || c.dest >= 0) {
         put(this.solids, x, base + CARRY.y, y, CARRY.w, CARRY.h, CARRY.w, c.heading, PROP.crate);
       }
     }

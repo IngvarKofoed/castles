@@ -5,7 +5,6 @@ import { occupancy, type Occupancy } from "../path";
 import {
   BuildingKind,
   BuildingState,
-  ItemType,
   Loc,
   mintId,
   TaskKind,
@@ -149,15 +148,22 @@ function generateBuild(sim: Sim): void {
   }
 }
 
-/** A blueprint short of logs wants one haul task per missing, unreserved unit. */
+/**
+ * A blueprint short of its materials wants one haul task per missing,
+ * unreserved unit — of **the material its def names**, which is planks for a
+ * House and logs for everything else. Sourced exactly as a workshop's input
+ * is, so a plank reaches a building site from a stockpile or off the ground
+ * with no second rule.
+ */
 function generateHaulToSite(sim: Sim): void {
   for (const b of sim.buildings) {
     if (b.state !== BuildingState.Blueprint) continue;
-    let missing = defOf(b).cost - storedCount(sim, b.id, ItemType.Log) - b.reservedIncoming;
+    const def = defOf(b);
+    let missing = def.cost - storedCount(sim, b.id, def.costType) - b.reservedIncoming;
     while (missing > 0) {
-      const log = nearestFreeItem(sim, ItemType.Log, b.x, b.y, sourceForSite);
-      if (!log) break;
-      addTask(sim, TaskKind.HaulToSite, log, b);
+      const stuff = nearestFreeItem(sim, def.costType, b.x, b.y, sourceForSite);
+      if (!stuff) break;
+      addTask(sim, TaskKind.HaulToSite, stuff, b);
       missing--;
     }
   }

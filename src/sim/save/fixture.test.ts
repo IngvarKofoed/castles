@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { applyCommands } from "../commands";
 import { hashSim } from "../hash";
-import { BuildingKind, ItemType, TaskKind, type Sim } from "../store";
+import { populationCap, settled } from "../settlers";
+import { testBuilding } from "../test-sim";
+import { BuildingKind, BuildingState, ItemType, TaskKind, type Sim } from "../store";
 import { advanceTick } from "../tick";
 import { WallState, canPlaceWall, isStoneWall } from "../walls";
 import { tileIndex } from "../world/world";
@@ -11,15 +13,21 @@ import {
   FIXTURE_SEED,
   FIXTURE_SEED_V3,
   FIXTURE_SEED_V4,
+  FIXTURE_SEED_V5,
+  FIXTURE_SEED_V6,
   V1_TICKS,
   V2_TICKS,
   V3_TICKS,
   V4_TICKS,
+  V5_TICKS,
+  V6_TICKS,
   replay,
   v1Script,
   v2Script,
   v3Script,
   v4Script,
+  v5Script,
+  v6Script,
 } from "./fixtures/recipe";
 
 /**
@@ -52,6 +60,14 @@ import {
  *   palisade still carrying its bite damage with a live repair task queued
  *   against it. On the encounter seed, because the default seed's wilds are
  *   forty tiles out and would never reach a fixture's colony.
+ * - **v5**, written 2026-09-07 for housing: a House built out of planks, and a
+ *   **wanderer in transit** — a colonist with a destination, a hundred-tile
+ *   route in flight, and the arrival clock parked behind them. Both are states
+ *   the format had never held.
+ * - **v6**, written 2026-09-07 for the patience un-pun: the same colony a
+ *   thousand ticks later, holding all three ways an arrival can end at once — a
+ *   settler who came by sea, the grave of the one after them, and a third
+ *   mid-walk with a route half-consumed.
  *
  * None is an empty world: an empty store would round-trip past almost every
  * mistake this file exists to catch.
@@ -69,6 +85,8 @@ const V1 = new URL("./fixtures/v1.castles", import.meta.url);
 const V2 = new URL("./fixtures/v2.castles", import.meta.url);
 const V3 = new URL("./fixtures/v3.castles", import.meta.url);
 const V4 = new URL("./fixtures/v4.castles", import.meta.url);
+const V5 = new URL("./fixtures/v5.castles", import.meta.url);
+const V6 = new URL("./fixtures/v6.castles", import.meta.url);
 
 type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
 
@@ -126,8 +144,17 @@ describe("the committed v1 save", () => {
     // regenerated from the save's *seed* — not the played-on layers the file
     // carries, which would give a migrated colony a different wilderness than a
     // fresh game (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
+    //
+    // c1b9ffd1 → ea10914f at SAVE_VERSION 5: the 4 → 5 rung stamps `dest = -1`
+    // on to every colonist and gives the store its arrival clock
+    // (docs/changelog/2026-09-07-housing-and-wanderers.md). A v1 save now walks
+    // four rungs to get here.
+    //
+    // ea10914f → ab0c5574 at SAVE_VERSION 6: the 5 → 6 rung gives every
+    // colonist a `patience` field of its own, so the wanderer's give-up clock
+    // stops borrowing `work`.
     const sim = await decode(readFileSync(V1));
-    expect(hashSim(sim)).toBe("c1b9ffd1");
+    expect(hashSim(sim)).toBe("ab0c5574");
     // A v1 colony wakes up in a wilderness rather than in an empty world.
     expect(sim.monsters.length).toBeGreaterThan(0);
     // The half of that rung nothing else would catch: a pre-v3 stockpile that
@@ -211,8 +238,11 @@ describe("the committed v2 save", () => {
     // SAVE_VERSION 4, for the 3 → 4 rung that gives an old colony its wilds —
     // drawn from a world regenerated from the save's seed, not from the played
     // one, which is what keeps that wilderness equal to a fresh game's.
+    // Then 41f2beab → e0a0ad53 at SAVE_VERSION 5, for the 4 → 5 rung the v1
+    // pin above records: `dest` on every colonist, and the arrival clock. Then
+    // e0a0ad53 → 83891a24 at SAVE_VERSION 6 for the `patience` rung.
     const sim = await decode(readFileSync(V2));
-    expect(hashSim(sim)).toBe("41f2beab");
+    expect(hashSim(sim)).toBe("83891a24");
     for (const b of sim.buildings) {
       expect(b.acceptRock).toBe(1);
       expect(b.acceptBlock).toBe(1);
@@ -259,8 +289,10 @@ describe("the committed v3 save", () => {
     // the save's own world**, so a v3 colony wakes up in a wilderness rather
     // than in an empty one (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
     // The file is untouched and stays so.
+    // 7dcf3387 → 9935f38b at SAVE_VERSION 5, for the same 4 → 5 rung, and
+    // 9935f38b → 8c8cb6fc at 6 for the `patience` one.
     const sim = await decode(readFileSync(V3));
-    expect(hashSim(sim)).toBe("7dcf3387");
+    expect(hashSim(sim)).toBe("8c8cb6fc");
     // The half of that rung nothing else would catch: a migrated colony that
     // came through with an empty `monsters` array would be a save of a game
     // that has no threats in it at all, and nothing would ever say so.
@@ -311,9 +343,44 @@ describe("the committed v4 save", () => {
     expect(sim.colonists).toHaveLength(5);
   });
 
-  it("decodes to the exact store it was written from", async () => {
+  it("decodes to the store the v5 migration turns it into", async () => {
+    // c32c98b0 → 80b2f86e at SAVE_VERSION 5: the 4 → 5 rung adds `dest` to
+    // every colonist and `wandererTimer` to the store
+    // (docs/changelog/2026-09-07-housing-and-wanderers.md). The file is
+    // untouched and stays so.
+    // Then 80b2f86e → aee29fc7 at SAVE_VERSION 6, for the rung that gives the
+    // give-up clock its own field.
     const sim = await decode(readFileSync(V4));
-    expect(hashSim(sim)).toBe("c32c98b0");
+    expect(hashSim(sim)).toBe("aee29fc7");
+    // The half of that rung nothing else would catch: a colonist that came
+    // through without `dest` would be a store carrying `undefined`, which the
+    // plain-data rule forbids and no other test looks for.
+    for (const c of sim.colonists) expect(c.dest).toBe(-1);
+    expect(sim.wandererTimer).toBeGreaterThan(0);
+  });
+
+  it("takes arrivals the moment it has a House, and none before", async () => {
+    // The Outcome the 4 → 5 rung owes an old colony: it plays unchanged, and
+    // its first House starts the inflow. Before one stands the cap is the
+    // starting five and the clock does not run at all.
+    const sim = await decode(readFileSync(V4));
+    expect(populationCap(sim)).toBe(5);
+    const before = sim.wandererTimer;
+    for (let t = 0; t < 400; t++) advanceTick(sim);
+    expect(sim.colonists.some((c) => c.dest >= 0)).toBe(false);
+    expect(sim.wandererTimer).toBe(before);
+
+    // A House dropped in finished — the build itself is pinned by
+    // `settlers.test.ts`; what is being asked here is whether a *migrated*
+    // store opens the gate.
+    sim.buildings.push(testBuilding({ id: sim.nextId++, kind: BuildingKind.House, x: 120, y: 120 }));
+    expect(populationCap(sim)).toBe(7);
+    let arrived = false;
+    for (let t = 0; t < 600 && !arrived; t++) {
+      advanceTick(sim);
+      arrived = sim.colonists.some((c) => c.dest >= 0);
+    }
+    expect(arrived).toBe(true);
   });
 
   it("keeps running from where it was saved, and the siege resolves", async () => {
@@ -326,6 +393,103 @@ describe("the committed v4 save", () => {
     // the wounded segment is mended or gone, not frozen where the save left it.
     expect(sim.monsters.some((m) => m.phaseTicks !== m.restTicks && m.phaseTicks !== m.prowlTicks)).toBe(true);
     expect(sim.wallDamageMap[wounded]).not.toBe(was);
+  });
+});
+
+describe("the committed v5 save", () => {
+  it("still loads, with a House standing and somebody walking in", async () => {
+    const sim = await decode(readFileSync(V5));
+    expect(sim.tick).toBe(V5_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED_V5);
+
+    // A House, built from planks by a mill this colony staffed itself.
+    const house = sim.buildings.find((b) => b.kind === BuildingKind.House);
+    expect(house?.state).toBe(BuildingState.Active);
+    expect(sim.buildings.some((b) => b.kind === BuildingKind.Sawmill && b.worker >= 0)).toBe(true);
+    expect(populationCap(sim)).toBe(7);
+
+    // And somebody on the road, with the route and the clock a save could most
+    // plausibly lose: `dest` naming the House, a long path mid-walk, and
+    // `wandererTimer` at -1 because the interval is spent.
+    const walking = sim.colonists.filter((c) => c.dest >= 0);
+    expect(walking).toHaveLength(1);
+    expect(walking[0].dest).toBe(house?.id);
+    expect(walking[0].path.length - walking[0].step).toBeGreaterThan(50);
+    expect(walking[0].task).toBe(-1);
+    expect(sim.wandererTimer).toBe(-1);
+    // They are not a pair of hands yet, which the readout has to agree with.
+    expect(settled(sim)).toBe(5);
+  });
+
+  it("decodes to the store the v6 migration turns it into", async () => {
+    // 9ce13a24 → 1aba9400 at SAVE_VERSION 6: the 5 → 6 rung moves the
+    // wanderer's give-up clock off `work` and onto a `patience` field of its
+    // own (docs/changelog/2026-09-07-housing-and-wanderers.md). The file is
+    // untouched and stays so — it is the only fixture written by a codec that
+    // had `dest` but not `patience`, which is exactly what makes it worth
+    // keeping.
+    const sim = await decode(readFileSync(V5));
+    expect(hashSim(sim)).toBe("1aba9400");
+    for (const c of sim.colonists) expect(c.patience).toBe(0);
+    // The wanderer it was caught carrying is still walking, clock and all.
+    expect(sim.colonists.filter((c) => c.dest >= 0)).toHaveLength(1);
+  });
+
+  it("keeps running from where it was saved, and the walk finishes", async () => {
+    const sim = await decode(readFileSync(V5));
+    const walking = sim.colonists.find((c) => c.dest >= 0);
+    for (let t = 0; t < 1000; t++) advanceTick(sim);
+    expect(sim.tick).toBe(V5_TICKS + 1000);
+    // The route was walked to its end and they settled: the load is genuinely
+    // live, not merely readable, and a reloaded wanderer keeps their errand.
+    expect(walking?.dest).toBe(-1);
+    expect(settled(sim)).toBe(6);
+    expect([...sim.graveMap].filter(Boolean)).toHaveLength(0);
+  });
+});
+
+describe("the committed v6 save", () => {
+  it("still loads, holding all three ends of an arrival at once", async () => {
+    const sim = await decode(readFileSync(V6));
+    expect(sim.tick).toBe(V6_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED_V6);
+
+    // One who came by sea and stayed: the colony is six against a starting
+    // five, and the newcomer is an ordinary pool worker with nothing about
+    // them left over from the walk.
+    expect(settled(sim)).toBe(6);
+    const newest = sim.colonists.filter((c) => c.dest < 0).reduce((a, b) => (a.id > b.id ? a : b));
+    expect(newest.dest).toBe(-1);
+    expect(newest.patience).toBe(0);
+    expect(newest.slot).toBe(-1);
+
+    // One who did not make it, and one still on the road with a route
+    // half-walked — the state a save is most likely to lose.
+    expect([...sim.graveMap].filter(Boolean)).toHaveLength(1);
+    const walking = sim.colonists.filter((c) => c.dest >= 0);
+    expect(walking).toHaveLength(1);
+    expect(walking[0].step).toBeGreaterThan(0);
+    expect(walking[0].path.length - walking[0].step).toBeGreaterThan(50);
+    expect(sim.wandererTimer).toBe(-1);
+    // And live work in flight, per the late order in the recipe.
+    expect(sim.tasks.some((t) => t.kind === TaskKind.Chop)).toBe(true);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V6));
+    expect(hashSim(sim)).toBe("7206746a");
+  });
+
+  it("keeps running from where it was saved, and the third one arrives too", async () => {
+    const sim = await decode(readFileSync(V6));
+    const walking = sim.colonists.find((c) => c.dest >= 0);
+    for (let t = 0; t < 900; t++) advanceTick(sim);
+    expect(sim.tick).toBe(V6_TICKS + 900);
+    // The reloaded route was walked to its end: seven folk, and the cap they
+    // are now against.
+    expect(walking?.dest).toBe(-1);
+    expect(settled(sim)).toBe(7);
+    expect(populationCap(sim)).toBe(7);
   });
 });
 
@@ -347,6 +511,20 @@ describe("the fixtures still have the store shape this build produces", () => {
   it("v3, through its migration", async () => {
     expect(shapeOf(await decode(readFileSync(V3)))).toEqual(
       shapeOf(replay(v3Script, V3_TICKS, FIXTURE_SEED_V3, true)),
+    );
+  });
+
+  it("v5, through its migration", async () => {
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V5)), kinds)).toEqual(
+      shapeOf(replay(v5Script, V5_TICKS, FIXTURE_SEED_V5), kinds),
+    );
+  });
+
+  it("v6, natively — the arrival loop included", async () => {
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V6)), kinds)).toEqual(
+      shapeOf(replay(v6Script, V6_TICKS, FIXTURE_SEED_V6), kinds),
     );
   });
 

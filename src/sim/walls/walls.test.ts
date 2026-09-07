@@ -29,6 +29,8 @@ function peopledSim(size = 20): Sim {
       phase: 0,
       work: 0,
       carrying: -1,
+      dest: -1,
+      patience: 0,
       path: [],
       step: 0,
     });

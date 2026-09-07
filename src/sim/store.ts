@@ -1,5 +1,5 @@
 import { spawnLairs } from "./threats/lairs";
-import { STARTING_COLONISTS } from "./tuning";
+import { STARTING_COLONISTS, WANDERER_INTERVAL } from "./tuning";
 import { generate, tileIndex, Terrain, type World } from "./world/world";
 
 /**
@@ -45,6 +45,9 @@ export const BuildingKind = {
   Sawmill: 1,
   /** The second slot workshop: rock into blocks. */
   Mason: 2,
+  /** Beds. The first building the sawmill's planks are for, and the only
+   *  thing in the game that raises the population cap. */
+  House: 3,
 } as const;
 export type BuildingKindValue = (typeof BuildingKind)[keyof typeof BuildingKind];
 
@@ -195,6 +198,40 @@ export interface Colonist {
   work: number;
   /** Item in hand, or -1. */
   carrying: number;
+  /**
+   * While this colonist is a **wanderer** walking in from the coast: the id of
+   * the House that invited them. `-1` for everyone settled, which is everyone
+   * the colony started with and everyone who has arrived.
+   *
+   * A wanderer is an ordinary colonist with this one field set, so the whole of
+   * step 4a applies to them for free — monsters notice them, they flee, they
+   * can be caught, they leave a grave. What they never do is claim a task
+   * (`stepColonists` branches on this before the pool/slot split), and they
+   * count in **none** of the labour numbers until they settle.
+   *
+   * **`dest >= 0` excludes a colonist from every selector that means "an
+   * available worker"**, and that is the contract rather than a list of sites:
+   * the four labour readouts and `staff()`'s nearest-`slot < 0` pick are
+   * today's, and any future one asks the same question. A selector that forgets
+   * binds a workshop to somebody still walking in
+   * (docs/specs/2026-09-07-housing-wanderers.md).
+   */
+  dest: number;
+  /**
+   * Ticks a wanderer has spent unable to reach their destination. At
+   * `WANDERER_PATIENCE` they give up and leave, quietly and with no grave.
+   *
+   * **Its own field rather than a corner of `work`.** The clock only advances
+   * on a tick where a route could not be found, so it is paused by anything
+   * that moves them — a flee, an eviction, a route that opens — and reset by a
+   * route that succeeds. Riding on `work` made that correctness depend on
+   * `abandonForFlight` and `clearWorker` happening to zero it, which is an
+   * invariant nobody wrote down; a field costs one migration line instead
+   * (docs/specs/2026-09-07-housing-wanderers.md, the 2026-09-07 amendment).
+   *
+   * 0 for everyone settled, and reset to 0 the moment a wanderer arrives.
+   */
+  patience: number;
   /** Remaining route as tile indices; `step` is the index of the next one. */
   path: number[];
   step: number;
@@ -332,6 +369,17 @@ export interface Sim {
    */
   insideMap: Uint8Array;
   /**
+   * Ticks until the next wanderer spawn attempt, or **-1 while one is in
+   * transit**. Store state rather than a derived timer, because a reload in
+   * the middle of an interval would otherwise forget where the clock was and
+   * every load would restart it (docs/specs/2026-09-07-housing-wanderers.md).
+   *
+   * It only counts down while the gate is actually open — under cap, with an
+   * active House, nobody in transit — so a colony with no house is not quietly
+   * banking arrivals it will get all at once.
+   */
+  wandererTimer: number;
+  /**
    * 1 when a wall event this tick has invalidated `insideMap`. The recompute
    * batches to the end of the tick, so this is always 0 at a tick boundary and
    * a save can never carry a pending one.
@@ -410,6 +458,11 @@ export function createSim(seed: number): Sim {
     wallDamageMap: new Uint8Array(world.size * world.size),
     graveMap: new Uint8Array(world.size * world.size),
     insideMap: new Uint8Array(world.size * world.size),
+    // The arrival clock starts at a full interval and does not run until a
+    // House stands, so the opening five are the whole colony until the player
+    // builds one. No draw here: `createSim` makes none, and the v5 migration
+    // has to be able to hand an old save the same value.
+    wandererTimer: WANDERER_INTERVAL,
     // A wall-less world encloses nothing, so the zeroed layer above is already
     // correct — but the flag makes the first tick settle it anyway rather than
     // trusting that. `store.ts` deliberately does not import `walls/enclosure`
@@ -440,6 +493,8 @@ export function createSim(seed: number): Sim {
       phase: 0,
       work: 0,
       carrying: -1,
+      dest: -1,
+      patience: 0,
       path: [],
       step: 0,
     });

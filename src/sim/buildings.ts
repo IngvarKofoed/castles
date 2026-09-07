@@ -11,6 +11,7 @@ import {
   type Sim,
 } from "./store";
 import {
+  BEDS_PER_HOUSE,
   MASON_TICKS,
   MILL_TICKS,
   ROCK_PER_BLOCK,
@@ -30,10 +31,28 @@ export interface BuildingDef {
   readonly name: string;
   readonly w: number;
   readonly h: number;
-  /** Logs a blueprint must be fed before it can be built. */
+  /** How many items a blueprint must be fed before it can be built. */
   readonly cost: number;
+  /**
+   * Which item that is. **One type per def, never a mixture** — a multi-item
+   * cost needs the per-site ledger the blueprint deliberately does not have
+   * (see `actBuildWall`), and nothing has wanted one yet.
+   *
+   * Every consumer of `cost` reads this beside it: the blueprint's own
+   * capacity, the haul that feeds it, the count that flips it to `Building`,
+   * and the words the panel and the rail put on the number. Leaving any one of
+   * them saying "log" is how the House ends up unbuildable while its planks
+   * pile up inside it.
+   */
+  readonly costType: ItemTypeValue;
   /** True if a colonist can be bound to it as a slot worker. */
   readonly hasSlot: boolean;
+  /**
+   * Beds this building adds to the population cap once it is **active**. 0 for
+   * everything that is not housing, so the cap is a sum over the whole array
+   * with no kind test in it (`sim/settlers.ts`).
+   */
+  readonly beds: number;
   /** What its slot worker makes, or null for a building that produces
    *  nothing. A workshop *is* its recipe: everything the mason needed beyond
    *  the sawmill is a second row here. */
@@ -61,7 +80,9 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 2,
+    costType: ItemType.Log,
     hasSlot: false,
+    beds: 0,
     recipe: null,
   },
   [BuildingKind.Sawmill]: {
@@ -70,7 +91,9 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 4,
+    costType: ItemType.Log,
     hasSlot: true,
+    beds: 0,
     recipe: {
       input: ItemType.Log,
       per: 1,
@@ -92,7 +115,9 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 4,
+    costType: ItemType.Log,
     hasSlot: true,
+    beds: 0,
     recipe: {
       input: ItemType.Rock,
       per: ROCK_PER_BLOCK,
@@ -101,6 +126,27 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
       inputCap: WORKSHOP_INPUT_CAP,
       outputCap: WORKSHOP_OUTPUT_CAP,
     },
+  },
+  /**
+   * The House: beds, and the sawmill's first real customer.
+   *
+   * It produces nothing and staffs nobody — its whole output is the population
+   * cap it raises, which is what makes growth a placement decision rather than
+   * a score (docs/CONCEPT.md: people are the only scarce currency). Built from
+   * **planks**, which is why `costType` exists at all: it is the first building
+   * in the game whose cost is not logs, so the log → plank chain finally has
+   * somewhere to go.
+   */
+  [BuildingKind.House]: {
+    kind: BuildingKind.House,
+    name: "House",
+    w: 2,
+    h: 2,
+    cost: 4,
+    costType: ItemType.Plank,
+    hasSlot: false,
+    beds: BEDS_PER_HOUSE,
+    recipe: null,
   },
 };
 
@@ -131,6 +177,21 @@ export function buildingAt(sim: Sim, x: number, y: number): Building | null {
 }
 
 /**
+ * Is (x, y) a tile **beside** this footprint — Chebyshev 1 from its nearest
+ * tile, so the eight around a 1×1 and the ring around anything larger?
+ *
+ * Shared rather than written twice: it is how a slot worker decides it has
+ * reached its workshop (`atStation`) and how a wanderer decides it has reached
+ * the House that invited it. Both want "standing next to the building" rather
+ * than a fixed tile, because a fixed work tile can be water or off the map.
+ */
+export function besideFootprint(b: { x: number; y: number; w: number; h: number }, x: number, y: number): boolean {
+  const dx = Math.max(b.x - x, 0, x - (b.x + b.w - 1));
+  const dy = Math.max(b.y - y, 0, y - (b.y + b.h - 1));
+  return Math.max(dx, dy) === 1;
+}
+
+/**
  * The one tile a slot worker stands on: adjacent to the centre of the
  * footprint's south edge (+y). Deterministic and always the same tile for a
  * given building, so a restaffed worker returns to exactly where the last one
@@ -156,9 +217,11 @@ export function storedTotal(sim: Sim, buildingId: number): number {
 /** How many more items this building will take in, ignoring reservations. */
 export function freeCapacity(sim: Sim, b: Building, type: number): number {
   if (b.state === BuildingState.Blueprint) {
-    // A blueprint only takes its construction materials.
-    if (type !== ItemType.Log) return 0;
-    return defOf(b).cost - storedCount(sim, b.id, ItemType.Log);
+    // A blueprint only takes its construction materials, and only the one type
+    // its def names — planks for a House, logs for everything else.
+    const def = defOf(b);
+    if (type !== def.costType) return 0;
+    return def.cost - storedCount(sim, b.id, def.costType);
   }
   if (b.state !== BuildingState.Active) return 0;
   const recipe = recipeOf(b);

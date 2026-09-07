@@ -18,6 +18,7 @@
  */
 import { spawnLairs } from "../threats/lairs";
 import type { Sim } from "../store";
+import { WANDERER_INTERVAL } from "../tuning";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { WORLD_SIZE, generate } from "../world/world";
 
@@ -150,6 +151,68 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
       spawnLairs(next as unknown as Sim, generate(world.seed), enclosedBefore(next, tiles));
     }
     return next;
+  },
+
+  /**
+   * 4 → 5: housing. Two defaults and nothing else — a v4 colony has no House,
+   * so it has nobody walking in and nothing to walk to
+   * (docs/specs/2026-09-07-housing-wanderers.md).
+   *
+   * **`dest` on every colonist is the half that cannot be skipped.** Left
+   * missing it reads as `undefined`, `c.dest >= 0` is false and the colony
+   * would appear to work — but the field is in the hash, in the save, and in
+   * `stepColonists`' first branch, and a store that carries `undefined`
+   * anywhere breaks the plain-data rule the whole format rests on. Stamped to
+   * -1, which is what a colonist who lives here has always meant.
+   *
+   * `wandererTimer` gets a full interval, exactly as `createSim` gives a fresh
+   * colony — the clock does not run until a House stands, so an old save is not
+   * owed a head start it never earned, and it is not banking one either. Read
+   * from the tunable rather than frozen as a number on purpose: a retuned
+   * interval should reach a migrated colony as well as a new one, and the
+   * fixture pins are what make that visible when it happens.
+   */
+  4: (state) => {
+    const s = object(state);
+    return {
+      ...s,
+      wandererTimer: WANDERER_INTERVAL,
+      colonists: Array.isArray(s.colonists)
+        ? // Non-object entries pass through untouched so `assertSim` still
+          // refuses the save rather than this rung papering over it.
+          s.colonists.map((c) => (c && typeof c === "object" ? { ...(c as Record<string, unknown>), dest: -1 } : c))
+        : s.colonists,
+    };
+  },
+
+  /**
+   * 5 → 6: the patience clock gets its own field.
+   *
+   * v5 kept the wanderer's give-up clock in `work`, whose documented meaning is
+   * task progress — the exact type pun the format's own rules forbid, and one
+   * whose correctness rode on `abandonForFlight` and `clearWorker` happening to
+   * zero it. `patience` is now a field of its own and `work` means only what it
+   * says (docs/specs/2026-09-07-housing-wanderers.md, the 2026-09-07
+   * amendment).
+   *
+   * **0 is the honest default, including for the one colonist it could be wrong
+   * for.** A v5 save taken while a wanderer was *stuck* carries their elapsed
+   * wait in `work`, and this rung deliberately does not read it across: `work`
+   * is written by half a dozen systems, so a number found there means "task
+   * progress" far more often than it means "waiting", and a settled colonist
+   * mid-chop would arrive with a phantom clock. The cost is bounded and
+   * invisible — one wanderer, in one save, waits up to two game-days longer
+   * than they had left. Guessing the other way could only ever make somebody
+   * vanish sooner than the save implied.
+   */
+  5: (state) => {
+    const s = object(state);
+    return {
+      ...s,
+      colonists: Array.isArray(s.colonists)
+        ? s.colonists.map((c) => (c && typeof c === "object" ? { ...(c as Record<string, unknown>), patience: 0 } : c))
+        : s.colonists,
+    };
   },
 };
 

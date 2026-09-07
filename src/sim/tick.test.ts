@@ -296,7 +296,21 @@ describe("determinism", () => {
     // is unchanged and still passes, which is what says so. The tier's own
     // determinism pin is `threats/encounter.test.ts`, on a seed picked for
     // having a lair close enough to matter.
-    expect(hashSim(scripted())).toBe("8aabfdb3");
+    //
+    // 8aabfdb3 → 7cd7340f with housing
+    // (docs/changelog/2026-09-07-housing-and-wanderers.md). A shape change and
+    // nothing more: the store gained `wandererTimer` and every colonist gained
+    // `dest`. This run builds no House, so the arrival clock never starts —
+    // `stepSettlers` returns at its cap check on every one of these 1500 ticks,
+    // draws nothing from the PRNG and writes nothing — and every behavioural
+    // assertion in this file is unchanged and still passes, which is what says
+    // so. The arrival loop's own pin is `settlers.test.ts`, on two seeds picked
+    // for what happens to the wanderer on the way in.
+    //
+    // 7cd7340f → 50083138 when the patience clock stopped riding on `work` and
+    // became `Colonist.patience` (SAVE_VERSION 6). Shape again, and for the
+    // same reason: no House, no wanderer, nobody's clock ever moves off 0.
+    expect(hashSim(scripted())).toBe("50083138");
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {

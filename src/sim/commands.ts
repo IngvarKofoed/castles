@@ -302,9 +302,10 @@ function place(sim: Sim, kind: BuildingKindValue, x: number, y: number): void {
 }
 
 /**
- * Cancel a blueprint. Delivered logs are put back on the ground rather than
- * refunded as a number — items are entities everywhere, so a cancelled site
- * leaves a pile someone has to fetch.
+ * Cancel a blueprint. Whatever was delivered goes back on the ground —
+ * planks from a House exactly as logs from a mill — rather than being refunded
+ * as a number: items are entities everywhere, so a cancelled site leaves a
+ * pile someone has to fetch.
  */
 function cancelBlueprint(sim: Sim, id: number): void {
   const b = findBuilding(sim, id);
@@ -348,6 +349,11 @@ function staff(sim: Sim, id: number): void {
   let bestD = Infinity;
   for (const c of sim.colonists) {
     if (c.slot >= 0) continue;
+    // A wanderer still walking in from the coast is not a pair of hands yet
+    // (sim/settlers.ts). Bound to a slot they would keep walking anyway —
+    // `stepColonists` checks `dest` first — leaving the workshop marked
+    // staffed by somebody who never arrives.
+    if (c.dest >= 0) continue;
     const d = Math.abs(Math.floor(c.x) - b.x) + Math.abs(Math.floor(c.y) - b.y);
     if (d < bestD || (d === bestD && best !== null && c.id < best.id)) {
       best = c;

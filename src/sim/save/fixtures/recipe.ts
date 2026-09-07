@@ -173,6 +173,82 @@ export function v4Script(sim: Sim): Command[] {
   }
 }
 
+/**
+ * v5: housing, on the seed `settlers.test.ts` uses for its settling run —
+ * 20260908, whose colony gets a House standing inside a thousand ticks and
+ * whose wanderer walks in from the west coast without being eaten on the way.
+ *
+ * What it carries: a **wanderer in transit** — a colonist with `dest` set, a
+ * hundred-tile route in flight and the arrival clock parked at -1 behind them —
+ * plus a finished House built out of planks and the sawmill that cut them. Those
+ * are the states the format has never held: every other fixture's colonists are
+ * settled and every other fixture's buildings cost logs.
+ *
+ * Caught at 1600, in the gap between the spawn on the beach and the settle:
+ * before it the House is a blueprint and there is nobody walking, after it the
+ * wanderer is an ordinary colonist and `dest` is -1 again. A fixture that landed
+ * either side of that window would carry nothing this rung is about.
+ */
+export const FIXTURE_SEED_V5 = 20260908;
+export const V5_TICKS = 1600;
+
+export function v5Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 40) }];
+    case 5: {
+      const site = buildSite(sim, 0);
+      return site ? [{ kind: "place", building: 0, x: site[0], y: site[1] }] : [];
+    }
+    case 200: {
+      const site = buildSite(sim, 1);
+      return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
+    }
+    // Staff the mill: the House is the first thing in the game built from
+    // planks, so the chain has to be running before the site is placed.
+    case 600:
+      return staff(sim, 1);
+    case 900: {
+      const site = buildSite(sim, 3);
+      return site ? [{ kind: "place", building: 3, x: site[0], y: site[1] }] : [];
+    }
+    default:
+      return [];
+  }
+}
+
+/**
+ * v6: the patience un-pun (`Colonist.patience`), and **the same colony as v5
+ * carried further on** — same seed, same commands, a later tick. No new script,
+ * because what v6 needs from the world is not a new situation but a *later* one:
+ * by 2900 the first wanderer has arrived and joined the pool, and the second is
+ * out on the road behind them.
+ *
+ * So the file holds what v5's could not: all three ways an attempt can end, at
+ * once. A colonist who **came by sea and settled**, indistinguishable in the
+ * store from one the colony started with; the **grave** of the one after them,
+ * caught in the wilds; and a third **mid-walk**, route in flight with a
+ * non-zero `step` — the state a save could most plausibly lose.
+ *
+ * `patience` rides along at 0 on every colonist, and that is a real gap in what
+ * this file vouches for — no tick of this recipe has anybody stuck, because
+ * nothing on this seed blocks the walk. A *running* clock surviving a save is
+ * pinned by `settlers.test.ts` instead, which seals a wanderer out and encodes
+ * them mid-wait. The same trade `v4.castles` made with its empty `graveMap`.
+ */
+export const FIXTURE_SEED_V6 = FIXTURE_SEED_V5;
+export const V6_TICKS = 3400;
+
+export function v6Script(sim: Sim): Command[] {
+  // One late order, twenty ticks from the end and far too late to resolve, so
+  // the file carries live tasks as well as live people. By 3400 the colony has
+  // felled everything it was given and gone idle, and a fixture with an empty
+  // task list cannot vouch for the shape of a `Task` at all — which the shape
+  // test says out loud by refusing to compare an empty kind.
+  if (sim.tick === 3380) return [{ kind: "designateChop", tiles: nearestTrees(sim, 6) }];
+  return v5Script(sim);
+}
+
 /** A seven-tile run partway between the colony and the nearest den. Derived
  *  from the store, like every other site in this file. */
 function denRun(sim: Sim, offset: number): number[] {
@@ -223,7 +299,7 @@ function staff(sim: Sim, kind: number): Command[] {
 
 /** The first placeable site for a building kind, searched outward from the
  *  centre so the answer is a pure function of the store. */
-function buildSite(sim: Sim, kind: 0 | 1 | 2): [number, number] | null {
+function buildSite(sim: Sim, kind: 0 | 1 | 2 | 3): [number, number] | null {
   const size = sim.world.size;
   const centre = Math.floor(size / 2);
   for (let r = 2; r < 30; r++) {

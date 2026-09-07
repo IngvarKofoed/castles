@@ -127,6 +127,8 @@ const ICONS: Record<string, string> = {
   // level line. Mason: a block on a bench under a chisel.
   mine: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 15 L11 7"/><path d="M7 3 q5 1 8 5"/><path d="M15 8 l-4 -5"/><path d="M13 15 h6 l-2 -4 h-3 Z"/></svg>`,
   terraform: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 14 h5 v-4 h5 v-4 h6"/><path d="M3 6 h6"/><path d="M6 4 v4"/></svg>`,
+  // House: a gabled box with a door — beds, and nothing that looks like work.
+  house: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 9 L11 3 L19 9"/><rect x="5" y="9" width="12" height="6"/><path d="M9 15 v-4 h4 v4"/></svg>`,
   mason: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="9" width="14" height="6"/><path d="M11 9 v6"/><path d="M8 6 h6"/><path d="M11 3 v3"/></svg>`,
   // Stone wall: coursed blocks. Stone gate: the same arch, squared.
   stonewall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="6" width="16" height="4"/><rect x="3" y="10" width="16" height="4"/><path d="M8 6 v4"/><path d="M14 6 v4"/><path d="M5 10 v4"/><path d="M11 10 v4"/><path d="M17 10 v4"/></svg>`,
@@ -286,7 +288,11 @@ export class Hud {
   update(): void {
     const r = readout(this.sim);
     for (const good of GOOD_LIST) this.res[`good${good.type}`].textContent = String(r.goods[good.type] ?? 0);
-    this.res.folk.textContent = String(r.folk);
+    // `folk` alone until the first House stands, then `folk / cap`. The suffix
+    // arriving with the first house is the whole of the HUD's growth story —
+    // no toast, no banner, nothing announces an arrival but this number
+    // (docs/STYLEGUIDE.md, Tone).
+    this.res.folk.textContent = r.cap >= 0 ? `${r.folk} / ${r.cap}` : String(r.folk);
     this.res.idle.textContent = String(r.idle);
     this.res.enclosed.textContent = String(r.enclosed);
     this.res.day.textContent = `Day ${r.day}`;
@@ -416,9 +422,17 @@ export class Hud {
     rail.append(this.toolButton("Raze", { kind: "raze" }, ""));
 
     rail.append(el("span", { class: "rail-label" }, "Build"));
-    for (const kind of [BuildingKind.Stockpile, BuildingKind.Sawmill, BuildingKind.Mason] as BuildingKindValue[]) {
+    for (const kind of [
+      BuildingKind.Stockpile,
+      BuildingKind.Sawmill,
+      BuildingKind.Mason,
+      BuildingKind.House,
+    ] as BuildingKindValue[]) {
       const def = BUILDING_DEFS[kind];
-      rail.append(this.toolButton(def.name, { kind: "build", building: kind }, `${def.cost} logs`));
+      // The caption names the def's own material: the House costs planks, and
+      // a button that said "4 logs" would be the rail lying about the one
+      // building that pulls the sawmill chain.
+      rail.append(this.toolButton(def.name, { kind: "build", building: kind }, costLabel(def.cost, def.costType)));
     }
 
     // Each wall button carries its own material and says what it costs, so the
@@ -554,10 +568,14 @@ export class Hud {
     nodes.push(head);
 
     if (b.state === BuildingState.Blueprint) {
-      nodes.push(rows([["Logs delivered", `${b.delivered} / ${b.cost}`]]));
+      // Named off the def's material, both times: a House waits for planks,
+      // and a panel that says "logs" is the panel lying — which is the one
+      // thing it may never do, since it is the only diagnosis the game gives.
+      const material = GOODS[b.costType as ItemTypeValue].label;
+      nodes.push(rows([[`${capitalise(material)} delivered`, `${b.delivered} / ${b.cost}`]]));
       // The house voice: quiet text in the panel, no alert and no colour
       // change anywhere else (docs/STYLEGUIDE.md, Tone).
-      nodes.push(note(`waiting for logs (${b.delivered} / ${b.cost})`));
+      nodes.push(note(`waiting for ${material} (${b.delivered} / ${b.cost})`));
       nodes.push(this.actionButton("Cancel", () => this.ports.send({ kind: "cancelBlueprint", building: b.id })));
       return nodes;
     }
@@ -567,6 +585,14 @@ export class Hud {
       nodes.push(meter(b.progress));
       nodes.push(note("under construction"));
       nodes.push(this.actionButton("Cancel", () => this.ports.send({ kind: "cancelBlueprint", building: b.id })));
+      return nodes;
+    }
+
+    if (b.kind === BuildingKind.House) {
+      // The whole panel: what it is, and how many beds it added. No action —
+      // a House has no slot, nothing to staff and nothing to stop, and there
+      // is no bed to assign because beds are a cap and not an assignment.
+      nodes.push(rows([["Beds", String(b.beds)]]));
       return nodes;
     }
 
@@ -643,10 +669,22 @@ function sameTool(a: Tool, b: Tool): boolean {
   return toolKey(a) === toolKey(b);
 }
 
+/** "4 planks", "2 logs" — a cost in the rail's own words, off the def's own
+ *  material. Singular where the good's label already is (rock). */
+function costLabel(cost: number, type: number): string {
+  const good = GOODS[type as ItemTypeValue];
+  return `${cost} ${cost === 1 ? good.name.toLowerCase() : good.label}`;
+}
+
+/** Sentence case for a good's lower-case ribbon label, so a panel row reads
+ *  "Planks delivered" without a second name per good living in the table. */
+function capitalise(label: string): string {
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 /** What one segment of this material costs, in the ribbon's own words. */
 function wallCost(material: WallMaterial): string {
-  const good = GOODS[wallItem(material)];
-  return `${WALL_ITEM_COST} ${WALL_ITEM_COST === 1 ? good.name.toLowerCase() : good.label}`;
+  return costLabel(WALL_ITEM_COST, wallItem(material));
 }
 
 /**

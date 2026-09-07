@@ -134,6 +134,10 @@ export function buildingBoxes(b: Building, h: number, out: Box[]): void {
     deck(cx, g, cz, b, out, 1);
     return;
   }
+  if (b.kind === BuildingKind.House) {
+    house(cx, g, cz, b, out);
+    return;
+  }
   sawmill(cx, g, cz, b, out);
 }
 
@@ -173,6 +177,30 @@ function sawmill(cx: number, g: number, cz: number, b: Building, out: Box[]): vo
   out.push(box(cx, g + 0.3 * BH, b.y + b.h - 0.13, 0.44, 0.95 * BH, 0.1, PROP.door));
   // A stack of cut timber against the west wall says what happens here.
   out.push(box(b.x + 0.26, g + 0.3 * BH, cz, 0.32, 0.3 * BH, b.h - 0.7, PROP.plank, 0, 0.96));
+}
+
+/**
+ * House: timber walls under a pale gable, with a plank door and a shutter.
+ *
+ * Deliberately the sawmill's grammar with the workshop taken out — no stone
+ * plinth, no timber stack, a narrower body and a lighter roof — because the two
+ * have to be tellable apart across the map while still reading as the same
+ * colony's carpentry. The door is `plank` rather than the workshop's dark
+ * `door`: a House is what the sawmill's output is *for*, and saying so in the
+ * one part of it a player looks at costs nothing.
+ */
+function house(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
+  out.push(box(cx, g, cz, b.w - 0.3, 1.4 * BH, b.h - 0.3, PROP.timber));
+  // A gable rather than the sawmill's stepped clay slabs: two courses, the
+  // upper one drawn in, so the silhouette comes to a ridge instead of a block.
+  out.push(box(cx, g + 1.4 * BH, cz, b.w - 0.1, 0.3 * BH, b.h - 0.1, PROP.linen, 0, 0.96));
+  out.push(box(cx, g + 1.7 * BH, cz, b.w - 0.7, 0.3 * BH, b.h - 0.7, PROP.linen, 0, 0.88));
+  // Door on the south face, which is the face everything in this game walks up
+  // to — the sawmill's rule, and where a wanderer arrives.
+  out.push(box(cx + 0.3, g, b.y + b.h - 0.16, 0.4, 0.95 * BH, 0.1, PROP.plank));
+  // One shuttered window beside it, in the darker door timber so it reads as a
+  // recess rather than a panel.
+  out.push(box(b.x + 0.45, g + 0.75 * BH, b.y + b.h - 0.16, 0.3, 0.32 * BH, 0.08, PROP.door));
 }
 
 /** Which way a segment's run goes, as a bitmask of neighbours holding wall. */

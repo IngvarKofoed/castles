@@ -249,3 +249,35 @@ export const CATCH_RANGE = 1;
 export const THREAT_RANGE = 40;
 export const THREAT_BUCKETS = 5;
 export const RHYTHM_FUZZ = 0.1;
+
+// ------------------------------------------------------------------ housing
+//
+// Population inflow (docs/specs/2026-09-07-housing-wanderers.md). Growth is
+// placement-priced: a House adds beds, beds raise the cap, and while the
+// colony sits under its cap wanderers walk in from the coast. Deaths open room
+// the next arrival refills, which is what makes the population ratchet-free.
+
+/** Beds one House carries. The cap is `STARTING_COLONISTS` plus the summed
+ *  beds of every *active* House — derived per read, never stored. */
+export const BEDS_PER_HOUSE = 2;
+
+/**
+ * How long after one arrival resolves — settled, died, or gave up — the next
+ * countdown runs, ± `WANDERER_JITTER` drawn from the store PRNG. Half a game
+ * day, so a house pays off inside the day that built it without arrivals
+ * reading as a stream: one figure at a time, walking.
+ *
+ * A fresh colony (and a migrated save) starts at exactly `WANDERER_INTERVAL`
+ * with no draw, and the clock only runs while the gate is open — under cap,
+ * with a House standing and nobody in transit.
+ */
+export const WANDERER_INTERVAL = DAY_TICKS / 2;
+export const WANDERER_JITTER = DAY_TICKS / 5;
+
+/**
+ * How long a wanderer who cannot reach their destination waits before leaving
+ * — two game days, wherever they got stuck. They despawn in place with **no
+ * grave**: they left, they did not die, and a grave is the game's only
+ * obituary (docs/CONCEPT.md). Nothing queues and nothing alerts.
+ */
+export const WANDERER_PATIENCE = 2 * DAY_TICKS;

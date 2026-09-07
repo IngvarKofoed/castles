@@ -25,11 +25,13 @@ import {
   type Monster,
   type Sim,
 } from "../store";
+import { populationCap } from "../settlers";
 import { defOfMonster, monsterAt } from "../threats";
 import {
   BUILD_TICKS,
   DAY_TICKS,
   RHYTHM_FUZZ,
+  STARTING_COLONISTS,
   STOCKPILE_PER_TILE,
   THREAT_BUCKETS,
   THREAT_RANGE,
@@ -98,13 +100,25 @@ export interface Readout {
   /** How much of each good the colony holds, indexed by `ItemType` — every
    *  good the game has, so a new one appears on the ribbon by existing. */
   goods: number[];
-  /** Everyone. */
+  /**
+   * Everyone who lives here. A wanderer still walking in from the coast is
+   * counted in **none** of the four numbers below — they are not a pair of
+   * hands until they settle, and counting them in `folk` alone would have the
+   * labour meter invent a phantom slot worker (`slots` is `folk - pool`).
+   */
   folk: number;
   /** Pool workers not currently on a task — the number staffing a slot eats into. */
   idle: number;
   /** Pool workers: population minus everyone locked in a workshop. */
   pool: number;
   slots: number;
+  /**
+   * How many folk the colony's beds allow, or **-1 until the first House is
+   * standing** — the ribbon shows a bare count until then, so a fresh colony
+   * never reads as "full" and an old, death-reduced save is not teased with
+   * room nothing will fill (docs/specs/2026-09-07-housing-wanderers.md).
+   */
+  cap: number;
   day: number;
   /**
    * Enclosed *land* tiles — the game's progress bar (docs/CONCEPT.md: land is
@@ -122,19 +136,30 @@ export function readout(sim: Sim): Readout {
     // shape that broke the moment a third good existed.
     if (it.type >= 0 && it.type < goods.length) goods[it.type]++;
   }
+  let folk = 0;
   let pool = 0;
   let idle = 0;
   for (const c of sim.colonists) {
+    // Still walking in: not a colonist the colony can spend yet.
+    if (c.dest >= 0) continue;
+    folk++;
     if (c.slot >= 0) continue;
     pool++;
     if (c.task < 0) idle++;
   }
+  // A bed exists only in a finished House, so "any beds at all" is the same
+  // question as "is a House standing" — and it is the one the suffix turns on.
+  // Asked off the cap rather than off a second `bedsBuilt` call: the cap is
+  // `STARTING_COLONISTS` plus the beds, so "above the floor" *is* "has beds",
+  // and this runs once per frame.
+  const cap = populationCap(sim);
   return {
     goods,
-    folk: sim.colonists.length,
+    folk,
     idle,
     pool,
-    slots: sim.colonists.length - pool,
+    slots: folk - pool,
+    cap: cap > STARTING_COLONISTS ? cap : -1,
     day: Math.floor(sim.tick / DAY_TICKS) + 1,
     enclosed: enclosedLand(sim),
   };
@@ -249,10 +274,17 @@ export interface Inspection {
   state: number;
   /** 0..1 while under construction. */
   progress: number;
-  /** Logs delivered against logs required, for a blueprint. */
+  /** Materials delivered against materials required, for a blueprint. */
   delivered: number;
   cost: number;
+  /** Which good those are — `ItemType.Log` for most things, planks for a
+   *  House. The panel and the rail name the number off this rather than
+   *  saying "logs" and being wrong for one building in four. */
+  costType: number;
   hasSlot: boolean;
+  /** Beds this building adds to the cap once active; 0 for everything that is
+   *  not housing. */
+  beds: number;
   staffed: boolean;
   /**
    * Where the slot worker is. Once they are `inside` the renderer stops
@@ -307,9 +339,11 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     kind: b.kind,
     state: b.state,
     progress: Math.min(1, b.progress / BUILD_TICKS),
-    delivered: held(ItemType.Log),
+    delivered: held(def.costType),
     cost: def.cost,
+    costType: def.costType,
     hasSlot: def.hasSlot,
+    beds: def.beds,
     staffed: b.worker >= 0,
     worker: workerState(sim, b),
     stored,

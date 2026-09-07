@@ -34,7 +34,7 @@ import { MIGRATIONS } from "./migrations";
  * the matching entry to `MIGRATIONS` — the fixture test in this folder fails
  * loudly if an old save stops loading, which is the point.
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 6;
 
 /** A save that cannot be read, with a message meant for the menu's note row. */
 export class SaveError extends Error {
@@ -216,6 +216,7 @@ function assertSim(raw: unknown): Sim {
   number(s.rngState);
   number(s.nextId);
   number(s.enclosureDirty);
+  number(s.wandererTimer);
   for (const key of ["colonists", "items", "buildings", "tasks", "monsters"] as const) {
     const list = s[key];
     if (!Array.isArray(list)) throw new SaveError(DAMAGED);

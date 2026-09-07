@@ -149,7 +149,19 @@ describe("the scripted encounter", () => {
     // its own notice range. The colony loses more people for the first of
     // those, which is the fix working — a proper escape into open ground is
     // slower than a long errand route, and an orc is faster than either.
-    expect(hashSim(final())).toBe("3290d599");
+    //
+    // 3290d599 → d06c4a79 with housing
+    // (docs/changelog/2026-09-07-housing-and-wanderers.md): the store gained
+    // `wandererTimer` and every colonist gained `dest`. Shape only — this
+    // colony never builds a House, so no arrival clock ever runs and the
+    // assertions below are untouched.
+    //
+    // **Unmoved by SAVE_VERSION 6**, alone among this repo's pins, and that is
+    // worth stating rather than leaving as a puzzle: v6 adds a field to
+    // `Colonist`, and by tick 2400 this colony has none — the wilds take all
+    // five, which is what the assertions below already say. v5 moved it because
+    // `wandererTimer` sits on `Sim`, which survives an empty colony.
+    expect(hashSim(final())).toBe("d06c4a79");
   });
 
   it("bites a standing palisade, and leaves it standing when its hours run out", () => {

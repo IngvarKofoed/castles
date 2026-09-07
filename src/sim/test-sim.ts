@@ -1,3 +1,4 @@
+import { WANDERER_INTERVAL } from "./tuning";
 import { Terrain, type World } from "./world/world";
 import {
   BuildingKind,
@@ -52,6 +53,9 @@ export function flatSim(size = 12, height = 4): Sim {
     wallDamageMap: new Uint8Array(n),
     graveMap: new Uint8Array(n),
     insideMap: new Uint8Array(n),
+    // A full interval, as `createSim` gives it: nothing counts down until a
+    // House stands, so a test that never builds one never sees an arrival.
+    wandererTimer: WANDERER_INTERVAL,
     enclosureDirty: 0,
   };
 }

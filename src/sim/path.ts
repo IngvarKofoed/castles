@@ -18,9 +18,35 @@ import { Terrain, tileIndex, type World } from "./world/world";
 /** Height difference a colonist can step up or down between adjacent tiles. */
 const MAX_STEP = 1;
 
-/** Search ceiling. A colony path is tens of tiles; this only stops a doomed
- *  search from sweeping a 65k-tile map before it gives up. */
+/**
+ * Default search ceiling. A colony errand is tens of tiles, so this only stops
+ * a doomed search from sweeping a 65k-tile map before it gives up — generous
+ * for anything a worker does, and cheap to abandon.
+ *
+ * **It is not enough for a walk across the island**, and that is a real errand
+ * rather than a hypothetical: a wanderer lands on the coast and the colony is a
+ * hundred tiles inland (docs/specs/2026-09-07-housing-wanderers.md). A\* over
+ * open ground *plateaus* — with an exact Manhattan heuristic every shortest
+ * route scores the same, so the search expands the whole band between the two
+ * ends, and trees widen it further. Measured at 700–6300 nodes for the same
+ * shore-to-centre walk across three seeds, which is exactly the wrong side of
+ * 6000 to leave to luck: on one of them the wanderer could not find a route
+ * that plainly existed. The caller whose errand is map-scale passes
+ * `ISLAND_WIDE` instead.
+ */
 const MAX_VISITED = 6000;
+
+/**
+ * "Give up only when the island is exhausted", for the one caller whose walk
+ * genuinely spans the map.
+ *
+ * The number is never reached: A\* stops when the open set empties, so the real
+ * bound is the reachable land — 36k nodes and ~15 ms for a walk that is
+ * genuinely impossible on the default map. Affordable precisely because it is
+ * rationed: one wanderer exists at a time, and a stuck one re-plans on the
+ * claim cooldown's rhythm rather than every tick.
+ */
+export const ISLAND_WIDE = Number.POSITIVE_INFINITY;
 
 export type Occupancy = Set<number>;
 
@@ -105,7 +131,9 @@ export type StepGate = (x: number, y: number, fromH: number) => boolean;
  * array when the start already satisfies the goal.
  *
  * `gate` defaults to the colonist rule, and is branched on rather than
- * defaulted into a closure so the common call allocates nothing.
+ * defaulted into a closure so the common call allocates nothing. `ceiling` is
+ * how many nodes the search may expand before it answers null — see
+ * `MAX_VISITED` and `ISLAND_WIDE`.
  */
 export function findPath(
   sim: Sim,
@@ -114,6 +142,7 @@ export function findPath(
   sy: number,
   goals: Set<number>,
   gate?: StepGate,
+  ceiling: number = MAX_VISITED,
 ): number[] | null {
   const world = sim.world;
   const size = world.size;
@@ -146,7 +175,7 @@ export function findPath(
   while (open.size > 0) {
     const current = open.pop();
     if (goals.has(current)) return rebuild(cameFrom, current);
-    if (++visited > MAX_VISITED) return null;
+    if (++visited > ceiling) return null;
 
     const cx = current % size;
     const cy = (current - cx) / size;
