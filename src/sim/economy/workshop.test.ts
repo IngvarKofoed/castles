@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BUILDING_DEFS, freeCapacity, outputFull, recipeOf } from "../buildings";
 import { applyCommands } from "../commands";
+import { GOOD_LIST } from "../goods";
 import { spawnItem } from "../items";
 import { generateTasks } from "../labour/tasks";
 import { inspect } from "../know";
@@ -37,6 +38,8 @@ function peopledSim(size = 20): Sim {
       carrying: -1,
       dest: -1,
       patience: 0,
+      hunger: 0,
+      eating: 0,
       path: [],
       step: 0,
     });
@@ -156,10 +159,13 @@ describe("a stockpile's filters", () => {
     applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 8, y: 8 }]);
     const pile = sim.buildings[0];
     pile.state = BuildingState.Active;
-    for (const type of [ItemType.Log, ItemType.Plank, ItemType.Rock, ItemType.Block]) {
-      expect(freeCapacity(sim, pile, type)).toBeGreaterThan(0);
+    // Walked from the goods table rather than written out: every appended
+    // `ItemType` has to arrive accepted, and a literal list here would quietly
+    // stop covering the newest good.
+    for (const good of GOOD_LIST) {
+      expect(freeCapacity(sim, pile, good.type)).toBeGreaterThan(0);
     }
-    expect(inspect(sim, pile.id)?.stored.map((s) => s.accepted)).toEqual([true, true, true, true]);
+    expect(inspect(sim, pile.id)?.stored.map((s) => s.accepted)).toEqual(GOOD_LIST.map(() => true));
   });
 
   it("refuses a good whose filter is off, and keeps taking the rest", () => {

@@ -16,9 +16,11 @@
  * store change is too deep to migrate, leave the rung out. `decode` then fails
  * with a plain message rather than loading something half-shaped.
  */
+import { spawnItem } from "../items";
+import { occupancy } from "../path";
 import { spawnLairs } from "../threats/lairs";
-import type { Sim } from "../store";
-import { WANDERER_INTERVAL } from "../tuning";
+import { ItemType, type Building, type Sim } from "../store";
+import { PROVISION_BREAD, WANDERER_INTERVAL } from "../tuning";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { WORLD_SIZE, generate } from "../world/world";
 
@@ -235,7 +237,109 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
     const s = object(state);
     return { ...s, limits: [-1, -1, -1, -1] };
   },
+
+  /**
+   * 7 → 8: the bread economy (docs/specs/2026-09-08-bread-economy.md). Four
+   * things, three of them the documented append rituals and one of them a
+   * genuine gift.
+   *
+   * **The two colonist fields**, both 0: `hunger` starts the meal clock from
+   * the tick the save resumes — an old colony is not owed a day of arrears —
+   * and `eating` is 0 because nobody in a v7 save was ever at lunch.
+   *
+   * **The three accept flags, stamped 1 on every saved building**, which is the
+   * v2 rung's precedent and the half that cannot be skipped: `stockpileAccepts`
+   * reads these by name for every kind, so a building that came through with
+   * them missing would refuse grain, flour and bread *forever* while the oven
+   * jammed at output cap and nothing in the game could say why. A v7 player
+   * never chose to exclude a good that did not exist.
+   *
+   * **Three `-1`s appended to `limits`**, per the production-control append
+   * ritual: this rung adds exactly its own three, so a v6 save migrated after
+   * some later good exists still arrives at that good's rung with seven slots.
+   *
+   * **And three loaves per settled colonist, dropped at the colony.** Without
+   * them a loaded colony is hungry by its second day with no farm and no way to
+   * have built one, which is risk imposed rather than chosen — the one thing
+   * CONCEPT does not allow. It is the same `PROVISION_BREAD` a fresh colony
+   * opens with, and it is why this rung runs live drop code (`grantProvisions`
+   * below).
+   */
+  7: (state) => {
+    const s = object(state);
+    const next: Record<string, unknown> = {
+      ...s,
+      colonists:
+        Array.isArray(s.colonists) ?
+          // Non-object entries pass through untouched so `assertSim` still
+          // refuses the save rather than this rung papering over it.
+          s.colonists.map((c) =>
+            c && typeof c === "object" ? { ...(c as Record<string, unknown>), hunger: 0, eating: 0 } : c,
+          )
+        : s.colonists,
+      buildings:
+        Array.isArray(s.buildings) ?
+          s.buildings.map((b) =>
+            b && typeof b === "object" ?
+              { ...(b as Record<string, unknown>), acceptGrain: 1, acceptFlour: 1, acceptBread: 1 }
+            : b,
+          )
+        : s.buildings,
+      limits: Array.isArray(s.limits) ? [...s.limits, -1, -1, -1] : s.limits,
+    };
+    grantProvisions(next, tileCount(s));
+    return next;
+  },
 };
+
+/**
+ * Drop `PROVISION_BREAD` loaves per settled colonist at the colony, exactly as
+ * `createSim` gives a fresh one — anchored on the **lowest-id building**, or on
+ * the map centre when the save holds none.
+ *
+ * This is live sim code inside a migration, so it is **guarded** the way the
+ * v3 lair pass is: `decode` promises a whole store or a `SaveError` and nothing
+ * else, and `spawnItem` handed a malformed world would throw a raw TypeError
+ * straight past that promise and put a stack trace in the menu's note row. A
+ * save that fails these checks simply gets no bread and is refused a moment
+ * later by `assertSim`.
+ *
+ * `dropTile` returning null on congested ground is **accepted**: a shorted
+ * grant means the colony is hungry sooner, and hungry only ever plateaus.
+ */
+function grantProvisions(next: Record<string, unknown>, tiles: number): void {
+  const world = object(next.world);
+  if (tiles <= 0 || typeof next.nextId !== "number") return;
+  if (!Number.isInteger(world.size) || (world.size as number) <= 0) return;
+  for (const layer of [world.hmap, world.tmap, world.treeMap, next.wallMap]) {
+    if (!(layer instanceof Uint8Array) || layer.length !== tiles) return;
+  }
+  if (!Array.isArray(next.items) || !Array.isArray(next.buildings) || !Array.isArray(next.colonists)) return;
+  // Per *entry*, not merely per array: this rung passes a non-object building
+  // through untouched so `assertSim` can refuse the save, and `occupancy`
+  // reading `.y` off a `null` would throw a raw TypeError straight past
+  // `decode`'s promise — the exact failure the guard above exists to prevent,
+  // one level down. The colonist loop below guards its own entries the same way.
+  for (const b of next.buildings) if (!b || typeof b !== "object") return;
+
+  const sim = next as unknown as Sim;
+  let mouths = 0;
+  for (const c of next.colonists) {
+    // A wanderer still walking in eats nothing and is owed nothing — their
+    // clock starts at settling, so the grant counts the same heads the arrival
+    // gate does.
+    if (c && typeof c === "object" && (c as Record<string, unknown>).dest === -1) mouths++;
+  }
+  if (mouths === 0) return;
+
+  let anchor: Building | null = null;
+  for (const b of sim.buildings) if (!anchor || b.id < anchor.id) anchor = b;
+  const centre = Math.floor((world.size as number) / 2);
+  const ax = anchor ? anchor.x : centre;
+  const ay = anchor ? anchor.y : centre;
+  const occ = occupancy(sim);
+  for (let n = 0; n < PROVISION_BREAD * mouths; n++) spawnItem(sim, ItemType.Bread, ax, ay, occ);
+}
 
 /**
  * Ground this save's colony has already claimed, as a per-tile mask: everything

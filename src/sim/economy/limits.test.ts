@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { freeCapacity } from "../buildings";
 import { applyCommands } from "../commands";
+import { GOOD_LIST } from "../goods";
 import { countItems, spawnItem } from "../items";
 import { generateTasks } from "../labour/tasks";
 import { inspect } from "../know";
@@ -39,6 +40,8 @@ function peopledSim(size = 20): Sim {
       carrying: -1,
       dest: -1,
       patience: 0,
+      hunger: 0,
+      eating: 0,
       path: [],
       step: 0,
     });
@@ -81,7 +84,7 @@ const inputHauls = (sim: Sim, b: Building): number =>
 describe("a production ceiling", () => {
   it("is unlimited by default, and unlimited is the colony as it was", () => {
     const sim = peopledSim();
-    expect(sim.limits).toEqual([UNLIMITED, UNLIMITED, UNLIMITED, UNLIMITED]);
+    expect(sim.limits).toEqual(GOOD_LIST.map(() => UNLIMITED));
     const mill = workshop(sim, 1);
     stock(sim, mill, ItemType.Log, WORKSHOP_INPUT_CAP);
     for (let t = 0; t < MILL_TICKS * 3; t++) advanceTick(sim);
@@ -205,8 +208,8 @@ describe("the setLimit command", () => {
     set(Number.NaN);
     expect(sim.limits[ItemType.Plank]).toBe(3);
     // A good the store has no slot for is refused rather than growing the array.
-    applyCommands(sim, [{ kind: "setLimit", type: 9, value: 4 }]);
-    expect(sim.limits).toHaveLength(4);
+    applyCommands(sim, [{ kind: "setLimit", type: 99, value: 4 }]);
+    expect(sim.limits).toHaveLength(GOOD_LIST.length);
     expect(clampLimit(Number.POSITIVE_INFINITY)).toBeNull();
   });
 });
@@ -239,8 +242,8 @@ describe("the stepLimit command", () => {
   it("refuses a direction that is not a press, and a good with no slot", () => {
     const sim = peopledSim();
     applyCommands(sim, [{ kind: "stepLimit", type: ItemType.Plank, dir: 3 as unknown as 1 }]);
-    applyCommands(sim, [{ kind: "stepLimit", type: 9, dir: -1 }]);
-    expect(sim.limits).toEqual([UNLIMITED, UNLIMITED, UNLIMITED, UNLIMITED]);
+    applyCommands(sim, [{ kind: "stepLimit", type: 99, dir: -1 }]);
+    expect(sim.limits).toEqual(GOOD_LIST.map(() => UNLIMITED));
   });
 });
 

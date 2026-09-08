@@ -1,5 +1,6 @@
 import { outputFull, recipeOf, type Recipe } from "../buildings";
 import { removeItem } from "../items";
+import { worksThisTick } from "../labour/hunger";
 import { atLimit } from "./limits";
 import {
   BuildingState,
@@ -60,6 +61,10 @@ function stepWorkshop(sim: Sim, b: Building, recipe: Recipe): void {
     return;
   }
 
+  // The cadence is keyed off its slot worker's hunger: a workshop runs on
+  // somebody's hours, and the food chain's own workers are not immune to the
+  // food chain being empty (docs/specs/2026-09-08-bread-economy.md).
+  if (!worksThisTick(sim, worker)) return;
   if (++b.millProgress < recipe.ticks) return;
   const made: Item = {
     id: mintId(sim),

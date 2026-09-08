@@ -1,7 +1,9 @@
 import { defOf } from "./buildings";
+import { countItems } from "./items";
 import { occupancy, passable, type Occupancy } from "./path";
 import {
   BuildingState,
+  ItemType,
   MonsterPhase,
   findBuilding,
   mintId,
@@ -83,6 +85,34 @@ export function settled(sim: Sim): number {
 }
 
 /**
+ * Is the table set for one more? A loaf in the colony for **everybody plus the
+ * one arriving** (docs/specs/2026-09-08-bread-economy.md).
+ *
+ * The second half of the arrival gate, beside the beds: growth now costs
+ * placement *and* a working food chain, so a colony that has not built the
+ * bread chain stops growing when its provisions run out. Counted the way every
+ * other good is counted — every loaf anywhere, stored, loose or carried — so
+ * the bar cannot flicker as haulers walk.
+ *
+ * Exported because the House panel says so when this, rather than the cap, is
+ * what holds arrivals: the gate can stand for game-days, it is player-caused,
+ * and a bread ceiling set at or below `settled` holds it shut indefinitely —
+ * legal, but never unexplained.
+ */
+export function tableSet(sim: Sim): boolean {
+  // **A colony with nobody left in it is exempt**, and that is not a softening
+  // of the gate: with no colonists there is nobody to staff a farm, so
+  // `settled + 1` is unsatisfiable by construction and the arrival loop would
+  // stop for good — deleting the recovery the housing step exists for ("a death
+  // frees room, so the colony can always recover",
+  // docs/specs/2026-09-07-housing-wanderers.md). The one pair of hands that
+  // comes back has to bootstrap the chain, and the *second* arrival is priced
+  // in bread again like everybody else's.
+  if (settled(sim) === 0) return true;
+  return countItems(sim, ItemType.Bread) >= settled(sim) + 1;
+}
+
+/**
  * One tick of the arrival loop, run after monsters and before workshops.
  *
  * After monsters, so a wanderer caught on the tick they would have arrived
@@ -105,6 +135,11 @@ export function stepSettlers(sim: Sim): void {
     return;
   }
   if (settled(sim) >= populationCap(sim)) return;
+  // Beds *and* bread. Checked beside the cap check and before the countdown, so
+  // the clock **pauses** while the surplus is missing exactly as it pauses at
+  // cap — a colony that is short of loaves is not quietly banking arrivals it
+  // will get all at once when the oven catches up.
+  if (!tableSet(sim)) return;
   const home = destination(sim);
   if (!home) return;
   if (sim.wandererTimer > 0) {
@@ -285,6 +320,8 @@ function arrive(sim: Sim, home: Building, tile: number): void {
     carrying: -1,
     dest: home.id,
     patience: 0,
+    hunger: 0,
+    eating: 0,
     path: [],
     step: 0,
   });

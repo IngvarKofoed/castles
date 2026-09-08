@@ -403,8 +403,12 @@ function isLoose(sim: Sim, item: Item): boolean {
  * stockpile. Asked of the *recipe* rather than of the building's kind, so a
  * finished block may leave the mason exactly as a finished plank may leave the
  * sawmill — and neither workshop's inputs may be taken back out.
+ *
+ * Exported for the meal errand (`labour/colonists`), which sources a loaf by
+ * exactly this rule: a colonist eats off the ground, out of a stockpile, or
+ * out of the oven's own output buffer, and from nowhere else.
  */
-function sourceForSite(sim: Sim, item: Item): boolean {
+export function sourceForSite(sim: Sim, item: Item): boolean {
   if (item.loc === Loc.Ground) return true;
   if (item.loc !== Loc.Stored) return false;
   const b = findBuilding(sim, item.holder);
@@ -419,7 +423,13 @@ function isOutputOf(b: Building, item: Item): boolean {
   return recipe !== null && item.type === recipe.output;
 }
 
-function nearestFreeItem(
+/**
+ * The nearest unreserved item of a type that `ok` accepts, by Manhattan
+ * distance with ties broken by id. Exported alongside `sourceForSite` for the
+ * meal errand, which asks the same question about bread that task generation
+ * asks about logs.
+ */
+export function nearestFreeItem(
   sim: Sim,
   type: number,
   x: number,

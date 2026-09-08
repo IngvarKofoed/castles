@@ -2,6 +2,7 @@ import {
   BUILDING_DEFS,
   buildingAt,
   canPlace,
+  consumes,
   defOf,
   footprint,
   recipeOf,
@@ -26,7 +27,8 @@ import {
   type Monster,
   type Sim,
 } from "../store";
-import { populationCap } from "../settlers";
+import { hungry } from "../labour/hunger";
+import { populationCap, settled, tableSet } from "../settlers";
 import { defOfMonster, monsterAt } from "../threats";
 import {
   BUILD_TICKS,
@@ -132,6 +134,13 @@ export interface Readout {
   cap: number;
   day: number;
   /**
+   * How many folk are hungry enough to be **slowed** (`HUNGRY_TICKS`, not
+   * merely due a meal) — the ribbon's one honest signal of the plateau, and it
+   * arrives exactly as the slowdown does. Counting everyone past mealtime
+   * instead would flicker a `1` at every lunch walk.
+   */
+  hungry: number;
+  /**
    * Enclosed *land* tiles — the game's progress bar (docs/CONCEPT.md: land is
    * grabbed bite by bite). Water inside the wall is inside and deliberately
    * uncounted; so is the ground under the wall itself, which is not buildable.
@@ -150,10 +159,12 @@ export function readout(sim: Sim): Readout {
   let folk = 0;
   let pool = 0;
   let idle = 0;
+  let starving = 0;
   for (const c of sim.colonists) {
     // Still walking in: not a colonist the colony can spend yet.
     if (c.dest >= 0) continue;
     folk++;
+    if (hungry(c)) starving++;
     if (c.slot >= 0) continue;
     pool++;
     if (c.task < 0) idle++;
@@ -172,6 +183,7 @@ export function readout(sim: Sim): Readout {
     slots: folk - pool,
     cap: cap > STARTING_COLONISTS ? cap : -1,
     day: Math.floor(sim.tick / DAY_TICKS) + 1,
+    hungry: starving,
     enclosed: enclosedLand(sim),
   };
 }
@@ -301,8 +313,13 @@ export interface Inspection {
    * Where the slot worker is. Once they are `inside` the renderer stops
    * drawing them, so this row and the labour meter's rust segment are the
    * only things telling the player someone is in there.
+   *
+   * `eating` is the fourth state and it exists to stop the panel lying: a
+   * miller out at a meal is not a stall, and "waiting for grain" while they
+   * walk to a loaf would be the one thing this panel may never do
+   * (docs/specs/2026-09-08-bread-economy.md).
    */
-  worker: "none" | "walking" | "inside";
+  worker: "none" | "walking" | "inside" | "eating";
   /**
    * Every good in the building, in `ItemType` order — the stockpile panel
    * walks this rather than naming logs and planks, which is what keeps a new
@@ -311,9 +328,15 @@ export interface Inspection {
   stored: StoredGood[];
   storedTotal: number;
   capacity: number;
-  /** The workshop's chain, or null for anything that produces nothing. Its
-   *  names are what the panel's chain chips read. */
-  chain: { input: string; output: string } | null;
+  /**
+   * The workshop's chain, or null for anything that produces nothing. Its
+   * names are what the panel's chain chips read.
+   *
+   * `input` is **null for a no-input recipe** — the Farm's chip is one-sided,
+   * `→ Grain`, because there is nothing on the left of that arrow (see
+   * `Recipe`'s no-input convention).
+   */
+  chain: { input: string | null; output: string } | null;
   inputCount: number;
   inputCap: number;
   outputCount: number;
@@ -342,6 +365,14 @@ export interface Inspection {
    * worth reading first.
    */
   stall: "none" | "no-input" | "output-full" | "at-limit";
+  /**
+   * For a House: **the bread gate, not the cap, is what holds arrivals right
+   * now**. The panel says so in one quiet line, because this gate can stand for
+   * game-days, it is player-caused, and one interplay makes silence dangerous —
+   * a bread ceiling at or below the settled count holds it shut for good.
+   * False for everything that is not a House with beds standing.
+   */
+  tableShort: boolean;
 }
 
 export function inspect(sim: Sim, id: number): Inspection | null {
@@ -356,12 +387,17 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     accepted: stockpileAccepts(b, good.type),
   }));
   const held = (type: number): number => stored.find((s) => s.type === type)?.count ?? 0;
-  const inputCount = recipe ? held(recipe.input) : 0;
+  // Asked only of a recipe that actually eats something: a no-input recipe's
+  // `input` is a dummy naming its own *output* good (see `Recipe`), so without
+  // the `consumes` guard the Farm would report the grain in its output buffer
+  // as an input count — a number with no buffer behind it.
+  const inputCount = recipe && consumes(recipe) ? held(recipe.input) : 0;
   const outputCount = recipe ? held(recipe.output) : 0;
   // One walk of the colony's items, not two: the ceiling verdict is the same
   // count the panel prints, so `overLimit` is asked rather than `atLimit`.
   const limit = recipe ? limitOf(sim, recipe.output) : UNLIMITED;
   const colonyCount = recipe ? countItems(sim, recipe.output) : 0;
+  const worker = workerState(sim, b);
   return {
     id: b.id,
     name: def.name,
@@ -374,11 +410,14 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     hasSlot: def.hasSlot,
     beds: def.beds,
     staffed: b.worker >= 0,
-    worker: workerState(sim, b),
+    worker,
     stored,
     storedTotal: stored.reduce((n, s) => n + s.count, 0),
     capacity: b.kind === BuildingKind.Stockpile ? b.w * b.h * STOCKPILE_PER_TILE : 0,
-    chain: recipe ? { input: GOODS[recipe.input].name, output: GOODS[recipe.output].name } : null,
+    chain:
+      recipe ?
+        { input: consumes(recipe) ? GOODS[recipe.input].name : null, output: GOODS[recipe.output].name }
+      : null,
     inputCount,
     inputCap: recipe?.inputCap ?? 0,
     outputCount,
@@ -388,17 +427,23 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     limit,
     colonyCount,
     stall:
-      !recipe || b.worker < 0 || b.millProgress >= 0 ? "none"
+      // A worker away at a meal is not a stall of any kind, and neither is a
+      // recipe with no input ever "waiting for" anything: the two guards are
+      // what keep the panel honest about the Farm and about lunch.
+      !recipe || b.worker < 0 || b.millProgress >= 0 || worker === "eating" ? "none"
       : overLimit(limit, colonyCount) ? "at-limit"
       : outputCount >= recipe.outputCap ? "output-full"
-      : "no-input",
+      : consumes(recipe) ? "no-input"
+      : "none",
+    tableShort: def.beds > 0 && b.state === BuildingState.Active && settled(sim) < populationCap(sim) && !tableSet(sim),
   };
 }
 
-function workerState(sim: Sim, b: Building): "none" | "walking" | "inside" {
+function workerState(sim: Sim, b: Building): "none" | "walking" | "inside" | "eating" {
   if (b.worker < 0) return "none";
   const worker = sim.colonists.find((c) => c.id === b.worker);
   if (!worker) return "none";
+  if (worker.eating) return "eating";
   return worker.inside ? "inside" : "walking";
 }
 

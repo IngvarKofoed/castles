@@ -79,17 +79,24 @@ function script(sim: Sim): Command[] {
     case 5:
       return [{ kind: "place", building: BuildingKind.Stockpile, x: 126, y: 126 }];
     // Early enough to be standing when the monster's first full prowl arrives.
-    case 400:
+    // Moved 400 → 150 at the bread step: meals put every colonist on the road
+    // for a few seconds a game-day, which was enough to leave this line half
+    // built when the orc arrived — and a half-built line is a different
+    // scenario (docs/changelog/2026-09-08-bread-economy.md).
+    case 150:
       return [{ kind: "placeWall", tiles: run(sim, 0), material: "timber" }];
     // Late enough that its builders are still out on open ground when the next
     // prowl starts, and one row nearer the den than the first line, so it is
     // what the monster notices first.
-    case 1650:
+    case 1700:
       return [{ kind: "placeWall", tiles: run(sim, 1), material: "timber" }];
     default:
       return [];
   }
 }
+
+/** The pinned hash of the run, named so the move history above can cite it. */
+const PINNED_V8 = "4e86c393";
 
 const damage = (sim: Sim): number => [...sim.wallDamageMap].reduce((n, v) => n + v, 0);
 
@@ -166,7 +173,15 @@ describe("the scripted encounter", () => {
     // docs/changelog/2026-09-07-production-limits-and-filters.md), and it moved
     // for the same reason v5 did: `limits` sits on `Sim`. Shape only — no
     // workshop, no ceiling, nothing here ever counts a plank.
-    expect(hashSim(final())).toBe("fe31cb4d");
+    //
+    // fe31cb4d → PINNED_V8 with the bread economy (SAVE_VERSION 8,
+    // docs/changelog/2026-09-08-bread-economy.md). Shape and behaviour: two
+    // fields per colonist, three `limits` slots, fifteen loaves in the clearing
+    // — and folk who walk off to eat once a game-day, which is what moved the
+    // two wall placements in the script above. Every beat this file asserts is
+    // unchanged: bitten hard, left standing, mended by labour, and somebody
+    // does not come home.
+    expect(hashSim(final())).toBe(PINNED_V8);
   });
 
   it("bites a standing palisade, and leaves it standing when its hours run out", () => {
@@ -184,11 +199,23 @@ describe("the scripted encounter", () => {
 
   it("costs the colony somebody, and the loss is quiet and permanent", () => {
     const sim = final();
-    expect(sim.colonists.length).toBeLessThan(5);
-    expect([...sim.graveMap].filter(Boolean).length).toBeGreaterThan(0);
+    const dead = 5 - sim.colonists.length;
+    const graves = [...sim.graveMap].filter(Boolean).length;
+    // The count, pinned: three builders caught at the one segment the monster
+    // camps. A future retiming that changes it has to be looked at rather than
+    // absorbed by a bound that anything satisfies.
+    expect(dead).toBe(3);
+    expect(graves).toBeGreaterThan(0);
     // The whole obituary: a smaller colony and a marker in the grass. Nothing
     // in the store records mourning, because there is nothing to record.
-    expect(sim.colonists.length + [...sim.graveMap].filter(Boolean).length).toBe(5);
+    //
+    // **Markers can be fewer than deaths and that is not a leak**: a grave is a
+    // per-tile marker and a second death on a tile shares it
+    // (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md). This run
+    // is exactly that case — a monster camping the segment catches each builder
+    // who walks up to the same tile — so what is asserted is that no marker
+    // exists without a death behind it, not a one-to-one count.
+    expect(graves).toBeLessThanOrEqual(dead);
   });
 
   it("leaves the wall standing and the wilds still out there", () => {

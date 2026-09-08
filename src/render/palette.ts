@@ -35,6 +35,15 @@ export const PROP = {
    *  rock pile and a block pile are not the same grey. */
   rock: 0x8a9096,
   block: 0xb3ab97,
+  /**
+   * The bread chain's three goods. Straw, sacking and crust: grain reads olive
+   * against the plank's tan, flour is the palest thing in the game, and the
+   * loaf is **darker and redder than timber** so a bread pile and a log pile
+   * are not the same brown at a glance.
+   */
+  grain: 0xa89b3e,
+  flour: 0xeae3cd,
+  bread: 0x96552b,
   linen: 0xe3d8ba,
   tunic: 0x3f79ab,
   smock: 0x5f9438,
@@ -50,6 +59,10 @@ export const PROP = {
   orcRag: 0x4a5230,
   trollHide: 0x7d8286,
   trollRag: 0x5c6165,
+  /** Worked farmland: turned earth, and the green standing in its furrows.
+   *  Darker and browner than the grass it sits in, so a farm reads as a plot. */
+  soil: 0x6b5433,
+  crop: 0x7f9a3c,
   /** A den: a dark mound of earth with bones showing. */
   den: 0x3f3a2c,
   denMouth: 0x241f18,
@@ -86,6 +99,9 @@ export const GOOD_HEX: Record<ItemTypeValue, number> = {
   [ItemType.Plank]: PROP.plank,
   [ItemType.Rock]: PROP.rock,
   [ItemType.Block]: PROP.block,
+  [ItemType.Grain]: PROP.grain,
+  [ItemType.Flour]: PROP.flour,
+  [ItemType.Bread]: PROP.bread,
 };
 
 /**

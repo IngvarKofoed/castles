@@ -1,5 +1,5 @@
 import { spawnLairs } from "./threats/lairs";
-import { STARTING_COLONISTS, UNLIMITED, WANDERER_INTERVAL } from "./tuning";
+import { PROVISION_BREAD, STARTING_COLONISTS, UNLIMITED, WANDERER_INTERVAL } from "./tuning";
 import { generate, tileIndex, Terrain, type World } from "./world/world";
 
 /**
@@ -25,6 +25,14 @@ export const ItemType = {
   Rock: 2,
   /** Cut stone; one raises one segment of stone wall. */
   Block: 3,
+  /** Grown on a farm out of nothing but labour; the mill's input. */
+  Grain: 4,
+  /** Ground grain; the oven's input. */
+  Flour: 5,
+  /** The one food in the game. A colonist walks to a loaf and eats it once a
+   *  game-day, and the wanderer gate wants one for everybody plus the newcomer
+   *  (docs/specs/2026-09-08-bread-economy.md). */
+  Bread: 6,
 } as const;
 export type ItemTypeValue = (typeof ItemType)[keyof typeof ItemType];
 
@@ -48,6 +56,14 @@ export const BuildingKind = {
   /** Beds. The first building the sawmill's planks are for, and the only
    *  thing in the game that raises the population cap. */
   House: 3,
+  /** Grain out of nothing but a farmer's hours — the one recipe in the game
+   *  with no input at all, and the biggest footprint. */
+  Farm: 4,
+  /** Grain into flour. The Mason move repeated: one def row, no machinery. */
+  Mill: 5,
+  /** Flour into bread, and the first building priced in **blocks** — the
+   *  mason's first customer that is not a wall. */
+  Oven: 6,
 } as const;
 export type BuildingKindValue = (typeof BuildingKind)[keyof typeof BuildingKind];
 
@@ -232,6 +248,27 @@ export interface Colonist {
    * 0 for everyone settled, and reset to 0 the moment a wanderer arrives.
    */
   patience: number;
+  /**
+   * Ticks since this colonist last ate, unbounded. At `MEAL_TICKS` they are due
+   * a meal and go looking for bread; from `HUNGRY_TICKS` with none found they
+   * work and walk at `HUNGRY_FACTOR` — and that is the whole penalty, forever
+   * (docs/CONCEPT.md: supply failures plateau, they never spiral).
+   *
+   * A **wanderer does not hunger**: the clock is only advanced for colonists
+   * with `dest < 0`, so it starts at settling rather than at the coast.
+   */
+  hunger: number;
+  /**
+   * 1 while the meal errand is in hand — a route to a particular loaf, or the
+   * standing-still tick that follows a workshop's door.
+   *
+   * Its own named field rather than a corner of `work` or `task`, per the
+   * housing amendment's lesson (docs/specs/2026-09-07-housing-wanderers.md):
+   * what it buys is that `stepColonists` skips the pool/slot split while it is
+   * set, so a slot worker walking to a loaf is not re-routed to its station and
+   * a pool worker does not claim a task on top of its lunch.
+   */
+  eating: number;
   /** Remaining route as tile indices; `step` is the index of the next one. */
   path: number[];
   step: number;
@@ -284,6 +321,9 @@ export interface Building {
   acceptPlank: number;
   acceptRock: number;
   acceptBlock: number;
+  acceptGrain: number;
+  acceptFlour: number;
+  acceptBread: number;
   /** Slot worker, or -1. */
   worker: number;
   /**
@@ -509,7 +549,8 @@ export function createSim(seed: number): Sim {
   spawnLairs(sim);
 
   const centre = Math.floor(world.size / 2);
-  for (const [x, y] of spawnTiles(world, centre, STARTING_COLONISTS)) {
+  const opening = spawnTiles(world, centre, STARTING_COLONISTS);
+  for (const [x, y] of opening) {
     sim.colonists.push({
       id: mintId(sim),
       x: x + 0.5,
@@ -525,8 +566,44 @@ export function createSim(seed: number): Sim {
       carrying: -1,
       dest: -1,
       patience: 0,
+      hunger: 0,
+      eating: 0,
       path: [],
       step: 0,
+    });
+  }
+
+  // The starting five arrive **provisioned**: `PROVISION_BREAD` loaves a head,
+  // lying in the clearing. Without them a fresh colony is hungry by day two
+  // with no counter available yet, which is risk imposed rather than chosen
+  // (docs/CONCEPT.md) — the runway is about three days, long enough to see the
+  // loop and short enough that the bread chain is the first thing worth
+  // building.
+  //
+  // Written as item literals rather than through `spawnItem`, and **not**
+  // because it is shorter: `items.ts` reaches `path.ts`, which reaches
+  // `walls/`, which reaches `buildings.ts`, whose module body reads `ItemType`
+  // from this file — so importing the drop spiral here would evaluate that
+  // table before this module's enums exist, in whichever load order a bundler
+  // happened to pick. The same cycle `createSim` already declines to close for
+  // the enclosure fill. Nothing is lost: with no buildings and no walls yet,
+  // the spiral's answer *is* the first standable tile from the centre. One pile
+  // on one tile, exactly as quarried rubble is — items never block each other.
+  //
+  // It lies under the **last** of the opening tiles rather than the middle of
+  // the clearing, and that is not arbitrary: a ground item refuses a footprint
+  // (`canPlace`), and the centre tile is where a player's first building goes.
+  // The pile is swept into the first stockpile within a game-minute either way.
+  const [px, py] = opening[opening.length - 1] ?? [centre, centre];
+  for (let n = 0; n < PROVISION_BREAD * sim.colonists.length; n++) {
+    sim.items.push({
+      id: mintId(sim),
+      type: ItemType.Bread,
+      loc: Loc.Ground,
+      x: px,
+      y: py,
+      holder: -1,
+      reservedBy: -1,
     });
   }
   return sim;

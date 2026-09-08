@@ -23,7 +23,14 @@ export interface GoodDef {
   readonly name: string;
   /** Lower case, for the ribbon's faint caps label. */
   readonly label: string;
-  readonly accept: "acceptLog" | "acceptPlank" | "acceptRock" | "acceptBlock";
+  readonly accept:
+    | "acceptLog"
+    | "acceptPlank"
+    | "acceptRock"
+    | "acceptBlock"
+    | "acceptGrain"
+    | "acceptFlour"
+    | "acceptBread";
 }
 
 export const GOODS: Record<ItemTypeValue, GoodDef> = {
@@ -31,6 +38,9 @@ export const GOODS: Record<ItemTypeValue, GoodDef> = {
   [ItemType.Plank]: { type: ItemType.Plank, name: "Plank", label: "planks", accept: "acceptPlank" },
   [ItemType.Rock]: { type: ItemType.Rock, name: "Rock", label: "rock", accept: "acceptRock" },
   [ItemType.Block]: { type: ItemType.Block, name: "Block", label: "blocks", accept: "acceptBlock" },
+  [ItemType.Grain]: { type: ItemType.Grain, name: "Grain", label: "grain", accept: "acceptGrain" },
+  [ItemType.Flour]: { type: ItemType.Flour, name: "Flour", label: "flour", accept: "acceptFlour" },
+  [ItemType.Bread]: { type: ItemType.Bread, name: "Bread", label: "bread", accept: "acceptBread" },
 };
 
 /** Every good, in `ItemType` order — which is the order every readout uses. */

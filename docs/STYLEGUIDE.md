@@ -1,6 +1,6 @@
 # Castles — HUD style guide
 
-*Last updated 2026-09-07. Distilled from the approved visual mock
+*Last updated 2026-09-08. Distilled from the approved visual mock
 (https://claude.ai/code/artifact/fa8e50e2-7a08-422e-890b-23e3f262711c — the
 live, editable reference) and the HUD proven in `mockups/mockup3d.html`.
 Every session doing UI work copies from here; nothing visual gets invented
@@ -45,6 +45,9 @@ The game promises calm; the UI must keep it:
 | `plank` | `#d0b078` | plank resource icon |
 | `rock` | `#8a9096` | rock resource icon (quarried rubble: cool, raw) |
 | `block` | `#b3ab97` | block resource icon (cut stone: warmer, paler) |
+| `grain` | `#a89b3e` | grain resource icon (straw: olive, so it is not the plank's tan) |
+| `flour` | `#eae3cd` | flour resource icon (sacking: the palest thing on the ribbon) |
+| `bread` | `#96552b` | bread resource icon (crust: **darker and redder than `timber`**, so a loaf pip and a log pip are not the same brown) |
 
 World colors live in `src/render/palette.ts` and are not UI colors.
 
@@ -81,6 +84,18 @@ workshop held by its ceiling says so in the note row, in the house voice:
 `at limit (20 planks in the colony)`. A stockpile's note row carries the one
 sentence that keeps filters and ceilings apart — filters choose what a pile
 accepts, ceilings stop a good being made.
+
+**A chain chip may be one-sided.** A workshop whose recipe consumes nothing —
+the Farm — draws `→ Grain` with no chip to the left of the arrow, rather than
+an empty chip: nothing is missing, there is simply no input. Its panel drops
+the `Input` row for the same reason, and its note row never says "waiting
+for" anything.
+
+**A panel may carry two note rows** when the second is a *consequence* rather
+than a status: the House says `raises the cap by 2` under its beds row (the
+number alone is a figure with nothing attached to it), and adds `no one will
+come while the table is short` while the food gate — not the cap — is what
+holds arrivals. Both are the italic faint recipe; neither is an alarm.
 
 ## Buttons, tags, meters
 
@@ -252,7 +267,18 @@ were measured against real terrain (`2026-09-01-tick-and-labour`):
 - **Ribbon** — full-width top bar: brand, resource readouts (icon + value +
   faint caps label), a `line-soft` divider, folk/idle counts, then
   right-aligned speed group (pause, ×1, ×2, ×4 — active gets the gold
-  treatment) and the day/time caption.
+  treatment) and the day/time caption. Seven goods and the threat meter make
+  it a wide bar; it wraps rather than scrolling, and the speed group keeps its
+  `margin-left: auto`, so a narrow viewport gets a second ribbon line with the
+  clock still at the right.
+
+  **The folk readout carries the game's one hunger signal**: a `· 2 hungry`
+  suffix in **ink-dim**, shown only while somebody is actually *slowed* — not
+  merely due a meal, which would flicker at every lunch walk. Ink-dim and
+  never a colour: rust would read as an alarm, and there is nothing to react
+  to. A breadless colony is a slower colony and it recovers by itself the
+  moment loaves exist again, so the suffix appears and disappears with the
+  slowdown and says nothing else. No toast, no banner, no meter.
 - **Build rail** — left edge, 62px wide, below the ribbon: a 10px caps
   section head, then that section's vertical tools, repeating. Sections are
   by *what the tool does to the world* — **Orders** (tell people to work on

@@ -106,13 +106,17 @@ const GOOD_VAR: Record<ItemTypeValue, string> = {
   [ItemType.Plank]: "var(--plank)",
   [ItemType.Rock]: "var(--rock)",
   [ItemType.Block]: "var(--block)",
+  [ItemType.Grain]: "var(--grain)",
+  [ItemType.Flour]: "var(--flour)",
+  [ItemType.Bread]: "var(--bread)",
 };
 
 /** How the inspector names where a slot worker is. */
-const WORKER_LABEL: Record<"none" | "walking" | "inside", string> = {
+const WORKER_LABEL: Record<"none" | "walking" | "inside" | "eating", string> = {
   none: "none",
   walking: "on the way",
   inside: "inside",
+  eating: "eating",
 };
 
 const ICONS: Record<string, string> = {
@@ -132,6 +136,11 @@ const ICONS: Record<string, string> = {
   terraform: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 14 h5 v-4 h5 v-4 h6"/><path d="M3 6 h6"/><path d="M6 4 v4"/></svg>`,
   // House: a gabled box with a door — beds, and nothing that looks like work.
   house: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 9 L11 3 L19 9"/><rect x="5" y="9" width="12" height="6"/><path d="M9 15 v-4 h4 v4"/></svg>`,
+  // Farm: furrows under a fence line. Mill: a hopper over a millstone.
+  // Oven: a domed stone oven with its mouth and a wisp above it.
+  farm: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5 h16"/><path d="M3 15 l3 -7"/><path d="M9 15 l3 -7"/><path d="M15 15 l3 -7"/><path d="M6 3 v4"/><path d="M16 3 v4"/></svg>`,
+  mill: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3 h10 l-2 5 h-6 Z"/><rect x="5" y="10" width="12" height="4"/><path d="M11 8 v2"/><path d="M4 15 h14"/></svg>`,
+  oven: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V9 q7 -6 14 0 v6 Z"/><path d="M9 15 v-3 h4 v3"/><path d="M16 6 q2 -2 0 -4"/></svg>`,
   mason: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="9" width="14" height="6"/><path d="M11 9 v6"/><path d="M8 6 h6"/><path d="M11 3 v3"/></svg>`,
   // Stone wall: coursed blocks. Stone gate: the same arch, squared.
   stonewall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="6" width="16" height="4"/><rect x="3" y="10" width="16" height="4"/><path d="M8 6 v4"/><path d="M14 6 v4"/><path d="M5 10 v4"/><path d="M11 10 v4"/><path d="M17 10 v4"/></svg>`,
@@ -296,6 +305,9 @@ export class Hud {
     // no toast, no banner, nothing announces an arrival but this number
     // (docs/STYLEGUIDE.md, Tone).
     this.res.folk.textContent = r.cap >= 0 ? `${r.folk} / ${r.cap}` : String(r.folk);
+    const hungry = this.res.hungry;
+    hungry.hidden = r.hungry === 0;
+    hungry.textContent = r.hungry > 0 ? `· ${r.hungry} hungry` : "";
     this.res.idle.textContent = String(r.idle);
     this.res.enclosed.textContent = String(r.enclosed);
     this.res.day.textContent = `Day ${r.day}`;
@@ -341,7 +353,7 @@ export class Hud {
       ribbon.append(this.resource(`good${good.type}`, GOOD_VAR[good.type], good.label));
     }
     ribbon.append(el("span", { class: "divider" }));
-    ribbon.append(this.count("folk", "folk"));
+    ribbon.append(this.folkCluster());
     ribbon.append(this.count("idle", "idle"));
     ribbon.append(el("span", { class: "divider" }));
     // The game's progress bar: buildable ground the wall has actually claimed.
@@ -398,6 +410,23 @@ export class Hud {
     return span;
   }
 
+  /**
+   * The folk readout, plus the one signal hunger ever gives the player: a quiet
+   * `· 2 hungry` suffix, shown only while somebody is actually **slowed**.
+   *
+   * Ink-dim and never a colour change — rust would read as an alarm, and there
+   * is nothing to react to: the colony is slower and will recover the moment
+   * loaves exist again (docs/STYLEGUIDE.md, Tone).
+   */
+  private folkCluster(): HTMLElement {
+    const span = this.count("folk", "folk");
+    const hungry = el("u", { class: "hungry" });
+    hungry.hidden = true;
+    this.res.hungry = hungry;
+    span.append(hungry);
+    return span;
+  }
+
   private count(key: string, label: string): HTMLElement {
     const span = el("span", { class: "res" });
     const value = el("b", {}, "0");
@@ -412,8 +441,8 @@ export class Hud {
    * The rail, in three labelled sections — **Orders** (tell people to do
    * something to what is already there), **Build** (put a building down),
    * **Walls** (draw a line). Eleven tools in one unbroken column stopped being
-   * readable; the styleguide's rail anatomy already allowed section heads, so
-   * this is that allowance spent.
+   * readable — fourteen since the bread chain — and the styleguide's rail
+   * anatomy already allowed section heads, so this is that allowance spent.
    */
   private buildRail(): HTMLElement {
     const rail = el("nav", { class: "panel rail", "aria-label": "Build tools" });
@@ -430,6 +459,9 @@ export class Hud {
       BuildingKind.Sawmill,
       BuildingKind.Mason,
       BuildingKind.House,
+      BuildingKind.Farm,
+      BuildingKind.Mill,
+      BuildingKind.Oven,
     ] as BuildingKindValue[]) {
       const def = BUILDING_DEFS[kind];
       // The caption names the def's own material: the House costs planks, and
@@ -504,6 +536,7 @@ export class Hud {
       b.worker,
       b.limit,
       b.colonyCount,
+      b.tableShort,
     ].join("|");
     if (signature === this.lastPanel) return;
     this.lastPanel = signature;
@@ -606,7 +639,16 @@ export class Hud {
       // The whole panel: what it is, and how many beds it added. No action —
       // a House has no slot, nothing to staff and nothing to stop, and there
       // is no bed to assign because beds are a cap and not an assignment.
+      //
+      // The note is what connects six houses to `folk 6 / 17`: the beds row on
+      // its own is a number with no consequence attached, and the player has to
+      // be told once that this building *is* the population cap.
       nodes.push(rows([["Beds", String(b.beds)]]));
+      nodes.push(note(`raises the cap by ${b.beds}`));
+      // And when the *bread* gate is what holds arrivals, this is where the
+      // colony says so. Load-bearing rather than polish: the gate is silent,
+      // player-caused, and can stand for game-days.
+      if (b.tableShort) nodes.push(note("no one will come while the table is short"));
       return nodes;
     }
 
@@ -637,7 +679,10 @@ export class Hud {
       // stops drawing them, so this is where the player reads that the slot
       // is filled.
       ["Worker", WORKER_LABEL[b.worker]],
-      ["Input", `${b.inputCount} / ${b.inputCap}`],
+      // No input row for a workshop that consumes nothing — a Farm reading
+      // `Input 0 / 0` would invite the player to look for the buffer it does
+      // not have (docs/specs/2026-09-08-bread-economy.md).
+      ...(b.inputCap > 0 ? ([["Input", `${b.inputCount} / ${b.inputCap}`]] as [string, string][]) : []),
       ["Output", `${b.outputCount} / ${b.outputCap}`],
     ]);
     // The ceiling, directly under the per-building output count and worded
@@ -802,6 +847,10 @@ function wallCost(material: WallMaterial): string {
  */
 function millNote(b: NonNullable<ReturnType<typeof inspect>>): string {
   if (!b.staffed) return "no one is working here";
+  // A worker away at a meal, said plainly: the row above already says `eating`,
+  // and a note claiming "working" while nobody is in there would be the panel
+  // lying about the one thing it exists to explain.
+  if (b.worker === "eating") return "gone to eat — back shortly";
   const chainOf = b.chain;
   if (!chainOf) return "";
   // The ceiling holding the mill is the player's own setting, said in the
@@ -811,7 +860,7 @@ function millNote(b: NonNullable<ReturnType<typeof inspect>>): string {
     return `at limit (${b.colonyCount} ${GOODS[b.outputType as ItemTypeValue].label} in the colony)`;
   }
   if (b.stall === "output-full") return `output full — nowhere to put the ${chainOf.output.toLowerCase()}s`;
-  if (b.stall === "no-input") return `waiting for ${chainOf.input.toLowerCase()}`;
+  if (b.stall === "no-input" && chainOf.input) return `waiting for ${chainOf.input.toLowerCase()}`;
   return "working";
 }
 
@@ -877,9 +926,16 @@ function meter(fraction: number): HTMLElement {
   return bar;
 }
 
-function chain(from: string, to: string): HTMLElement {
+/**
+ * A workshop's chain chip. **One-sided when there is no input** — the Farm
+ * reads `→ Grain`, because a recipe that consumes nothing has nothing to put
+ * on the left of the arrow, and an empty chip there would read as a missing
+ * good rather than as no good at all.
+ */
+function chain(from: string | null, to: string): HTMLElement {
   const box = el("div", { class: "chain" });
-  box.append(el("span", { class: "chip" }, from), el("span", { class: "arrow" }, "→"), el("span", { class: "chip" }, to));
+  if (from !== null) box.append(el("span", { class: "chip" }, from));
+  box.append(el("span", { class: "arrow" }, "→"), el("span", { class: "chip" }, to));
   return box;
 }
 

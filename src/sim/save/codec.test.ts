@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hashSim } from "../hash";
-import { createSim } from "../store";
+import { ItemType, createSim, unlimitedLimits } from "../store";
 import { canMine } from "../ground";
 import { advanceTick } from "../tick";
 import type { Command } from "../commands";
@@ -245,19 +245,28 @@ describe("the save codec refuses what it cannot read", () => {
     short.limits = [-1, -1];
     await expect(decode(await encode(short, APP))).rejects.toBeInstanceOf(SaveError);
 
+    // Full-length arrays with one bad slot, built from the goods table rather
+    // than written out: the length is what the rung above is about, and a
+    // literal here would start failing for the wrong reason the next time a
+    // good is appended.
     const stray = playedSim(10);
-    stray.limits = [-1, -7, -1, -1];
+    stray.limits = unlimitedLimits();
+    stray.limits[ItemType.Plank] = -7;
     await expect(decode(await encode(stray, APP))).rejects.toBeInstanceOf(SaveError);
 
     const fractional = playedSim(10);
-    fractional.limits = [-1, 2.5, -1, -1];
+    fractional.limits = unlimitedLimits();
+    fractional.limits[ItemType.Plank] = 2.5;
     await expect(decode(await encode(fractional, APP))).rejects.toBeInstanceOf(SaveError);
 
     // Above today's `LIMIT_MAX` is fine: the range is a tunable, the ceiling
     // is in the save, and a number written when the range was wider must load.
     const wide = playedSim(10);
-    wide.limits = [-1, 250, -1, -1];
-    expect((await decode(await encode(wide, APP))).limits).toEqual([-1, 250, -1, -1]);
+    wide.limits = unlimitedLimits();
+    wide.limits[ItemType.Plank] = 250;
+    const expected = unlimitedLimits();
+    expected[ItemType.Plank] = 250;
+    expect((await decode(await encode(wide, APP))).limits).toEqual(expected);
   });
 
   it("rejects a corrupt base64 payload", async () => {

@@ -5,7 +5,10 @@ import { DAY_TICKS, RHYTHM_FUZZ, THREAT_BUCKETS, THREAT_RANGE } from "../tuning"
 import { WallState } from "../walls";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { tileIndex } from "../world/world";
-import { monsterAtTile, monsters, rhythm, threat } from "./index";
+import { inspect, monsterAtTile, monsters, readout, rhythm, threat } from "./index";
+import { spawnItem } from "../items";
+import { BuildingKind, BuildingState, ItemType } from "../store";
+import { HUNGRY_TICKS, MEAL_TICKS, STARTING_COLONISTS } from "../tuning";
 
 /**
  * What the player is allowed to know about the Wilds.
@@ -36,6 +39,8 @@ function peopled(size = 24): Sim {
     carrying: -1,
     dest: -1,
     patience: 0,
+    hunger: 0,
+    eating: 0,
     path: [],
     step: 0,
   };
@@ -250,5 +255,59 @@ describe("the threat meter", () => {
     // den is near the building even though it was far from the folk.
     sim.buildings.push(testBuilding({ x: 12, y: 20 }));
     expect(threat(sim).caption).not.toMatch(/far wilds/);
+  });
+});
+
+describe("what the ribbon may know about hunger", () => {
+  it("counts the slowed, not everyone who is merely due a meal", () => {
+    // The distinction is the whole reason the readout is trustworthy: a colony
+    // walking to lunch is not a colony in trouble, and a suffix that flickered
+    // at every meal would be noise (docs/specs/2026-09-08-bread-economy.md).
+    const sim = peopled();
+    const c = sim.colonists[0];
+    expect(readout(sim).hungry).toBe(0);
+
+    c.hunger = MEAL_TICKS;
+    expect(readout(sim).hungry).toBe(0);
+    c.hunger = HUNGRY_TICKS;
+    expect(readout(sim).hungry).toBe(1);
+
+    // A wanderer is in none of the numbers, this one included: they do not
+    // hunger at all until they settle.
+    c.dest = 7;
+    expect(readout(sim).hungry).toBe(0);
+    expect(readout(sim).folk).toBe(0);
+  });
+});
+
+describe("what a House says about the food gate", () => {
+  it("reports the table as short only when bread, not the cap, is what holds arrivals", () => {
+    const sim = peopled();
+    const house = testBuilding({ id: 40, kind: BuildingKind.House, x: 4, y: 4 });
+    sim.buildings.push(house);
+    // One settled colonist, no bread, room under the cap: the gate is shut and
+    // it is the larder that shuts it.
+    expect(inspect(sim, house.id)?.tableShort).toBe(true);
+
+    // A loaf per head plus the newcomer clears it.
+    spawnItem(sim, ItemType.Bread, 8, 8);
+    spawnItem(sim, ItemType.Bread, 8, 8);
+    expect(inspect(sim, house.id)?.tableShort).toBe(false);
+
+    // And the *cap* holding arrivals is not the table being short: a colony at
+    // its cap with an empty larder says nothing, because bread is not what is
+    // stopping anybody.
+    for (const loaf of [...sim.items]) sim.items.splice(sim.items.indexOf(loaf), 1);
+    while (sim.colonists.length < STARTING_COLONISTS + 2) {
+      sim.colonists.push({ ...sim.colonists[0], id: sim.nextId++ });
+    }
+    expect(inspect(sim, house.id)?.tableShort).toBe(false);
+
+    // Nothing but a House ever reports it, and neither does an unfinished one.
+    const mill = testBuilding({ id: 41, kind: BuildingKind.Sawmill, x: 12, y: 4 });
+    const site = testBuilding({ id: 42, kind: BuildingKind.House, x: 12, y: 12, state: BuildingState.Blueprint });
+    sim.buildings.push(mill, site);
+    expect(inspect(sim, mill.id)?.tableShort).toBe(false);
+    expect(inspect(sim, site.id)?.tableShort).toBe(false);
   });
 });

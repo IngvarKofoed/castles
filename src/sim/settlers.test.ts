@@ -5,7 +5,9 @@ import type { Command } from "./commands";
 import { hashSim } from "./hash";
 import { readout } from "./know";
 import { decode, encode } from "./save/codec";
-import { bedsBuilt, populationCap, settled, wanderer } from "./settlers";
+import { spawnItem } from "./items";
+import { countItems } from "./items";
+import { bedsBuilt, populationCap, settled, tableSet, wanderer } from "./settlers";
 import { BuildingKind, BuildingState, ItemType, createSim, type Sim } from "./store";
 import { flatSim, testBuilding, testMonster } from "./test-sim";
 import { advanceTick } from "./tick";
@@ -35,14 +37,23 @@ import { Terrain, tileIndex } from "./world/world";
  */
 
 const SETTLING = 20260908;
-const CAUGHT = 20260912;
+/**
+ * The death-en-route seed, **re-picked at the bread step**: on 20260912 the
+ * wanderer now walks in unharmed, because meals move everybody's timings by a
+ * few seconds and an interception is decided in seconds
+ * (docs/specs/2026-09-08-bread-economy.md). 20260918 is the same scenario found
+ * the same way — by seed selection rather than by staging a spawn — and it is a
+ * better one: the orc catches this one early, and the replacement is on the
+ * road before the run ends.
+ */
+const CAUGHT = 20260918;
 /** Long enough for the first wanderer to settle **and** the second to be on
  *  the road, which is what makes "a second follows while beds remain" an
  *  observable rather than a promise. */
 const SETTLING_TICKS = 2400;
 /** Long enough for the death and for the countdown to restart after it — the
  *  recovery loop is the whole point of the step, so it sits inside the pin. */
-const CAUGHT_TICKS = 1700;
+const CAUGHT_TICKS = 1950;
 
 const CENTRE = 128;
 const SIZE = 256;
@@ -107,6 +118,30 @@ function script(sim: Sim): Command[] {
 }
 
 /**
+ * Keep a few loaves in the colony, topped up as they are eaten.
+ *
+ * The arrival gate now wants bread for everyone plus the newcomer
+ * (docs/specs/2026-09-08-bread-economy.md), so a colony with no food chain
+ * stops growing the moment its opening provisions run out — three game-days
+ * in, which is *inside* both runs below. Left unfed neither of them would
+ * produce an arrival to watch at all.
+ *
+ * So the larder is **stocked rather than farmed**: the bread chain has its own
+ * pinned run (`economy/bread.test.ts`) and the gate has its own tests below,
+ * while what these two exist for is the walk — the beach, the hundred tiles,
+ * the orc on the way. Deterministic, like every other choice these scripts
+ * make: `spawnItem`'s drop spiral draws nothing from the PRNG.
+ */
+function larder(sim: Sim, want: number): void {
+  for (let n = countItems(sim, ItemType.Bread); n < want; n++) spawnItem(sim, ItemType.Bread, CENTRE, CENTRE);
+}
+
+/** Loaves kept in the colony: comfortably above the gate's `settled + 1` for
+ *  the seven folk these runs can reach, and small enough that hauling it is
+ *  not what the pool spends its day on. */
+const LARDER = 10;
+
+/**
  * What the run *did*, watched as it happened. The interesting facts are all
  * transient — a landing tile is walked off, a spawn tick is gone a tick later
  * — so they are gathered by the same pass that produces the end state rather
@@ -128,6 +163,13 @@ function run(seed: number, ticks: number): Trace {
   const seen = new Set<number>();
   let folk = settled(sim);
   for (let t = 0; t < ticks; t++) {
+    // Topped up on a fixed cadence rather than every tick, so the run pays for
+    // one scan a game-minute instead of one a tick.
+    // `settled + 2` is the floor rather than a courtesy: the gate wants
+    // `settled + 1`, so a run that ever grows past `LARDER` folk would drop
+    // below its own bar and stop producing arrivals again — the exact failure
+    // this larder exists to prevent, recurring silently.
+    if (t % 200 === 0) larder(sim, Math.max(LARDER, settled(sim) + 2));
     advanceTick(sim, script(sim));
     const walking = wanderer(sim);
     if (walking && !seen.has(walking.id)) {
@@ -180,7 +222,17 @@ describe("the scripted settling", () => {
     // docs/changelog/2026-09-07-production-limits-and-filters.md): the store
     // gained `limits`, all four slots `-1`. Shape only — this run sets no
     // ceiling, so the mill fills the House exactly as before.
-    expect(hashSim(settling())).toBe("e3cf9525");
+    //
+    // e3cf9525 → 2cecf74f with the bread economy (SAVE_VERSION 8,
+    // docs/changelog/2026-09-08-bread-economy.md). Shape **and** behaviour, and
+    // the behaviour is the point of the step: every colonist gained `hunger`
+    // and `eating`, the store's `limits` grew three slots, the colony opens
+    // holding provision bread, and the run now feeds itself (see `larder`) —
+    // so folk break off to eat, and the arrival gate asks for a loaf per head
+    // before anybody may land. The assertions below are what say the number
+    // moved for that and not for something quiet: the walk, the settle, the
+    // second arrival and the cap are all unchanged in kind, only later.
+    expect(hashSim(settling())).toBe("2cecf74f");
   });
 
   it("builds a House out of planks, which is what planks are for", () => {
@@ -253,7 +305,13 @@ describe("the scripted death en route", () => {
   it("holds its golden hash", () => {
     // 08abe6b8 → b740df36 for the v6 `patience` field, exactly as above, and
     // b740df36 → 70cb202a for the v7 `limits` array — shape only, as above.
-    expect(hashSim(caught())).toBe("70cb202a");
+    //
+    // 70cb202a → 3050f53e at the bread step, and this one is **a different
+    // colony**: the run is on a new seed and thirty ticks longer, because meals
+    // moved every timing by a few seconds and 20260912's orc now misses the
+    // wanderer entirely (see `CAUGHT`). What is pinned is the same scenario,
+    // re-found the same way.
+    expect(hashSim(caught())).toBe("3050f53e");
   });
 
   it("loses the wanderer to an orc, and buries them like anyone", () => {
@@ -265,10 +323,14 @@ describe("the scripted death en route", () => {
     expect(settled(sim)).toBe(STARTING_COLONISTS);
     expect(graves(sim)).toBe(1);
     // Out in the wilds, not at the door — the walk is where the risk is.
+    // Measured as walking distance from the House rather than as a difference
+    // in x alone: which axis the coast lies on is a property of the seed, and
+    // the claim is about distance.
     const grave = [...sim.graveMap].findIndex(Boolean);
     const h = house(sim);
     expect(h).toBeDefined();
-    expect(Math.abs((grave % SIZE) - (h?.x ?? 0))).toBeGreaterThan(20);
+    const away = Math.abs((grave % SIZE) - (h?.x ?? 0)) + Math.abs(Math.floor(grave / SIZE) - (h?.y ?? 0));
+    expect(away).toBeGreaterThan(20);
     // No announcement anywhere: nothing in the store records a death but the
     // marker and the missing pair of hands.
     expect(sim.colonists.some((c) => c.dest >= 0 && c.patience >= WANDERER_PATIENCE)).toBe(false);
@@ -292,17 +354,28 @@ describe("a wanderer survives a save and load mid-walk", () => {
   // `wandererTimer` are all store fields a save could quietly lose.
   for (const [name, seed, ticks, mid] of [
     ["settling", SETTLING, SETTLING_TICKS, 1500],
-    ["caught", CAUGHT, CAUGHT_TICKS, 1350],
+    ["caught", CAUGHT, CAUGHT_TICKS, 1600],
   ] as const) {
     it(`carries the ${name} run through a reload`, async () => {
       const straight = createSim(seed);
-      for (let t = 0; t < mid; t++) advanceTick(straight, script(straight));
+      // The same larder cadence `run` uses, or these two colonies stop growing
+      // three days in and there is no wanderer left to carry through anything.
+      for (let t = 0; t < mid; t++) {
+        if (t % 200 === 0) larder(straight, Math.max(LARDER, settled(straight) + 2));
+        advanceTick(straight, script(straight));
+      }
       expect(wanderer(straight)).not.toBeNull();
 
       const restored = await decode(await encode(straight, "test"));
       expect(hashSim(restored)).toBe(hashSim(straight));
 
       for (let t = mid; t < ticks; t++) {
+        // Both sides fed identically: the top-up is part of the run, so a
+        // divergence here would be the larder's and not the save format's.
+        if (t % 200 === 0) {
+          larder(straight, Math.max(LARDER, settled(straight) + 2));
+          larder(restored, Math.max(LARDER, settled(restored) + 2));
+        }
         advanceTick(straight, script(straight));
         advanceTick(restored, script(restored));
       }
@@ -347,10 +420,16 @@ describe("a running patience clock is state, not a recomputation", () => {
 
 // ------------------------------------------------------------------- units
 
-/** A flat world with a sea down its west edge and a sand strip beside it, so
- *  there is a genuine coast to land on. */
+/**
+ * A flat world with a sea down its west edge and a sand strip beside it, so
+ * there is a genuine coast to land on — **and a larder in the far corner**,
+ * because the arrival gate now asks for a loaf per head plus one and every
+ * test below is about an arrival. Clear of the tiles these tests put buildings
+ * on, and generous enough to feed a full colony for the few game-days they run.
+ */
 function coastSim(size = 24): Sim {
   const sim = flatSim(size);
+  for (let n = 0; n < 30; n++) spawnItem(sim, ItemType.Bread, size - 4, 2);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < 2; x++) {
       const i = tileIndex(x, y, size);
@@ -399,6 +478,95 @@ describe("the population cap", () => {
   });
 });
 
+describe("the bread gate", () => {
+  it("wants a loaf for everyone plus the newcomer", () => {
+    // The arithmetic, stated once: `settled + 1`, so the table is set for the
+    // colony *and* the one arriving (docs/specs/2026-09-08-bread-economy.md).
+    const sim = flatSim();
+    // **Except with nobody left**, which is not a softening: with no colonists
+    // there is nobody to staff a farm, so the bar would be unsatisfiable and
+    // the arrival loop — the housing step's recovery from a wipe — would stop
+    // for good. An empty colony always admits one pair of hands.
+    expect(settled(sim)).toBe(0);
+    expect(tableSet(sim)).toBe(true);
+
+    for (let i = 0; i < 3; i++) {
+      sim.colonists.push({
+        id: sim.nextId++,
+        x: 6.5,
+        y: 6.5,
+        px: 6.5,
+        py: 6.5,
+        heading: 0,
+        slot: -1,
+        inside: 0,
+        task: -1,
+        phase: 0,
+        work: 0,
+        carrying: -1,
+        dest: -1,
+        patience: 0,
+        hunger: 0,
+        eating: 0,
+        path: [],
+        step: 0,
+      });
+    }
+    // Three settled folk and no bread: now the bar binds.
+    expect(settled(sim)).toBe(3);
+    expect(tableSet(sim)).toBe(false);
+    // Three loaves is still one short — the newcomer's.
+    for (let i = 0; i < 3; i++) spawnItem(sim, ItemType.Bread, 8, 8);
+    expect(countItems(sim, ItemType.Bread)).toBe(3);
+    expect(tableSet(sim)).toBe(false);
+    spawnItem(sim, ItemType.Bread, 8, 8);
+    expect(tableSet(sim)).toBe(true);
+  });
+
+  it("holds the countdown shut, and opens it the moment the loaves exist", () => {
+    // The gate is checked beside the cap check and *before* the clock, so a
+    // colony short of bread is not banking arrivals it will get all at once.
+    const sim = coastSim();
+    homeAt(sim, 10, 10);
+    for (const loaf of sim.items.filter((it) => it.type === ItemType.Bread)) {
+      sim.items.splice(sim.items.indexOf(loaf), 1);
+    }
+    // Somebody lives here, so the empty-colony exemption does not apply and the
+    // bar is two loaves: theirs and the newcomer's.
+    sim.colonists.push({
+      id: sim.nextId++,
+      x: 10.5,
+      y: 13.5,
+      px: 10.5,
+      py: 13.5,
+      heading: 0,
+      slot: -1,
+      inside: 0,
+      task: -1,
+      phase: 0,
+      work: 0,
+      carrying: -1,
+      dest: -1,
+      patience: 0,
+      hunger: 0,
+      eating: 0,
+      path: [],
+      step: 0,
+    });
+    const parked = sim.wandererTimer;
+    for (let t = 0; t < 400; t++) advanceTick(sim);
+    expect(wanderer(sim)).toBeNull();
+    // The clock is exactly where it was left — paused, not spent.
+    expect(sim.wandererTimer).toBe(parked);
+
+    // Two loaves, and the road opens again from where the clock stopped.
+    spawnItem(sim, ItemType.Bread, 20, 2);
+    spawnItem(sim, ItemType.Bread, 20, 2);
+    for (let t = 0; t < 400 && !wanderer(sim); t++) advanceTick(sim);
+    expect(wanderer(sim)).not.toBeNull();
+  });
+});
+
 describe("arrivals", () => {
   it("stop at the cap and start again when a death opens room", () => {
     const sim = coastSim();
@@ -420,6 +588,8 @@ describe("arrivals", () => {
         carrying: -1,
         dest: -1,
         patience: 0,
+        hunger: 0,
+        eating: 0,
         path: [],
         step: 0,
       });

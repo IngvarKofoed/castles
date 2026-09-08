@@ -53,6 +53,43 @@ export const MASON_TICKS = 6 * TICK_HZ;
 export const ROCK_PER_BLOCK = 2;
 
 /**
+ * The bread chain (docs/specs/2026-09-08-bread-economy.md). A farmer raises a
+ * grain every `FARM_TICKS` out of nothing but their hours — ~12 a game-day —
+ * the mill grinds one grain into one flour, and the oven bakes one flour into
+ * one loaf. One fully staffed chain feeds about twelve mouths; past that the
+ * player adds a second farm, which is where the land pressure comes from.
+ *
+ * `MILL_TICKS_5B` is the *grain* mill, not the sawmill: `MILL_TICKS` above is
+ * the plank cadence and predates it.
+ */
+export const FARM_TICKS = 5 * TICK_HZ;
+export const MILL_TICKS_5B = 4 * TICK_HZ;
+export const OVEN_TICKS = 5 * TICK_HZ;
+
+/**
+ * Eating (docs/specs/2026-09-08-bread-economy.md). A colonist is due a meal
+ * every `MEAL_TICKS` — one game-day — and walks to the nearest free loaf to
+ * take it. From `HUNGRY_TICKS` since their last meal with none found they work
+ * and walk at `HUNGRY_FACTOR`, and **that is the entire penalty**: nobody
+ * starves, nobody stops, nothing alerts (docs/CONCEPT.md — a supply failure
+ * plateaus, it never spirals). Fleeing is exempt at full speed, because
+ * threat-versus-flee speed is the game's central difficulty dial and an empty
+ * larder must never quietly raise the death rate.
+ */
+export const MEAL_TICKS = DAY_TICKS;
+export const HUNGRY_TICKS = (DAY_TICKS * 3) / 2;
+export const HUNGRY_FACTOR = 0.6;
+
+/**
+ * Loaves a head the colony opens with — dropped in the clearing by `createSim`
+ * and granted to a migrating save by the v8 rung, so a fresh colony and a
+ * loaded one both have about three days before the first meal goes missing.
+ * The cold start is the whole reason it exists: hunger must never bite before
+ * the player could possibly have acted.
+ */
+export const PROVISION_BREAD = 3;
+
+/**
  * Terraforming: 3 s of pool labour per tile per height step, and **no
  * materials at all** (docs/CONCEPT.md — levelling is charged in people-hours,
  * which is the scarcest currency there is). A four-step drop is four of these.

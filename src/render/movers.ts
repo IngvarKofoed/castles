@@ -15,7 +15,6 @@ import {
   buildings,
   chopLayer,
   colonists,
-  defOf,
   footprint,
   insideLayer,
   items,
@@ -33,7 +32,7 @@ import {
 import { WORLD_SIZE, tileIndex } from "../sim/world/world";
 import { createMoverMaterial } from "./materials";
 import { GOOD_HEX, OVERLAY, PROP } from "./palette";
-import { BH } from "./props";
+import { BH, BUFFER_Y, DECK_Y } from "./props";
 
 /**
  * The dynamic layer: everything that moves or changes every few ticks, drawn
@@ -480,12 +479,12 @@ export class MoverRenderer {
       perBuilding.set(b.id, n + 1);
       const cell = Math.floor(n / 8) % (b.w * b.h);
       const [ox, oy, oz] = lattice(n % 8);
-      // A workshop's buffers ride on its roofline, because the walls are
-      // solid; everything else stacks on the deck or the marked-out plot.
-      // Keyed on *having a recipe* rather than on being the sawmill, so the
-      // mason's rock and blocks sit where the mill's logs and planks do.
-      const deck =
-        defOf(b).recipe !== null && b.state === BuildingState.Active ? 2.38 * BH : 0.16 * BH;
+      // A finished building's goods ride at its own model's height (props.ts's
+      // `BUFFER_Y`); anything unfinished stacks on the marked-out plot. Keyed
+      // on the **kind** rather than on having a recipe: one shared roofline was
+      // the sawmill's, and it drew the farm's grain and the oven's bread a
+      // metre above both of them.
+      const deck = b.state === BuildingState.Active ? BUFFER_Y[b.kind as BuildingKindValue] : DECK_Y;
       put(
         this.solids,
         b.x + (cell % b.w) + 0.5 + ox,

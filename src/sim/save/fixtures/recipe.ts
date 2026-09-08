@@ -292,6 +292,95 @@ export function v7Script(sim: Sim): Command[] {
   }
 }
 
+/**
+ * v8: the bread economy, on **its own seed** — 20260931, whose nearest outcrop
+ * is five tiles from the colony and whose nearest den is ninety-one. Both
+ * numbers are load-bearing: the Oven costs *blocks*, so the fixture needs stone
+ * within walking distance, and a 1930-tick recipe on a seed with a near den can
+ * lose the colony it is meant to freeze.
+ *
+ * What it carries, none of which the format has ever held: **grain, flour and
+ * bread** in the colony, the **three new buildings** standing and staffed, the
+ * three new accept flags on every one of them, a `limits` array of seven, five
+ * **running hunger clocks** at five different values, and a colonist **caught
+ * mid-meal** with `eating` set and a route to a particular loaf in flight —
+ * which is the state a save could most plausibly lose.
+ *
+ * Caught at 1930, eight ticks after the first loaf came out of the oven: before
+ * that there is no bread but the provisions, and a few hundred ticks later
+ * everybody is fed and nobody is walking.
+ */
+export const FIXTURE_SEED_V8 = 20260931;
+export const V8_TICKS = 1930;
+
+export function v8Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 30) }];
+    case 5:
+      return chainPlace(sim, 0 /* Stockpile */);
+    case 150:
+      return chainPlace(sim, 2 /* Mason */);
+    case 400:
+      return staff(sim, 2 /* Mason */);
+    case 420:
+      return [{ kind: "designateMine", tiles: rockSite(sim, 3) }];
+    case 600:
+      return chainPlace(sim, 4 /* Farm */);
+    case 650:
+      return chainPlace(sim, 5 /* Mill */);
+    // Placed once blocks are coming out of the mason, so the site is fed rather
+    // than standing as a frame — the stone tier's own lesson.
+    case 900:
+      return chainPlace(sim, 6 /* Oven */);
+    case 1300:
+      return staff(sim, 4 /* Farm */);
+    case 1500:
+      return staff(sim, 5 /* Mill */);
+    case 1800: {
+      // The oven takes the mason's slot worker back: four workshops against
+      // five colonists leaves one pair of hands to feed all of them.
+      //
+      // Numeric kinds, like every other recipe in this file: a frozen recipe
+      // names the numbers that were in the save, not the enum a later build
+      // happens to have (`BuildingKind` is append-only, so they agree — but the
+      // literal is what the fixture was written from).
+      const mason = sim.buildings.find((b) => b.kind === 2 /* Mason */);
+      return [
+        ...staff(sim, 6 /* Oven */),
+        ...(mason ? [{ kind: "unstaff" as const, building: mason.id }] : []),
+      ];
+    }
+    default:
+      return [];
+  }
+}
+
+/**
+ * Place a chain building at the nearest site that fits, keeping five tiles
+ * clear of everything already standing.
+ *
+ * Its own helper rather than `buildSite`, whose exact search the pre-v8 recipes
+ * are frozen against: those files were written by whatever it returned then,
+ * and a widened clearance would move where they put things.
+ */
+function chainPlace(sim: Sim, kind: 0 | 2 | 4 | 5 | 6): Command[] {
+  const size = sim.world.size;
+  const centre = Math.floor(size / 2);
+  for (let r = 2; r < 30; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const x = centre + dx;
+        const y = centre + dy;
+        if (sim.buildings.some((b) => Math.abs(x - b.x) < 5 && Math.abs(y - b.y) < 5)) continue;
+        if (canPlace(sim, kind, x, y)) return [{ kind: "place", building: kind, x, y }];
+      }
+    }
+  }
+  return [];
+}
+
 /** A seven-tile run partway between the colony and the nearest den. Derived
  *  from the store, like every other site in this file. */
 function denRun(sim: Sim, offset: number): number[] {

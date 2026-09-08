@@ -35,7 +35,7 @@ import { MIGRATIONS } from "./migrations";
  * the matching entry to `MIGRATIONS` — the fixture test in this folder fails
  * loudly if an old save stops loading, which is the point.
  */
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 /** A save that cannot be read, with a message meant for the menu's note row. */
 export class SaveError extends Error {

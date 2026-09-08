@@ -1,5 +1,13 @@
 import { hash } from "../sim/world/noise";
-import { BuildingKind, BuildingState, isGateway, isStoneWall, wallIsBlueprint, type Building } from "../sim/know";
+import {
+  BuildingKind,
+  BuildingState,
+  isGateway,
+  isStoneWall,
+  wallIsBlueprint,
+  type Building,
+  type BuildingKindValue,
+} from "../sim/know";
 import { DAMAGE_SHADE, DESIGNATED_TINT, OVERLAY, PROP, PROP_JITTER, lerpHex } from "./palette";
 
 /**
@@ -58,6 +66,37 @@ function anchorJitter(b: Box, jx: number, jz: number): Box {
 
 /** Block height in world units — one voxel step. Shared with the mesher. */
 export const BH = 0.5;
+
+/**
+ * Where a building's stored goods ride, above its ground, once it is finished.
+ *
+ * A workshop's buffers sit on its **roofline** because its walls are solid —
+ * and a roofline is a property of the *model*, so it lives here beside the
+ * geometry rather than as one constant in the mover layer. That constant was
+ * the sawmill's (2.38·BH) applied to "anything with a recipe", which was true
+ * while every workshop was a shed and became a lie the moment a workshop was a
+ * flat field or a dome: grain and bread drew in mid-air above both.
+ *
+ * A stockpile and everything unfinished keep the deck height, which is the
+ * plate `deck()` and the blueprint plot both lay down. Every kind has a row so
+ * a new building cannot silently inherit a shed's roof.
+ */
+export const BUFFER_Y: Record<BuildingKindValue, number> = {
+  [BuildingKind.Stockpile]: 0.16 * BH,
+  [BuildingKind.Sawmill]: 2.38 * BH,
+  [BuildingKind.Mason]: 2.38 * BH,
+  // A House holds nothing; it takes the deck so the table is total.
+  [BuildingKind.House]: 0.16 * BH,
+  // On the worked earth inside the fence, not on the hut's roof: the plot is
+  // where a sack of grain would actually be standing.
+  [BuildingKind.Farm]: 0.26 * BH,
+  [BuildingKind.Mill]: 2.38 * BH,
+  // The dome's shoulder — two courses, no roof.
+  [BuildingKind.Oven]: 1.4 * BH,
+};
+
+/** The deck a stockpile's pile and a blueprint's materials stack on. */
+export const DECK_Y = 0.16 * BH;
 
 /**
  * One tree on tile (tx, ty), standing on ground of height `h` blocks.
@@ -138,6 +177,14 @@ export function buildingBoxes(b: Building, h: number, out: Box[]): void {
     house(cx, g, cz, b, out);
     return;
   }
+  if (b.kind === BuildingKind.Farm) {
+    farm(cx, g, cz, b, out);
+    return;
+  }
+  if (b.kind === BuildingKind.Oven) {
+    oven(cx, g, cz, b, out);
+    return;
+  }
   sawmill(cx, g, cz, b, out);
 }
 
@@ -201,6 +248,59 @@ function house(cx: number, g: number, cz: number, b: Building, out: Box[]): void
   // One shuttered window beside it, in the darker door timber so it reads as a
   // recess rather than a panel.
   out.push(box(b.x + 0.45, g + 0.75 * BH, b.y + b.h - 0.16, 0.3, 0.32 * BH, 0.08, PROP.door));
+}
+
+/**
+ * Farm: worked earth in furrows, inside a low fence, with the farmer's hut at
+ * the south edge where the work tile is.
+ *
+ * Deliberately **flat** — it is the biggest footprint in the game, and a 3×3
+ * building with a body and a roof would loom over the colony it feeds. The
+ * furrows are what say "this ground is worked": one low ridge per row of the
+ * footprint, so a 3×3 reads as three furrows and a future 4×4 would read as
+ * four with nothing here to change. Crop growth stages are later polish; this
+ * is the footprint saying what it is.
+ */
+function farm(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
+  out.push(box(cx, g, cz, b.w - 0.1, 0.1 * BH, b.h - 0.1, PROP.soil, 0, 0.96));
+  // One furrow per row, short of the fence on both sides.
+  for (let r = 0; r < b.h - 1; r++) {
+    // The last row is the yard: the hut and the path stand there instead.
+    const z = b.y + r + 0.5;
+    out.push(box(cx, g + 0.1 * BH, z, b.w - 0.5, 0.16 * BH, 0.34, PROP.crop, 0, 0.94));
+  }
+  // A fence of low posts round the plot — a farm has a boundary, and it is what
+  // keeps a flat prop from reading as a stain on the grass.
+  for (const [ox, oz] of corners(b)) {
+    out.push(box(ox, g, oz, 0.13, 0.6 * BH, 0.13, PROP.stake));
+  }
+  out.push(box(cx, g + 0.42 * BH, b.y + 0.18, b.w - 0.4, 0.08 * BH, 0.08, PROP.timber, 0, 0.92));
+  out.push(box(cx, g + 0.42 * BH, b.y + b.h - 0.18, b.w - 0.4, 0.08 * BH, 0.08, PROP.timber, 0, 0.92));
+  // The hut, in the south-east corner beside the work tile: small, one gable,
+  // enough to say somebody works here.
+  const hx = b.x + b.w - 0.75;
+  const hz = b.y + b.h - 0.75;
+  out.push(box(hx, g, hz, 1.0, 1.0 * BH, 1.0, PROP.timber));
+  out.push(box(hx, g + 1.0 * BH, hz, 1.16, 0.26 * BH, 1.16, PROP.clay, 0, 0.94));
+  out.push(box(hx, g, hz + 0.46, 0.34, 0.7 * BH, 0.08, PROP.door));
+}
+
+/**
+ * Oven: a stone dome with a black mouth and a stub of chimney.
+ *
+ * The only building in the game made of *cut stone* — which is also what it
+ * costs — so it reads as the mason's work rather than the carpenter's, and it
+ * is unmistakable beside the timber Mill next to it. Two courses stepping in,
+ * the den's trick for a dome without a real one.
+ */
+function oven(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
+  out.push(box(cx, g, cz, b.w - 0.2, 0.9 * BH, b.h - 0.2, PROP.block));
+  out.push(box(cx, g + 0.9 * BH, cz, b.w - 0.7, 0.5 * BH, b.h - 0.7, PROP.stoneWarm, 0, 0.96));
+  // The mouth, on the south face the camera can always see — the den's rule.
+  out.push(box(cx, g + 0.1 * BH, b.y + b.h - 0.16, 0.5, 0.5 * BH, 0.12, PROP.denMouth, 0, 0.85));
+  // A short chimney off the back corner, and the fire's own glow is not drawn:
+  // nothing in this game pulses (docs/STYLEGUIDE.md, Tone).
+  out.push(box(b.x + 0.42, g + 1.4 * BH, b.y + 0.42, 0.26, 0.7 * BH, 0.26, PROP.stone, 0, 0.9));
 }
 
 /** Which way a segment's run goes, as a bitmask of neighbours holding wall. */

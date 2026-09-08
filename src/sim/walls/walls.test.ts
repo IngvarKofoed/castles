@@ -31,6 +31,8 @@ function peopledSim(size = 20): Sim {
       carrying: -1,
       dest: -1,
       patience: 0,
+      hunger: 0,
+      eating: 0,
       path: [],
       step: 0,
     });

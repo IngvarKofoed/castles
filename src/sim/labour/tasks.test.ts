@@ -383,8 +383,11 @@ describe("cancelling", () => {
 
     applyCommands(sim, [{ kind: "cancelBlueprint", building: b.id }]);
     expect(sim.buildings.length).toBe(0);
-    expect(sim.items.length).toBe(2);
-    for (const item of sim.items) {
+    // Logs only: a fresh colony also opens with its provision bread lying in
+    // the clearing, which has nothing to do with the site being cancelled.
+    const logs = sim.items.filter((it) => it.type === ItemType.Log);
+    expect(logs.length).toBe(2);
+    for (const item of logs) {
       expect(item.loc).toBe(Loc.Ground);
       expect(item.reservedBy).toBe(-1);
     }

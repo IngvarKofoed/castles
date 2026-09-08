@@ -7,6 +7,7 @@ import { populationCap, settled } from "../settlers";
 import { testBuilding } from "../test-sim";
 import { BUILDING_DEFS } from "../buildings";
 import { BuildingKind, BuildingState, ItemType, TaskKind, type Sim } from "../store";
+import { PROVISION_BREAD } from "../tuning";
 import { advanceTick } from "../tick";
 import { WallState, canPlaceWall, isStoneWall } from "../walls";
 import { tileIndex } from "../world/world";
@@ -17,6 +18,7 @@ import {
   FIXTURE_SEED_V4,
   FIXTURE_SEED_V5,
   FIXTURE_SEED_V6,
+  FIXTURE_SEED_V8,
   V1_TICKS,
   V2_TICKS,
   V3_TICKS,
@@ -24,6 +26,7 @@ import {
   V5_TICKS,
   V6_TICKS,
   V7_TICKS,
+  V8_TICKS,
   replay,
   v1Script,
   v2Script,
@@ -32,6 +35,7 @@ import {
   v5Script,
   v6Script,
   v7Script,
+  v8Script,
 } from "./fixtures/recipe";
 
 /**
@@ -76,6 +80,10 @@ import {
  *   with the sawmill standing at it, a log parked in its buffer, and a stockpile
  *   with its rock filter off — the first save ever to hold a `limits` slot that
  *   is not `-1` or an accept flag that is not 1.
+ * - **v8**, written 2026-09-08 for the bread economy: the whole chain standing
+ *   and staffed on a seed with stone five tiles out, grain, flour and bread in
+ *   the colony, five running hunger clocks, and a colonist **mid-meal** with a
+ *   route to a particular loaf in flight.
  *
  * None is an empty world: an empty store would round-trip past almost every
  * mistake this file exists to catch.
@@ -96,11 +104,16 @@ const V4 = new URL("./fixtures/v4.castles", import.meta.url);
 const V5 = new URL("./fixtures/v5.castles", import.meta.url);
 const V6 = new URL("./fixtures/v6.castles", import.meta.url);
 const V7 = new URL("./fixtures/v7.castles", import.meta.url);
+const V8 = new URL("./fixtures/v8.castles", import.meta.url);
 
 type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
 
-/** What `v7.castles` decodes to — a native v7 file, so no rung touches it. */
-const V7_HASH = "0ca62ff1";
+/**
+ * What `v7.castles` decodes to. Native when it was written; from SAVE_VERSION 8
+ * it walks the bread rung like every other old file, which is what moved this
+ * number off `0ca62ff1`.
+ */
+const V7_HASH = "3d554ddf";
 
 /** The entity kinds a pre-threat recipe can still be asked about. Monsters are
  *  excluded because those three recipes replay in an empty wilderness — see
@@ -169,9 +182,24 @@ describe("the committed v1 save", () => {
     // ab0c5574 → d01e0770 at SAVE_VERSION 7: the 6 → 7 rung gives the store
     // its `limits` — four slots, all `-1`, which is the colony exactly as it
     // played (docs/changelog/2026-09-07-production-limits-and-filters.md).
+    //
+    // d01e0770 → bd689ee3 at SAVE_VERSION 8: the 7 → 8 rung gives every
+    // colonist `hunger` and `eating`, stamps the three bread-chain accept flags
+    // on to every building, appends three `-1`s to `limits`, and **grants three
+    // loaves per settled colonist** so a loaded colony has the same three-day
+    // runway a fresh one does (docs/changelog/2026-09-08-bread-economy.md).
     const sim = await decode(readFileSync(V1));
-    expect(hashSim(sim)).toBe("d01e0770");
-    expect(sim.limits).toEqual([-1, -1, -1, -1]);
+    expect(hashSim(sim)).toBe("bd689ee3");
+    expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1]);
+    // The grant, and the flags that would otherwise refuse it a home forever.
+    expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 5);
+    for (const c of sim.colonists) {
+      expect(c.hunger).toBe(0);
+      expect(c.eating).toBe(0);
+    }
+    for (const b of sim.buildings) {
+      expect([b.acceptGrain, b.acceptFlour, b.acceptBread]).toEqual([1, 1, 1]);
+    }
     // A v1 colony wakes up in a wilderness rather than in an empty world.
     expect(sim.monsters.length).toBeGreaterThan(0);
     // The half of that rung nothing else would catch: a pre-v3 stockpile that
@@ -257,10 +285,13 @@ describe("the committed v2 save", () => {
     // one, which is what keeps that wilderness equal to a fresh game's.
     // Then 41f2beab → e0a0ad53 at SAVE_VERSION 5, for the 4 → 5 rung the v1
     // pin above records: `dest` on every colonist, and the arrival clock. Then
-    // e0a0ad53 → 83891a24 at SAVE_VERSION 6 for the `patience` rung, and
-    // 83891a24 → 28d26444 at 7 for the `limits` one.
+    // e0a0ad53 → 83891a24 at SAVE_VERSION 6 for the `patience` rung,
+    // 83891a24 → 28d26444 at 7 for the `limits` one, and 28d26444 → 16ca8dd6
+    // at 8 for the bread rung — two colonist fields, three accept flags, three
+    // `limits` slots and fifteen granted loaves
+    // (docs/changelog/2026-09-08-bread-economy.md).
     const sim = await decode(readFileSync(V2));
-    expect(hashSim(sim)).toBe("28d26444");
+    expect(hashSim(sim)).toBe("16ca8dd6");
     for (const b of sim.buildings) {
       expect(b.acceptRock).toBe(1);
       expect(b.acceptBlock).toBe(1);
@@ -308,10 +339,10 @@ describe("the committed v3 save", () => {
     // than in an empty one (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
     // The file is untouched and stays so.
     // 7dcf3387 → 9935f38b at SAVE_VERSION 5, for the same 4 → 5 rung,
-    // 9935f38b → 8c8cb6fc at 6 for the `patience` one, and 8c8cb6fc → 30f9a9a0
-    // at 7 for the `limits` one.
+    // 9935f38b → 8c8cb6fc at 6 for the `patience` one, 8c8cb6fc → 30f9a9a0
+    // at 7 for the `limits` one, and 30f9a9a0 → e8452d51 at 8 for the bread one.
     const sim = await decode(readFileSync(V3));
-    expect(hashSim(sim)).toBe("30f9a9a0");
+    expect(hashSim(sim)).toBe("e8452d51");
     // The half of that rung nothing else would catch: a migrated colony that
     // came through with an empty `monsters` array would be a save of a game
     // that has no threats in it at all, and nothing would ever say so.
@@ -368,9 +399,10 @@ describe("the committed v4 save", () => {
     // (docs/changelog/2026-09-07-housing-and-wanderers.md). The file is
     // untouched and stays so.
     // Then 80b2f86e → aee29fc7 at SAVE_VERSION 6, for the rung that gives the
-    // give-up clock its own field, and aee29fc7 → 65b5106b at 7 for `limits`.
+    // give-up clock its own field, aee29fc7 → 65b5106b at 7 for `limits`, and
+    // 65b5106b → 87af28e4 at 8 for the bread rung.
     const sim = await decode(readFileSync(V4));
-    expect(hashSim(sim)).toBe("65b5106b");
+    expect(hashSim(sim)).toBe("87af28e4");
     // The half of that rung nothing else would catch: a colonist that came
     // through without `dest` would be a store carrying `undefined`, which the
     // plain-data rule forbids and no other test looks for.
@@ -446,9 +478,13 @@ describe("the committed v5 save", () => {
     // own (docs/changelog/2026-09-07-housing-and-wanderers.md). The file is
     // untouched and stays so — it is the only fixture written by a codec that
     // had `dest` but not `patience`, which is exactly what makes it worth
-    // keeping. Then 1aba9400 → 3fb33394 at SAVE_VERSION 7 for `limits`.
+    // keeping. Then 1aba9400 → 3fb33394 at SAVE_VERSION 7 for `limits`, and
+    // 3fb33394 → c38bcff9 at 8 for the bread rung — whose grant counts the
+    // **settled** five and not the wanderer this file was caught carrying,
+    // because a colonist still walking in neither eats nor hungers.
     const sim = await decode(readFileSync(V5));
-    expect(hashSim(sim)).toBe("3fb33394");
+    expect(hashSim(sim)).toBe("c38bcff9");
+    expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 5);
     for (const c of sim.colonists) expect(c.patience).toBe(0);
     // The wanderer it was caught carrying is still walking, clock and all.
     expect(sim.colonists.filter((c) => c.dest >= 0)).toHaveLength(1);
@@ -496,10 +532,14 @@ describe("the committed v6 save", () => {
 
   it("decodes to the store the v7 migration turns it into", async () => {
     // 7206746a → e0d58baa at SAVE_VERSION 7: the 6 → 7 rung adds `limits`,
-    // four slots of `-1`. The file is untouched and stays so.
+    // four slots of `-1`. The file is untouched and stays so. Then
+    // e0d58baa → 251bfc06 at 8 for the bread rung, whose `limits` grows those
+    // four slots to seven — the append ritual, one rung at a time.
     const sim = await decode(readFileSync(V6));
-    expect(hashSim(sim)).toBe("e0d58baa");
-    expect(sim.limits).toEqual([-1, -1, -1, -1]);
+    expect(hashSim(sim)).toBe("251bfc06");
+    expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1]);
+    // Six settled folk by now, so six heads' worth of provisions.
+    expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 6);
   });
 
   it("keeps running from where it was saved, and the third one arrives too", async () => {
@@ -523,7 +563,9 @@ describe("the committed v7 save", () => {
 
     // The two states no earlier file could carry: a ceiling that is not
     // unlimited, and an accept flag that is not on.
-    expect(sim.limits).toEqual([-1, 2, -1, -1]);
+    // The ceiling the file was written with, plus the three slots the bread
+    // rung appended for goods it had never heard of.
+    expect(sim.limits).toEqual([-1, 2, -1, -1, -1, -1, -1]);
     const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile)!;
     expect([pile.acceptLog, pile.acceptPlank, pile.acceptRock, pile.acceptBlock]).toEqual([1, 1, 0, 1]);
 
@@ -540,7 +582,7 @@ describe("the committed v7 save", () => {
     expect(sim.items.some((it) => it.type === ItemType.Log && it.holder === mill.id)).toBe(true);
   });
 
-  it("decodes to the exact store it was written from", async () => {
+  it("decodes to the store the v8 migration turns it into", async () => {
     const sim = await decode(readFileSync(V7));
     expect(hashSim(sim)).toBe(V7_HASH);
   });
@@ -574,6 +616,58 @@ describe("the committed v7 save", () => {
     expect(built).toBe(true);
     expect(milledAfter).toBe(true);
     expect(sim.limits[ItemType.Plank]).toBe(BUILDING_DEFS[BuildingKind.House].cost);
+  });
+});
+
+describe("the committed v8 save", () => {
+  it("still loads, with the bread chain running and somebody at lunch", async () => {
+    const sim = await decode(readFileSync(V8));
+    expect(sim.tick).toBe(V8_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED_V8);
+
+    // The three workshops, standing and staffed — and the mason released, so
+    // the colony is three slots deep with two pairs of hands feeding them.
+    for (const kind of [BuildingKind.Farm, BuildingKind.Mill, BuildingKind.Oven]) {
+      const b = sim.buildings.find((x) => x.kind === kind);
+      expect(b?.state).toBe(BuildingState.Active);
+      expect(b?.worker).toBeGreaterThanOrEqual(0);
+      // The three accept flags a v8-native file was written with.
+      expect([b?.acceptGrain, b?.acceptFlour, b?.acceptBread]).toEqual([1, 1, 1]);
+    }
+    expect(sim.buildings.find((b) => b.kind === BuildingKind.Mason)?.worker).toBe(-1);
+
+    // All three goods, which can only have arrived in order.
+    for (const type of [ItemType.Grain, ItemType.Flour, ItemType.Bread]) {
+      expect(sim.items.some((it) => it.type === type)).toBe(true);
+    }
+
+    // And the state no earlier file could carry: a meal in flight. One
+    // colonist with `eating` set and a route to a particular loaf, plus five
+    // hunger clocks at five different readings.
+    const eaters = sim.colonists.filter((c) => c.eating === 1);
+    expect(eaters).toHaveLength(1);
+    expect(eaters[0].path.length - eaters[0].step).toBeGreaterThan(0);
+    expect(new Set(sim.colonists.map((c) => c.hunger)).size).toBe(sim.colonists.length);
+    expect(sim.limits).toHaveLength(7);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V8));
+    expect(hashSim(sim)).toBe("0a941d36");
+  });
+
+  it("keeps running from where it was saved, and the meal finishes", async () => {
+    const sim = await decode(readFileSync(V8));
+    const eater = sim.colonists.find((c) => c.eating === 1)!;
+    const held = sim.items.filter((it) => it.type === ItemType.Bread).length;
+    for (let t = 0; t < 600; t++) advanceTick(sim);
+    expect(sim.tick).toBe(V8_TICKS + 600);
+    // The reloaded errand was walked to its end and the loaf came off the map:
+    // the meal is state, not something re-derived on load.
+    expect(eater.eating).toBe(0);
+    expect(eater.hunger).toBeLessThan(600);
+    // And the oven kept baking, so the count did not simply fall.
+    expect(sim.items.filter((it) => it.type === ItemType.Bread).length).toBeGreaterThanOrEqual(held - 5);
   });
 });
 
@@ -616,6 +710,13 @@ describe("the fixtures still have the store shape this build produces", () => {
     const kinds = [...OLD_KINDS, "monsters"] as const;
     expect(shapeOf(await decode(readFileSync(V7)), kinds)).toEqual(
       shapeOf(replay(v7Script, V7_TICKS, FIXTURE_SEED), kinds),
+    );
+  });
+
+  it("v8, natively — the bread chain and a meal in flight", async () => {
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V8)), kinds)).toEqual(
+      shapeOf(replay(v8Script, V8_TICKS, FIXTURE_SEED_V8), kinds),
     );
   });
 

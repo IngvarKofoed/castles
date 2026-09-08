@@ -1,9 +1,18 @@
-import { besideFootprint, buildingAt, defOf, footprint, storedCount, workTile } from "../buildings";
+import {
+  besideFootprint,
+  buildingAt,
+  coversTile,
+  defOf,
+  footprint,
+  storedCount,
+  workTile,
+} from "../buildings";
 import {
   carryItem,
   dropTile,
   groundItem,
   groundItemsAt,
+  isFree,
   itemTile,
   removeItem,
   spawnItem,
@@ -68,7 +77,8 @@ import {
 } from "../walls";
 import { markEnclosureStale } from "../walls/enclosure";
 import { markChunkDirty, tileIndex } from "../world/world";
-import { abandonTask, finishTask, releaseTask } from "./tasks";
+import { abandonTask, finishTask, nearestFreeItem, releaseTask, sourceForSite } from "./tasks";
+import { mealDue, walkBudget, worksThisTick } from "./hunger";
 
 /**
  * Colonist behaviour: claim → reserve → walk → act → release.
@@ -83,6 +93,10 @@ export function stepColonists(sim: Sim): void {
   for (const c of sim.colonists) {
     c.px = c.x;
     c.py = c.y;
+    // Ticks since the last meal, for everybody who lives here. A wanderer
+    // neither eats nor hungers: their clock starts at settling, which is what
+    // this one condition buys (docs/specs/2026-09-08-bread-economy.md).
+    if (c.dest < 0) c.hunger++;
     // The flee check runs *before* task work and overrides everything, slot
     // workers included: a pair of hands is the game's only scarce currency and
     // no errand is worth one. `threatNear` answers null for anyone on inside
@@ -95,8 +109,15 @@ export function stepColonists(sim: Sim): void {
     // A wanderer is checked before the pool/slot split, because they are
     // neither: they walk to the House that invited them and claim nothing on
     // the way (docs/specs/2026-09-07-housing-wanderers.md).
-    if (c.dest >= 0) stepWanderer(sim, occ, c);
-    else if (c.slot >= 0) stepSlotWorker(sim, occ, c);
+    if (c.dest >= 0) {
+      stepWanderer(sim, occ, c);
+      continue;
+    }
+    // Priority is flee > meal > work. A meal is a self-errand rather than a
+    // task, so it sits here instead of in the queue: nobody else can claim
+    // somebody's lunch, and it outranks the whole priority order.
+    if (stepEater(sim, occ, c)) continue;
+    if (c.slot >= 0) stepSlotWorker(sim, occ, c);
     else stepPoolWorker(sim, occ, c);
   }
 }
@@ -117,6 +138,10 @@ export function stepColonists(sim: Sim): void {
  */
 function flee(sim: Sim, occ: Occupancy, c: Colonist, from: Monster): void {
   abandonForFlight(sim, occ, c);
+  // The meal errand is dropped with everything else — safety first, and the
+  // meal re-seeks once they are safe. Their hunger is untouched: running from
+  // an orc is not eating.
+  c.eating = 0;
   // Re-plan unless they are *already* walking somewhere safe. Testing the route
   // rather than the task is what catches a slot worker or a step-aside walker:
   // those carry a live route with no task behind it, so dropping the task
@@ -127,7 +152,138 @@ function flee(sim: Sim, occ: Occupancy, c: Colonist, from: Monster): void {
     c.step = 0;
     if (route && route.length) c.path = route;
   }
-  if (c.path.length > c.step) walk(sim, occ, c);
+  // At full speed, always: `walkBudget` would slow a hungry colonist, and
+  // threat speed against a *fleeing* worker is the game's central difficulty
+  // dial. An empty larder may cost the colony its output; it may never quietly
+  // raise the death rate (docs/specs/2026-09-08-bread-economy.md).
+  if (c.path.length > c.step) walk(sim, occ, c, WALK_TILES_PER_TICK);
+}
+
+/**
+ * The meal break: the one genuinely new colonist behaviour in the bread step
+ * (docs/specs/2026-09-08-bread-economy.md). Returns true when this tick
+ * belonged to the meal, which is the caller's cue to skip work entirely.
+ *
+ * **A meal is physical.** There is no abstract decrement: a colonist due one
+ * walks to the nearest *free* loaf by the same sourcing rule a construction
+ * site uses — ground, stockpile, or a workshop's own output buffer — and takes
+ * it off the map. "Free" means unreserved, and that quietly makes **stockpiles
+ * the canteen**: `generateHaulToStore` reserves every loose loaf for tidying
+ * before anybody gets hungry, so ground bread and the oven's buffer feed
+ * people only while no stockpile wants them. An eater never bypasses a
+ * reservation — an eaten reserved loaf would strand its haul task and a unit of
+ * the destination's `reservedIncoming` for good.
+ *
+ * **A stint in hand finishes first**: a pool worker's claimed task, a slot
+ * worker's running batch. Nothing is ever abandoned for lunch, so the errand
+ * costs the colony walking time and nothing else.
+ *
+ * No reservation is taken *for* the meal, deliberately: two colonists may set
+ * off for the same loaf and the slower one re-seeks on arrival, which is also
+ * how the one synchronized moment in the game resolves — day two, when every
+ * starting clock comes due at once over the provision pile, settled in id
+ * order like everything else.
+ */
+function stepEater(sim: Sim, occ: Occupancy, c: Colonist): boolean {
+  if (c.eating) {
+    if (c.path.length > c.step) {
+      walk(sim, occ, c);
+      return true;
+    }
+    if (eatHere(sim, c)) return true;
+    // Route exhausted with nothing to eat: the loaf moved, or something took
+    // the errand's route away (an eviction, a staffing). Drop it and re-seek
+    // below — which is also what makes every interruption path correct without
+    // anything else in the game having to clear this flag.
+    c.eating = 0;
+  }
+  if (!mealDue(c)) return false;
+  const b = c.slot >= 0 ? findBuilding(sim, c.slot) : null;
+  // A slot worker whose building has gone is not eating, they are being
+  // returned to the pool by `stepSlotWorker`; one mid-batch finishes it.
+  if (c.slot >= 0 ? !b || b.millProgress >= 0 : c.task >= 0) return false;
+
+  const loaf = nearestFreeItem(sim, ItemType.Bread, Math.floor(c.x), Math.floor(c.y), sourceForSite);
+  // Nothing free to eat anywhere: they work on, slowed once past
+  // `HUNGRY_TICKS`, and look again next tick. A scan of the items array, with
+  // no route planned and no PRNG touched — which is what makes a breadless
+  // colony merely slow rather than expensive.
+  if (!loaf) return false;
+  if (eatHere(sim, c)) return true;
+
+  if (c.inside && b) {
+    // Step out through the ordinary door, then plan from where they are
+    // actually standing. If the loaf turns out to be unreachable they step
+    // straight back in on the same tick, so the panel never blinks and the
+    // workshop never loses a moment — a slot worker must not pop out of the
+    // building for a loaf they cannot get to.
+    leaveBuilding(sim, c, b);
+    const route = mealRoute(sim, occ, c, loaf);
+    if (!route) {
+      enterBuilding(c, b);
+      return false;
+    }
+    return startMeal(sim, occ, c, route);
+  }
+  const route = mealRoute(sim, occ, c, loaf);
+  if (!route) return false;
+  return startMeal(sim, occ, c, route);
+}
+
+/** Take the errand and set off. */
+function startMeal(sim: Sim, occ: Occupancy, c: Colonist, route: number[]): boolean {
+  c.eating = 1;
+  c.path = route;
+  c.step = 0;
+  if (route.length) walk(sim, occ, c);
+  return true;
+}
+
+/** Where a loaf is walked to: onto its tile if it is lying on the ground,
+ *  beside the footprint of whatever holds it if it is stored. */
+function mealRoute(sim: Sim, occ: Occupancy, c: Colonist, loaf: Item): number[] | null {
+  const goals = itemGoal(sim, occ, loaf);
+  if (!goals) return null;
+  return findPath(sim, occ, Math.floor(c.x), Math.floor(c.y), goals);
+}
+
+/**
+ * The arrival rule, pinned because a save taken mid-meal resumes through it:
+ * with the route exhausted, eat the **lowest-id free loaf** on the colonist's
+ * own tile or one beside it, or stored in a building whose footprint they are
+ * standing on or beside. Nothing there, and the errand is dropped and re-sought.
+ *
+ * Chebyshev adjacency, matching `besideFootprint` — "next to it" means the same
+ * thing here as it does everywhere else. The source rule is asked again on
+ * arrival rather than trusted from the seek: several ticks have passed, and a
+ * loaf that has since been reserved, eaten or shut inside a blueprint is not a
+ * meal.
+ */
+function eatHere(sim: Sim, c: Colonist): boolean {
+  const cx = Math.floor(c.x);
+  const cy = Math.floor(c.y);
+  for (const item of sim.items) {
+    // In id order, which is array order: ids are minted upward and never
+    // reused, so the first match *is* the lowest.
+    if (item.type !== ItemType.Bread || !isFree(item)) continue;
+    if (!sourceForSite(sim, item)) continue;
+    if (!withinReach(sim, item, cx, cy)) continue;
+    removeItem(sim, item.id);
+    c.hunger = 0;
+    c.eating = 0;
+    return true;
+  }
+  return false;
+}
+
+/** Is this item close enough to take without moving? */
+function withinReach(sim: Sim, item: Item, cx: number, cy: number): boolean {
+  if (item.loc === Loc.Ground) {
+    return Math.max(Math.abs(item.x - cx), Math.abs(item.y - cy)) <= 1;
+  }
+  if (item.loc !== Loc.Stored) return false;
+  const b = findBuilding(sim, item.holder);
+  return b !== null && (coversTile(b, cx, cy) || besideFootprint(b, cx, cy));
 }
 
 /**
@@ -326,8 +482,12 @@ function stepPoolWorker(sim: Sim, occ: Occupancy, c: Colonist): void {
  *
  * Returns true only when there is genuinely no way round, which is the
  * caller's cue to hand the task back.
+ *
+ * `budget` is how many tiles this tick pays for, and it defaults to whatever
+ * the walker's hunger allows — the flee is the one caller that overrides it,
+ * at full speed.
  */
-function walk(sim: Sim, occ: Occupancy, c: Colonist): boolean {
+function walk(sim: Sim, occ: Occupancy, c: Colonist, budgetFor = walkBudget(c)): boolean {
   const size = sim.world.size;
   const cx = Math.floor(c.x);
   const cy = Math.floor(c.y);
@@ -335,7 +495,7 @@ function walk(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   // escape route, and those deliberately cut through blocked tiles (see
   // `escapePath`). Only a walker on legal ground is held to a legal route.
   const escaping = !passable(sim.world, sim.wallMap, occ, cx, cy);
-  let budget = WALK_TILES_PER_TICK;
+  let budget = budgetFor;
   while (budget > 0 && c.step < c.path.length) {
     const tile = c.path[c.step];
     const tx = tile % size;
@@ -514,6 +674,7 @@ function actChop(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
+  if (!worksThisTick(sim, c)) return;
   if (++c.work < CHOP_TICKS) return;
 
   sim.world.treeMap[i] = 0;
@@ -551,6 +712,7 @@ function actMine(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
+  if (!worksThisTick(sim, c)) return;
   if (++c.work < MINE_TICKS) return;
 
   const height = erodesTo(sim, task.x, task.y);
@@ -601,6 +763,7 @@ function actTerraform(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
+  if (!worksThisTick(sim, c)) return;
   if (++c.work < TERRAFORM_TICKS) return;
 
   // The ground waits for the tile to actually clear: the eviction hands out a
@@ -628,6 +791,9 @@ function actBuild(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, b.x + (b.w - 1) / 2, b.y + (b.h - 1) / 2);
+  // A hungry builder builds slower: the progress lives on the site, but the
+  // hours are the colonist's.
+  if (!worksThisTick(sim, c)) return;
   b.progress++;
   if (b.progress < BUILD_TICKS) return;
 
@@ -694,6 +860,7 @@ function actBuildWall(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
+  if (!worksThisTick(sim, c)) return;
   if (++c.work < wallBuildTicks(sim.wallMap[i])) return;
 
   // The segment goes up *first*, so the sweep and the eviction below see the
@@ -727,6 +894,7 @@ function actRaze(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
+  if (!worksThisTick(sim, c)) return;
   if (++c.work < RAZE_TICKS) return;
 
   const refund = wallItem(wallMaterial(sim.wallMap[i]));
@@ -771,6 +939,7 @@ function actRepair(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
+  if (!worksThisTick(sim, c)) return;
   c.work += REPAIR_HP_PER_SECOND;
   if (c.work < TICK_HZ) return;
   const points = Math.floor(c.work / TICK_HZ);

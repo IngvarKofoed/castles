@@ -36,6 +36,8 @@ function walker(sim: Sim, x: number, y: number, patch: Partial<Colonist> = {}): 
     carrying: -1,
     dest: -1,
     patience: 0,
+    hunger: 0,
+    eating: 0,
     path: [],
     step: 0,
     ...patch,

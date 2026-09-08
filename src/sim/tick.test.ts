@@ -36,7 +36,7 @@ let cached: Store | null = null;
 const scripted = (): Store => (cached ??= scriptedRun(1500));
 
 /** The pinned hash of that run. Named so the move history above can cite it. */
-const GOLDEN_V7 = "ade08d30";
+const GOLDEN_V8 = "04f53ac6";
 
 /**
  * Designate a handful of trees, place a stockpile, place a sawmill, staff it.
@@ -325,7 +325,7 @@ describe("determinism", () => {
     // became `Colonist.patience` (SAVE_VERSION 6). Shape again, and for the
     // same reason: no House, no wanderer, nobody's clock ever moves off 0.
     //
-    // 50083138 → GOLDEN_V7 with production control
+    // 50083138 → ade08d30 with production control
     // (docs/changelog/2026-09-07-production-limits-and-filters.md). Shape —
     // the store gained `limits` (SAVE_VERSION 7) — **and behaviour, on
     // purpose**: the script now sets a plank ceiling of two at 1250 and turns
@@ -333,7 +333,19 @@ describe("determinism", () => {
     // with a log parked in its buffer and both planks sit in its own output
     // buffer. The plank assertion below moved from "more than none" to
     // "exactly the ceiling", which is what says the number moved for the brake.
-    expect(hashSim(scripted())).toBe(GOLDEN_V7);
+    //
+    // ade08d30 → GOLDEN_V8 with the bread economy (SAVE_VERSION 8,
+    // docs/changelog/2026-09-08-bread-economy.md). Shape — two fields on every
+    // colonist and three more `limits` slots — **and behaviour, on purpose**:
+    // this colony now opens with fifteen loaves in its clearing and everybody
+    // breaks off to eat once a game-day, which is the meal loop inside the pin
+    // without a farm anywhere in the script. The chain itself is pinned on its
+    // own seed (`economy/bread.test.ts`), for the reason the stone tier's is:
+    // the Oven costs blocks, and this seed's nearest outcrop is fifty tiles
+    // out. Every behavioural assertion in this file is unchanged and still
+    // passes — the plank ceiling still holds the mill at exactly two — which is
+    // what says the number moved for the meals and not for something quiet.
+    expect(hashSim(scripted())).toBe(GOLDEN_V8);
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {

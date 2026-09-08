@@ -32,6 +32,14 @@
    * ground are the same object seen twice. */
   --rock: #8a9096;
   --block: #b3ab97;
+  /* The bread chain's three goods — straw, sacking and crust. The loaf reads
+   * darker and redder than `--timber` on purpose: a bread pip and a log pip
+   * sit on the same ribbon and must not be the same brown. All three match
+   * `src/render/palette.ts`, since the pip and the pile are one object seen
+   * twice. */
+  --grain: #a89b3e;
+  --flour: #eae3cd;
+  --bread: #96552b;
   --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
   --display: "Grenze Gotisch", "Grenze", Georgia, serif;
 }
@@ -97,6 +105,12 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 11px;
+}
+/* The folk readout's hunger suffix: the plateau's one signal, in ink-dim and
+ * never a colour — rust would read as an alarm, and there is nothing to react
+ * to (docs/STYLEGUIDE.md, Tone). */
+.res u.hungry {
+  color: var(--ink-dim);
 }
 .divider {
   width: 1px;
