@@ -132,6 +132,18 @@ export const STOCKPILE_PER_TILE = 8;
 export const WORKSHOP_INPUT_CAP = 2;
 export const WORKSHOP_OUTPUT_CAP = 2;
 
+/**
+ * Production ceilings (docs/specs/2026-09-07-production-control.md). A
+ * ceiling is a **global per-good** number — "make planks until N exist",
+ * counted over every plank anywhere — and `-1` means unlimited, which is the
+ * default everywhere. `LIMIT_MAX` is the top of the settable range; the panel's
+ * `+` past it returns to unlimited, and `LIMIT_STEP` is what one press moves.
+ * Neither number is in any save: the ceiling itself is, the range is a tunable.
+ */
+export const LIMIT_MAX = 100;
+export const LIMIT_STEP = 5;
+export const UNLIMITED = -1;
+
 /** Tiles around the map centre generation keeps clear of trees, so the
  * opening view is buildable and the starting folk have room. */
 export const SPAWN_CLEAR_RADIUS = 8;

@@ -1,5 +1,6 @@
 import { outputFull, recipeOf, type Recipe } from "../buildings";
 import { removeItem } from "../items";
+import { atLimit } from "./limits";
 import {
   BuildingState,
   Loc,
@@ -40,8 +41,13 @@ function stepWorkshop(sim: Sim, b: Building, recipe: Recipe): void {
   if (!worker || worker.slot !== b.id || !worker.inside) return;
 
   if (b.millProgress < 0) {
-    // Start a batch: only with the whole input to hand and somewhere to put
-    // the result, so a finished good can never be dropped for lack of room.
+    // Start a batch: only with the whole input to hand, somewhere to put the
+    // result — so a finished good can never be dropped for lack of room — and
+    // the colony still short of its ceiling for the good. The ceiling gates
+    // *starting* only: a batch under way (`millProgress >= 0`) never reaches
+    // this line and completes below whatever the count does meanwhile, so a
+    // ceiling can be lowered at any moment and nothing is half-made or lost.
+    if (atLimit(sim, recipe.output)) return;
     if (outputFull(sim, b)) return;
     // The whole batch is chosen before any of it is consumed: taking inputs as
     // they are found and then giving up half way would eat them for nothing.

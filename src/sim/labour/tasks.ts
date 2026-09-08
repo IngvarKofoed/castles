@@ -1,4 +1,5 @@
 import { defOf, freeCapacity, recipeOf, storedCount } from "../buildings";
+import { atLimit } from "../economy/limits";
 import { canMine, isTargetHeight, keepsTerraforming } from "../ground";
 import { groundItem, isFree, itemTile } from "../items";
 import { occupancy, type Occupancy } from "../path";
@@ -173,12 +174,20 @@ function generateHaulToSite(sim: Sim): void {
  * A staffed workshop with input room wants its input — from a stockpile or the
  * ground. Which good that is comes off the recipe, so the mason's rock flows
  * exactly as the sawmill's logs do.
+ *
+ * Unless its output is at its ceiling: then no new input is ordered, which is
+ * the brake's first half (the second is `stepWorkshop` not starting a batch).
+ * Hauls already generated are left alone — they deliver, and up to `inputCap`
+ * logs then sit in the buffer until the count drops and milling resumes. That
+ * is the accepted quirk (docs/specs/2026-09-07-production-control.md): inputs
+ * are never taken back out of a workshop.
  */
 function generateHaulToInput(sim: Sim): void {
   for (const b of sim.buildings) {
     if (b.state !== BuildingState.Active || b.worker < 0) continue;
     const recipe = recipeOf(b);
     if (!recipe) continue;
+    if (atLimit(sim, recipe.output)) continue;
     let room = freeCapacity(sim, b, recipe.input) - b.reservedIncoming;
     while (room > 0) {
       const good = nearestFreeItem(sim, recipe.input, b.x, b.y, sourceForSite);

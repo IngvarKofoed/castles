@@ -6,15 +6,18 @@ import {
   GOODS,
   GOOD_LIST,
   ItemType,
+  UNLIMITED,
   WALL_ITEM_COST,
   inspect,
   monsterName,
   monsters,
   readout,
   rhythm,
+  stepLimit,
   threat,
   wallItem,
   type BuildingKindValue,
+  type GoodDef,
   type ItemTypeValue,
   type Sim,
   type WallMaterial,
@@ -494,16 +497,27 @@ export class Hud {
       b.state,
       b.staffed,
       b.delivered,
-      ...b.stored.map((s) => s.count),
+      ...b.stored.map((s) => `${s.count}${s.accepted ? "+" : "-"}`),
       Math.round(b.progress * 40),
       Math.round(b.milling * 50),
       b.stall,
       b.worker,
+      b.limit,
+      b.colonyCount,
     ].join("|");
     if (signature === this.lastPanel) return;
     this.lastPanel = signature;
 
+    // A rebuild replaces every node, including the button that was just
+    // pressed — and the steppers and toggles are the first controls here a
+    // player presses *repeatedly*. Carry keyboard focus over to the new node
+    // with the same label, so a second press does not first mean tabbing
+    // back in. Nothing to restore when the pointer did the pressing.
+    const focused = document.activeElement;
+    const label =
+      focused instanceof HTMLElement && this.inspector.contains(focused) ? focused.getAttribute("aria-label") : null;
     this.inspector.replaceChildren(...this.panelFor(b));
+    if (label) refocus(this.inspector, label);
   }
 
   private hideInspector(): void {
@@ -597,32 +611,42 @@ export class Hud {
     }
 
     if (b.kind === BuildingKind.Stockpile) {
-      // A row per good and an accept line built from the filters, rather than
-      // two hard-coded rows that would have quietly stopped mentioning half
-      // the colony's goods the moment rock existed.
-      nodes.push(
-        rows([
-          ["Stored", `${b.storedTotal} / ${b.capacity}`],
-          ...b.stored.map((s): [string, string] => [s.name, String(s.count)]),
-        ]),
-      );
-      nodes.push(
-        note(acceptNote(b.stored.filter((s) => s.accepted).map((s) => GOODS[s.type as ItemTypeValue].label))),
-      );
+      // A row per good — its count here and its accept toggle — walked from the
+      // goods table, so a new good gets a row by existing. The toggle writes
+      // the filter the pile has carried since step 2; nothing about the panel
+      // knows which goods exist.
+      const box = rows([["Stored", `${b.storedTotal} / ${b.capacity}`]]);
+      for (const s of b.stored) {
+        box.append(
+          this.filterRow(GOODS[s.type as ItemTypeValue], s.count, s.accepted, () =>
+            this.ports.send({ kind: "toggleFilter", building: b.id, type: s.type }),
+          ),
+        );
+      }
+      nodes.push(box);
+      // The one sentence that keeps the two halves of production control apart:
+      // filters route, ceilings brake. A player who wants a hoard the mill
+      // cannot touch is looking for the workshop panel, and this says so.
+      nodes.push(note(FILTER_NOTE));
       return nodes;
     }
 
     if (b.chain) nodes.push(chain(b.chain.input, b.chain.output));
-    nodes.push(
-      rows([
-        // The worker row is load-bearing once someone is inside: the renderer
-        // stops drawing them, so this is where the player reads that the slot
-        // is filled.
-        ["Worker", WORKER_LABEL[b.worker]],
-        ["Input", `${b.inputCount} / ${b.inputCap}`],
-        ["Output", `${b.outputCount} / ${b.outputCap}`],
-      ]),
-    );
+    const box = rows([
+      // The worker row is load-bearing once someone is inside: the renderer
+      // stops drawing them, so this is where the player reads that the slot
+      // is filled.
+      ["Worker", WORKER_LABEL[b.worker]],
+      ["Input", `${b.inputCount} / ${b.inputCap}`],
+      ["Output", `${b.outputCount} / ${b.outputCap}`],
+    ]);
+    // The ceiling, directly under the per-building output count and worded
+    // "in colony" so the two plank numbers on this panel cannot be mistaken
+    // for each other: this one is every plank anywhere, against the ceiling
+    // the whole colony shares. Editing it edits the global number — a second
+    // sawmill's panel shows the same row.
+    if (b.outputType >= 0) box.append(this.limitRow(b));
+    nodes.push(box);
     if (b.milling >= 0) nodes.push(meter(b.milling));
     nodes.push(note(millNote(b)));
     nodes.push(
@@ -637,6 +661,65 @@ export class Hud {
     const b = el("button", { class: "action", type: "button" }, label) as HTMLButtonElement;
     b.addEventListener("click", onClick);
     return b;
+  }
+
+  /**
+   * One good's row on a stockpile: its name, how many the pile holds, and the
+   * accept toggle. The toggle is the styleguide's secondary recipe with its
+   * state carried by ink weight and fill — never gold, which is intent, and
+   * never sage or rust, which mean other things. `on`/`off` in caps is the
+   * whole of its vocabulary.
+   */
+  private filterRow(good: GoodDef, count: number, accepted: boolean, onToggle: () => void): HTMLElement {
+    const row = el("div", { class: "row filter" });
+    const ctl = el("span", { class: "ctl" });
+    const toggle = el(
+      "button",
+      {
+        class: "toggle",
+        type: "button",
+        "aria-pressed": String(accepted),
+        "aria-label": `accept ${good.label}`,
+        title: accepted ? `accepting ${good.label} — click to refuse` : `refusing ${good.label} — click to accept`,
+      },
+      accepted ? "on" : "off",
+    ) as HTMLButtonElement;
+    toggle.addEventListener("click", onToggle);
+    ctl.append(el("b", {}, String(count)), toggle);
+    row.append(el("span", {}, good.name), ctl);
+    return row;
+  }
+
+  /**
+   * The "produce until" row: the colony-wide count of the workshop's output
+   * against its ceiling, with `−`/`+` steppers either side. `sim/know` owns the
+   * landings (`stepLimit`) — from unlimited the first `−` lands on the current
+   * count rounded up to the step, so "stop making this" is one press. A press
+   * sends the **direction**, not a computed target: the sim resolves the
+   * landing against the live ceiling when the tick applies it, so two quick
+   * presses, or a run of them queued while paused, each count as one press
+   * rather than replaying the value this panel happened to show. The landing
+   * is still computed here, once, to know when a button has reached the end
+   * of the range and should go quiet: `−` at zero, `+` at unlimited.
+   */
+  private limitRow(b: NonNullable<ReturnType<typeof inspect>>): HTMLElement {
+    const good = GOODS[b.outputType as ItemTypeValue];
+    const row = el("div", { class: "row limit" });
+    const ctl = el("span", { class: "ctl" });
+    const ceiling = b.limit === UNLIMITED ? "unlimited" : String(b.limit);
+    const step = (dir: -1 | 1, glyph: string, title: string): HTMLButtonElement => {
+      const button = el("button", { class: "stepper", type: "button", title, "aria-label": title }, glyph) as HTMLButtonElement;
+      button.disabled = stepLimit(b.limit, b.colonyCount, dir) === b.limit;
+      button.addEventListener("click", () => this.ports.send({ kind: "stepLimit", type: b.outputType, dir }));
+      return button;
+    };
+    ctl.append(
+      step(-1, "−", `lower the ${good.label} ceiling`),
+      el("b", {}, `${b.colonyCount} / ${ceiling}`),
+      step(1, "+", `raise the ${good.label} ceiling`),
+    );
+    row.append(el("span", {}, `${capitalise(good.label)} in colony`), ctl);
+    return row;
   }
 
   // ---------------------------------------------------------------- labour
@@ -663,6 +746,29 @@ export class Hud {
       text(" — locked to a workshop until you pull them out."),
     );
   }
+}
+
+/**
+ * Put keyboard focus back on the control the player was pressing, found in the
+ * freshly rebuilt panel by its `aria-label`.
+ *
+ * The fallback is the point: a stepper that just reached the end of its range
+ * comes back **disabled**, and `focus()` on a disabled button silently does
+ * nothing — focus falls to the document body, so the next Tab starts at the
+ * top of the page. Walking a ceiling down to zero on the keyboard is exactly
+ * that case, so when the twin comes back dead, focus the other control in the
+ * same cluster instead — the one still worth pressing.
+ */
+function refocus(panel: HTMLElement, label: string): void {
+  const nodes = [...panel.querySelectorAll<HTMLElement>("[aria-label]")];
+  const match = nodes.find((n) => n.getAttribute("aria-label") === label);
+  if (!match) return;
+  if (!(match instanceof HTMLButtonElement) || !match.disabled) {
+    match.focus();
+    return;
+  }
+  const alive = match.closest(".ctl")?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+  alive?.focus();
 }
 
 function sameTool(a: Tool, b: Tool): boolean {
@@ -698,18 +804,24 @@ function millNote(b: NonNullable<ReturnType<typeof inspect>>): string {
   if (!b.staffed) return "no one is working here";
   const chainOf = b.chain;
   if (!chainOf) return "";
+  // The ceiling holding the mill is the player's own setting, said in the
+  // same quiet voice as "waiting for logs": no readout, no alert, and the
+  // slot worker stays put — unstaffing is still the lever for the hands.
+  if (b.stall === "at-limit") {
+    return `at limit (${b.colonyCount} ${GOODS[b.outputType as ItemTypeValue].label} in the colony)`;
+  }
   if (b.stall === "output-full") return `output full — nowhere to put the ${chainOf.output.toLowerCase()}s`;
   if (b.stall === "no-input") return `waiting for ${chainOf.input.toLowerCase()}`;
   return "working";
 }
 
-/** "accepts logs, planks, rock and blocks" — an Oxford-less list, because the
- *  note row is one quiet sentence and never a table. */
-function acceptNote(labels: string[]): string {
-  if (!labels.length) return "accepts nothing";
-  if (labels.length === 1) return `accepts ${labels[0]}`;
-  return `accepts ${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
-}
+/**
+ * The stockpile panel's one sentence. Filters and ceilings are the two halves
+ * of production control and are easy to mistake for each other, so the panel
+ * that carries one names the other: a filter chooses what a pile takes in and
+ * never stops a good being made — the mill pulls from any pile regardless.
+ */
+const FILTER_NOTE = "filters choose what this pile accepts — to stop a good being made, set its limit on the workshop";
 
 function tagClass(b: NonNullable<ReturnType<typeof inspect>>): string {
   if (b.state !== BuildingState.Active) return "blueprint";

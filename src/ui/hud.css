@@ -359,6 +359,94 @@
   display: block;
 }
 
+/* ---------- production control: control rows, steppers, toggles ---------- */
+
+/*
+ * Two interactive shapes the panels did not have before
+ * (docs/STYLEGUIDE.md, "Buttons, tags, meters"): the `−`/`+` stepper on a
+ * workshop's "in colony" row, and the accept toggle on each of a stockpile's
+ * good rows. Both are the **secondary** recipe — `line` border, ink-dim, 11px
+ * caps — so the panel keeps exactly one gold element, its action button. State
+ * is carried by ink weight and fill, never by colour: gold is intent, and sage
+ * and rust already mean other things.
+ *
+ * A control row is the ordinary label-left row with a small cluster on the
+ * right instead of a bare value; the label may wrap, the cluster never does.
+ */
+.row.filter,
+.row.limit {
+  align-items: center;
+}
+.row.filter > span:first-child,
+.row.limit > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.row .ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.stepper,
+.toggle {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink-dim);
+  font-family: var(--ui);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0;
+  cursor: pointer;
+}
+.stepper {
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  font-size: 13px;
+  letter-spacing: 0;
+  text-align: center;
+}
+.toggle {
+  min-width: 36px;
+  padding: 2px 7px;
+}
+.stepper:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.25);
+}
+/* The end of the range: quiet, not gone. */
+.stepper:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+  background: transparent;
+}
+/* On is ink on the dark fill; off is faint ink on nothing. Same border both
+ * ways, so the row keeps its shape whichever state it is in. */
+.toggle[aria-pressed="true"] {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.25);
+}
+.toggle[aria-pressed="false"] {
+  color: var(--ink-faint);
+}
+/* After the two state rules, deliberately: `.toggle:hover` and
+ * `.toggle[aria-pressed="…"]` have the same specificity, so a hover rule
+ * written above them loses to whichever state the button is in — an `off`
+ * toggle would keep its faint ink under the cursor and never brighten. */
+.toggle:hover {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.25);
+}
+.stepper:focus-visible,
+.toggle:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
+}
+
 .meter {
   height: 6px;
   background: var(--line-soft);

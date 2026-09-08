@@ -249,6 +249,49 @@ export function v6Script(sim: Sim): Command[] {
   return v5Script(sim);
 }
 
+/**
+ * v7: production control, back on the default fixture seed — the plank chain
+ * needs only woods, and 20260901's are two tiles from the centre.
+ *
+ * What it carries, and what no earlier file could: a **non-default ceiling**
+ * (`limits[Plank]` at 2, the other three still `-1`), a **stockpile with one
+ * filter off** (rock refused, everything else taken — the accept fields have
+ * been in every save since v3, but never at anything but 1), and the state the
+ * two produce together: a staffed sawmill standing at its ceiling with a log
+ * parked in its input buffer, and exactly two planks in the colony, both in
+ * the pile. Caught at 1000, comfortably after the mill has hit the ceiling and
+ * long before anything spends a plank.
+ */
+export const V7_TICKS = 1000;
+
+export function v7Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 30) }];
+    case 5: {
+      const site = buildSite(sim, 0);
+      return site ? [{ kind: "place", building: 0, x: site[0], y: site[1] }] : [];
+    }
+    case 200: {
+      const site = buildSite(sim, 1);
+      return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
+    }
+    case 600:
+      return staff(sim, 1);
+    // The ceiling before the first plank exists, so it is the brake and not the
+    // log supply that stops the mill; the filter on a good this colony never
+    // sees, so the flag is off without changing where anything goes.
+    case 650:
+      return [{ kind: "setLimit", type: 1 /* ItemType.Plank */, value: 2 }];
+    case 660: {
+      const pile = sim.buildings.find((b) => b.kind === 0 /* BuildingKind.Stockpile */);
+      return pile ? [{ kind: "toggleFilter", building: pile.id, type: 2 /* ItemType.Rock */ }] : [];
+    }
+    default:
+      return [];
+  }
+}
+
 /** A seven-tile run partway between the colony and the nearest den. Derived
  *  from the store, like every other site in this file. */
 function denRun(sim: Sim, offset: number): number[] {

@@ -161,7 +161,12 @@ describe("the scripted encounter", () => {
     // `Colonist`, and by tick 2400 this colony has none — the wilds take all
     // five, which is what the assertions below already say. v5 moved it because
     // `wandererTimer` sits on `Sim`, which survives an empty colony.
-    expect(hashSim(final())).toBe("d06c4a79");
+    //
+    // d06c4a79 → fe31cb4d with production ceilings (SAVE_VERSION 7,
+    // docs/changelog/2026-09-07-production-limits-and-filters.md), and it moved
+    // for the same reason v5 did: `limits` sits on `Sim`. Shape only — no
+    // workshop, no ceiling, nothing here ever counts a plank.
+    expect(hashSim(final())).toBe("fe31cb4d");
   });
 
   it("bites a standing palisade, and leaves it standing when its hours run out", () => {

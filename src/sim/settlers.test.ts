@@ -175,7 +175,12 @@ describe("the scripted settling", () => {
     // 24628f58 → 09cadca1 when the patience clock became its own field
     // (SAVE_VERSION 6): one more number per colonist, and no behaviour change —
     // nobody in this run is ever stuck, so every clock reads 0 throughout.
-    expect(hashSim(settling())).toBe("09cadca1");
+    //
+    // 09cadca1 → e3cf9525 with production ceilings (SAVE_VERSION 7,
+    // docs/changelog/2026-09-07-production-limits-and-filters.md): the store
+    // gained `limits`, all four slots `-1`. Shape only — this run sets no
+    // ceiling, so the mill fills the House exactly as before.
+    expect(hashSim(settling())).toBe("e3cf9525");
   });
 
   it("builds a House out of planks, which is what planks are for", () => {
@@ -246,8 +251,9 @@ describe("the scripted death en route", () => {
   });
 
   it("holds its golden hash", () => {
-    // 08abe6b8 → b740df36 for the v6 `patience` field, exactly as above.
-    expect(hashSim(caught())).toBe("b740df36");
+    // 08abe6b8 → b740df36 for the v6 `patience` field, exactly as above, and
+    // b740df36 → 70cb202a for the v7 `limits` array — shape only, as above.
+    expect(hashSim(caught())).toBe("70cb202a");
   });
 
   it("loses the wanderer to an orc, and buries them like anyone", () => {

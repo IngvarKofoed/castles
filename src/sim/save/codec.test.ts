@@ -35,6 +35,11 @@ function script(sim: ReturnType<typeof createSim>): Command[] {
     const tiles = [tileIndex(134, 134, sim.world.size), tileIndex(135, 134, sim.world.size)];
     return [{ kind: "designateTerraform", tiles, target: 5 }];
   }
+  // A ceiling and a filter, so the save carries a non-default `limits` slot and
+  // a stockpile with one accept flag off — the two v7 states — through the
+  // drift test rather than a store whose ceilings are all still `-1`.
+  if (sim.tick === 100) return [{ kind: "setLimit", type: 1, value: 3 }];
+  if (sim.tick === 110) return [{ kind: "toggleFilter", building: sim.buildings[0].id, type: 2 }];
   return [];
 }
 
@@ -229,6 +234,32 @@ describe("the save codec refuses what it cannot read", () => {
     await expect(decode(bytes)).rejects.toBeInstanceOf(SaveError);
   });
 
+  /**
+   * The v7 half of the format's alarm. A `limits` short of a slot is what a
+   * missed append rung produces — a new good with no `-1` added for it — and
+   * left to load it would make that good's ceiling silently unsettable; a
+   * value no command can write would brake a good forever. Both refuse.
+   */
+  it("rejects ceilings that are short a slot or hold a value no command could write", async () => {
+    const short = playedSim(10);
+    short.limits = [-1, -1];
+    await expect(decode(await encode(short, APP))).rejects.toBeInstanceOf(SaveError);
+
+    const stray = playedSim(10);
+    stray.limits = [-1, -7, -1, -1];
+    await expect(decode(await encode(stray, APP))).rejects.toBeInstanceOf(SaveError);
+
+    const fractional = playedSim(10);
+    fractional.limits = [-1, 2.5, -1, -1];
+    await expect(decode(await encode(fractional, APP))).rejects.toBeInstanceOf(SaveError);
+
+    // Above today's `LIMIT_MAX` is fine: the range is a tunable, the ceiling
+    // is in the save, and a number written when the range was wider must load.
+    const wide = playedSim(10);
+    wide.limits = [-1, 250, -1, -1];
+    expect((await decode(await encode(wide, APP))).limits).toEqual([-1, 250, -1, -1]);
+  });
+
   it("rejects a corrupt base64 payload", async () => {
     const bytes = await gzipJson({
       v: SAVE_VERSION,
@@ -299,6 +330,19 @@ describe("the migrations ladder", () => {
   it("passes a non-object building through so the save is refused, not patched", () => {
     const migrated = MIGRATIONS[2]({ world: { size: 4 }, buildings: [null, 7] }) as Record<string, unknown>;
     expect(migrated.buildings).toEqual([null, 7]);
+  });
+
+  /**
+   * The v7 rung: one ceiling slot per good the game had at v7, every one
+   * unlimited. Four literal slots rather than the current type count, so a v6
+   * save migrated after some later good exists still arrives at that good's own
+   * rung with exactly four — see the rung's comment.
+   */
+  it("gives a v6 state four unlimited ceilings and touches nothing else", () => {
+    const migrated = MIGRATIONS[6]({ world: { size: 4 }, tick: 11, buildings: [{ id: 1 }] }) as Record<string, unknown>;
+    expect(migrated.limits).toEqual([-1, -1, -1, -1]);
+    expect(migrated.tick).toBe(11);
+    expect(migrated.buildings).toEqual([{ id: 1 }]);
   });
 });
 

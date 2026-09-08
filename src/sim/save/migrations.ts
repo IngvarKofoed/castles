@@ -214,6 +214,27 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
         : s.colonists,
     };
   },
+
+  /**
+   * 6 → 7: production ceilings. One `limits` array, one slot per `ItemType`
+   * the game had at v7 — Log, Plank, Rock, Block — every slot `-1`, which is
+   * "unlimited" and exactly how a v6 colony already behaved: nothing changes
+   * until the player sets a ceiling (docs/specs/2026-09-07-production-control.md).
+   *
+   * **Four literal slots, not `unlimitedLimits()`.** A rung describes the save
+   * it is handed, at the version it is handed, and a later good appends its own
+   * `-1` in its own rung. Read the *current* type count here instead and a v6
+   * save migrated after that good exists would leave this rung with five slots
+   * and arrive at the next one with six — the same reason `MIGRATIONS[2]`
+   * stamps exactly `acceptRock` and `acceptBlock` rather than "every accept
+   * field the build knows". The stockpile filters themselves need nothing:
+   * their fields have been in every save since v3, and the toggles that arrive
+   * with v7 are UI over them.
+   */
+  6: (state) => {
+    const s = object(state);
+    return { ...s, limits: [-1, -1, -1, -1] };
+  },
 };
 
 /**

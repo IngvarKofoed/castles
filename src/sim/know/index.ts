@@ -8,9 +8,10 @@ import {
   storedCount,
   workTile,
 } from "../buildings";
+import { limitOf, overLimit, stepLimit } from "../economy/limits";
 import { GOODS, GOOD_LIST, stockpileAccepts } from "../goods";
 import { canMine, canTerraform, isTargetHeight } from "../ground";
-import { groundItemsAt } from "../items";
+import { countItems, groundItemsAt } from "../items";
 import {
   BuildingKind,
   BuildingState,
@@ -30,11 +31,14 @@ import { defOfMonster, monsterAt } from "../threats";
 import {
   BUILD_TICKS,
   DAY_TICKS,
+  LIMIT_MAX,
+  LIMIT_STEP,
   RHYTHM_FUZZ,
   STARTING_COLONISTS,
   STOCKPILE_PER_TILE,
   THREAT_BUCKETS,
   THREAT_RANGE,
+  UNLIMITED,
   WALL_ITEM_COST,
 } from "../tuning";
 import {
@@ -82,6 +86,13 @@ export type { GoodDef } from "../goods";
  *  these rather than hard-coding "1 log" twice and "1 block" twice. */
 export { WALL_ITEM_COST, wallItem };
 export type { WallMaterial } from "../walls";
+/**
+ * The production-ceiling control's arithmetic, for the workshop panel's `−`/`+`
+ * (docs/specs/2026-09-07-production-control.md). The HUD computes the landing
+ * with `stepLimit` and sends it as a `setLimit` command; it never writes the
+ * number itself. `UNLIMITED` is what the panel reads as "no ceiling".
+ */
+export { stepLimit, LIMIT_MAX, LIMIT_STEP, UNLIMITED };
 
 export function colonists(sim: Sim): readonly Colonist[] {
   return sim.colonists;
@@ -310,13 +321,27 @@ export interface Inspection {
   /** 0..1 through the current batch, or -1 when the workshop is not working. */
   milling: number;
   /**
+   * The workshop's output good, its production ceiling (`UNLIMITED` for none)
+   * and how many of that good the **whole colony** holds — stored, loose and
+   * carried alike, since that is the number the ceiling is measured against.
+   * `-1` / `UNLIMITED` / 0 for anything that produces nothing. The panel's
+   * "in colony" wording is load-bearing: this row sits under the per-building
+   * output-buffer count, and two bare plank numbers on one panel would read
+   * as the same thing.
+   */
+  outputType: number;
+  limit: number;
+  colonyCount: number;
+  /**
    * Why a staffed workshop is not working, for the panel to say plainly. The
    * panel is the only place the game ever explains a stall — no alerts, no
    * colour changes — so it has to name the real reason rather than guess at
    * the commonest one. "no-input" rather than "no logs", because the mason
-   * stalls on rock.
+   * stalls on rock. "at-limit" outranks the other two: the ceiling is the
+   * player's own setting, so when it is what holds the mill that is the reason
+   * worth reading first.
    */
-  stall: "none" | "no-input" | "output-full";
+  stall: "none" | "no-input" | "output-full" | "at-limit";
 }
 
 export function inspect(sim: Sim, id: number): Inspection | null {
@@ -333,6 +358,10 @@ export function inspect(sim: Sim, id: number): Inspection | null {
   const held = (type: number): number => stored.find((s) => s.type === type)?.count ?? 0;
   const inputCount = recipe ? held(recipe.input) : 0;
   const outputCount = recipe ? held(recipe.output) : 0;
+  // One walk of the colony's items, not two: the ceiling verdict is the same
+  // count the panel prints, so `overLimit` is asked rather than `atLimit`.
+  const limit = recipe ? limitOf(sim, recipe.output) : UNLIMITED;
+  const colonyCount = recipe ? countItems(sim, recipe.output) : 0;
   return {
     id: b.id,
     name: def.name,
@@ -355,8 +384,12 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     outputCount,
     outputCap: recipe?.outputCap ?? 0,
     milling: !recipe || b.millProgress < 0 ? -1 : Math.min(1, b.millProgress / recipe.ticks),
+    outputType: recipe ? recipe.output : -1,
+    limit,
+    colonyCount,
     stall:
       !recipe || b.worker < 0 || b.millProgress >= 0 ? "none"
+      : overLimit(limit, colonyCount) ? "at-limit"
       : outputCount >= recipe.outputCap ? "output-full"
       : "no-input",
   };

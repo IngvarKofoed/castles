@@ -1,11 +1,14 @@
 import { BUILDING_DEFS, canPlace, defOf, footprint } from "./buildings";
+import { clampLimit, limitOf, stepLimit } from "./economy/limits";
+import { goodOf } from "./goods";
 import { canMine, canTerraform, isTargetHeight } from "./ground";
-import { groundItem } from "./items";
+import { countItems, groundItem } from "./items";
 import { evictFromFootprint, leaveBuilding } from "./labour/colonists";
 import { abandonTask, releaseTask } from "./labour/tasks";
 import { occupancy } from "./path";
 import { clearGrave } from "./threats/graves";
 import {
+  BuildingKind,
   BuildingState,
   Loc,
   TaskKind,
@@ -78,7 +81,35 @@ export type Command =
   /** Mark wall segments for dismantling. Additive, like `designateChop`, and
    *  material-blind — a segment refunds whatever it was made of. */
   | { kind: "designateRaze"; tiles: number[] }
-  | { kind: "cancelRaze"; x: number; y: number };
+  | { kind: "cancelRaze"; x: number; y: number }
+  /**
+   * Set a good's production ceiling — "make this until `value` exist", or
+   * `-1` for unlimited. **Global per good, not per workshop**: two sawmills
+   * share one plank ceiling because the player's question is how many planks
+   * exist, not which mill made them. Clamped on arrival (`clampLimit`), so a
+   * replayed command lands on the same number whatever the range was tuned to
+   * when it was recorded (docs/specs/2026-09-07-production-control.md).
+   */
+  | { kind: "setLimit"; type: number; value: number }
+  /**
+   * Move a good's ceiling by one press — `dir` -1 lowers, +1 raises — with the
+   * landings `stepLimit` defines (economy/limits.ts), **resolved against the
+   * live ceiling and count when the tick applies it**, not against whatever
+   * the panel showed when the button was pressed. This is what the `−`/`+`
+   * steppers send. A press that carried an absolute target would replay a
+   * stale snapshot: commands land a tick later at the earliest and queue for
+   * as long as the game is paused, so two quick presses would both send the
+   * same number and three presses while paused would move the ceiling once.
+   * `setLimit` stays for an absolute write — scripts, replays, tests.
+   */
+  | { kind: "stepLimit"; type: number; dir: -1 | 1 }
+  /**
+   * Flip one of a stockpile's accept filters. A filter is **routing, not a
+   * brake** — it gates what the pile takes in and never what leaves it, and
+   * what it already holds stays put. A workshop or a House has no filters to
+   * flip, so the command is refused for anything but a stockpile.
+   */
+  | { kind: "toggleFilter"; building: number; type: number };
 
 export function applyCommands(sim: Sim, commands: readonly Command[]): void {
   for (const command of commands) applyCommand(sim, command);
@@ -114,7 +145,54 @@ function applyCommand(sim: Sim, command: Command): void {
       return designateRazeTiles(sim, command.tiles);
     case "cancelRaze":
       return designateRaze(sim, command.x, command.y, 0);
+    case "setLimit":
+      return setLimit(sim, command.type, command.value);
+    case "stepLimit":
+      return nudgeLimit(sim, command.type, command.dir);
+    case "toggleFilter":
+      return toggleFilter(sim, command.building, command.type);
   }
+}
+
+/**
+ * Write a ceiling. Only a good the store has a slot for takes it — the slot
+ * exists exactly when the good does, since both are appended in step — and the
+ * value is clamped rather than trusted, so nothing outside `-1` or
+ * `0 .. LIMIT_MAX` ever reaches a save.
+ */
+function setLimit(sim: Sim, type: number, value: number): void {
+  if (!Number.isInteger(type) || type < 0 || type >= sim.limits.length) return;
+  const clamped = clampLimit(value);
+  if (clamped === null) return;
+  sim.limits[type] = clamped;
+}
+
+/**
+ * One press of the panel's stepper, landing where `stepLimit` says from the
+ * ceiling and count **as they are now** — so a burst of presses, or a queue of
+ * them released by unpausing, applies press by press and arrives where the
+ * same presses would have taken a live panel.
+ */
+function nudgeLimit(sim: Sim, type: number, dir: number): void {
+  if (!Number.isInteger(type) || type < 0 || type >= sim.limits.length) return;
+  if (dir !== -1 && dir !== 1) return;
+  sim.limits[type] = stepLimit(limitOf(sim, type), countItems(sim, type), dir);
+}
+
+/**
+ * Flip a stockpile's filter for one good. Nothing else moves: items already
+ * in the pile stay (stored items are not loose, so nothing re-homes them; sites
+ * and workshops drain them as they always did), and a haul already on its way
+ * delivers — `freeCapacity` is asked at generation, not at arrival, and a
+ * cancelled haul would drop the good on the ground for the sake of a rule the
+ * player just changed.
+ */
+function toggleFilter(sim: Sim, id: number, type: number): void {
+  const b = findBuilding(sim, id);
+  if (!b || b.kind !== BuildingKind.Stockpile) return;
+  const good = goodOf(type);
+  if (!good) return;
+  b[good.accept] = b[good.accept] === 1 ? 0 : 1;
 }
 
 function inBounds(world: World, x: number, y: number): boolean {

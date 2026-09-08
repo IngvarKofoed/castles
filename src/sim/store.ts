@@ -1,5 +1,5 @@
 import { spawnLairs } from "./threats/lairs";
-import { STARTING_COLONISTS, WANDERER_INTERVAL } from "./tuning";
+import { STARTING_COLONISTS, UNLIMITED, WANDERER_INTERVAL } from "./tuning";
 import { generate, tileIndex, Terrain, type World } from "./world/world";
 
 /**
@@ -273,10 +273,12 @@ export interface Building {
   reservedIncoming: number;
   /**
    * Stockpile filters, 0/1 — one per `ItemType`, read through
-   * `stockpileAccepts` (goods.ts) rather than by name. Toggling them is later
-   * sugar; the fields exist now so persistence freezes the final shape. A new
-   * good means a new field *and* a migration rung that stamps it on to every
-   * building already saved, or old stockpiles refuse it forever.
+   * `stockpileAccepts` (goods.ts) rather than by name and flipped by the
+   * `toggleFilter` command. They gate **inflow only**: a pile that refuses
+   * planks still hands out the planks it already holds, and nothing re-homes
+   * them — filters route, ceilings (`Sim.limits`) brake. A new good means a
+   * new field *and* a migration rung that stamps it on to every building
+   * already saved, or old stockpiles refuse it forever.
    */
   acceptLog: number;
   acceptPlank: number;
@@ -380,11 +382,38 @@ export interface Sim {
    */
   wandererTimer: number;
   /**
+   * Production ceilings, one per `ItemType` value in enum order: "make this
+   * good until N exist", **counted over every item of the type anywhere** —
+   * stored, on the ground, in someone's hands — and `-1` (`UNLIMITED`) for no
+   * ceiling, which is the default for every good and every migrated save. A
+   * workshop whose recipe's output is at or over its ceiling neither orders
+   * input nor starts a new batch; one in progress finishes, and nothing in
+   * flight is ever cancelled by a ceiling (`economy/limits.ts`).
+   *
+   * Global rather than per workshop because the player's question is "how many
+   * planks exist", not "which mill made them". Meaningful only for **produced**
+   * goods: raw goods are already bounded by their designations, so the panel
+   * never offers a ceiling on one, and the slot stays `-1`.
+   *
+   * **Append-only, like the enums it is indexed by.** Every future `ItemType`
+   * appends a `-1` here in its own migration rung — miss it and an old save
+   * reads `limits[Grain]` as `undefined`, which the plain-data rule forbids.
+   */
+  limits: number[];
+  /**
    * 1 when a wall event this tick has invalidated `insideMap`. The recompute
    * batches to the end of the tick, so this is always 0 at a tick boundary and
    * a save can never carry a pending one.
    */
   enclosureDirty: number;
+}
+
+/**
+ * No ceiling on any good: one `UNLIMITED` per `ItemType` value, in enum order.
+ * What a fresh colony starts with, and what `flatSim` hands a test.
+ */
+export function unlimitedLimits(): number[] {
+  return Object.values(ItemType).map(() => UNLIMITED);
 }
 
 /** Mint the next entity id. The only id source; ids are never reused. */
@@ -463,6 +492,7 @@ export function createSim(seed: number): Sim {
     // builds one. No draw here: `createSim` makes none, and the v5 migration
     // has to be able to hand an old save the same value.
     wandererTimer: WANDERER_INTERVAL,
+    limits: unlimitedLimits(),
     // A wall-less world encloses nothing, so the zeroed layer above is already
     // correct — but the flag makes the first tick settle it anyway rather than
     // trusting that. `store.ts` deliberately does not import `walls/enclosure`

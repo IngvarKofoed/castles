@@ -4,7 +4,7 @@ import { createSim } from "./store";
 import { advanceTick } from "./tick";
 import type { Command } from "./commands";
 import { hashSim } from "./hash";
-import { readout } from "./know";
+import { inspect, readout } from "./know";
 import { canPlace } from "./buildings";
 import { canMine, canTerraform } from "./ground";
 import { WallState, canPlaceWall, isBlueprint, isStoneWall } from "./walls";
@@ -34,6 +34,9 @@ function scriptedRun(ticks: number): Store {
  */
 let cached: Store | null = null;
 const scripted = (): Store => (cached ??= scriptedRun(1500));
+
+/** The pinned hash of that run. Named so the move history above can cite it. */
+const GOLDEN_V7 = "ade08d30";
 
 /**
  * Designate a handful of trees, place a stockpile, place a sawmill, staff it.
@@ -82,6 +85,17 @@ function script(sim: Store): Command[] {
       return staffCommand(sim, "staff");
     case 1300:
       return staffCommand(sim, "unstaff");
+    // Production control, inside the pin: a plank ceiling of two, set before
+    // the first plank exists, so the brake is what stops the mill rather than
+    // the log supply — and the stockpile told to refuse planks, so the two it
+    // makes stay in the mill's own buffer instead of being hauled away. Both
+    // are asserted below rather than left as hash noise.
+    case 1250:
+      return [{ kind: "setLimit", type: ItemType.Plank, value: 2 }];
+    case 1260: {
+      const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
+      return pile ? [{ kind: "toggleFilter", building: pile.id, type: ItemType.Plank }] : [];
+    }
     // One L-shaped wall drag, as the single command a gesture produces — both
     // legs and the corner in one entry in the log, so the wall tier's
     // placement, its build-wall tasks and the enclosure recompute all sit
@@ -310,7 +324,16 @@ describe("determinism", () => {
     // 7cd7340f → 50083138 when the patience clock stopped riding on `work` and
     // became `Colonist.patience` (SAVE_VERSION 6). Shape again, and for the
     // same reason: no House, no wanderer, nobody's clock ever moves off 0.
-    expect(hashSim(scripted())).toBe("50083138");
+    //
+    // 50083138 → GOLDEN_V7 with production control
+    // (docs/changelog/2026-09-07-production-limits-and-filters.md). Shape —
+    // the store gained `limits` (SAVE_VERSION 7) — **and behaviour, on
+    // purpose**: the script now sets a plank ceiling of two at 1250 and turns
+    // the stockpile's plank filter off at 1260, so the mill stops at two planks
+    // with a log parked in its buffer and both planks sit in its own output
+    // buffer. The plank assertion below moved from "more than none" to
+    // "exactly the ceiling", which is what says the number moved for the brake.
+    expect(hashSim(scripted())).toBe(GOLDEN_V7);
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {
@@ -352,9 +375,17 @@ describe("the labour loop", () => {
     expect(stockpile?.state).toBe(BuildingState.Active);
     expect(sawmill?.state).toBe(BuildingState.Active);
 
-    // Trees were felled into logs, and logs became planks.
+    // Trees were felled into logs, and logs became planks — exactly as many as
+    // the ceiling set at 1250 allows, and no more, with the mill standing at
+    // its limit rather than out of logs. The brake, as a number.
     expect(r.goods[ItemType.Log]).toBeGreaterThan(0);
-    expect(r.goods[ItemType.Plank]).toBeGreaterThan(0);
+    expect(r.goods[ItemType.Plank]).toBe(2);
+    expect(sim.limits[ItemType.Plank]).toBe(2);
+    expect(inspect(sim, sawmill!.id)?.stall).toBe("at-limit");
+    // And the filter routed: the stockpile refuses planks, so both sit in the
+    // mill's own output buffer while its logs still came from that same pile.
+    expect(stockpile?.acceptPlank).toBe(0);
+    expect(sim.items.filter((it) => it.type === ItemType.Plank).every((it) => it.holder === sawmill?.id)).toBe(true);
 
     // Both workshops are staffed, so the pool that feeds both is two pairs of
     // hands short — the labour trap, as a number.

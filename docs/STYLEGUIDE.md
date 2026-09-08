@@ -1,6 +1,6 @@
 # Castles — HUD style guide
 
-*Last updated 2026-09-01. Distilled from the approved visual mock
+*Last updated 2026-09-07. Distilled from the approved visual mock
 (https://claude.ai/code/artifact/fa8e50e2-7a08-422e-890b-23e3f262711c — the
 live, editable reference) and the HUD proven in `mockups/mockup3d.html`.
 Every session doing UI work copies from here; nothing visual gets invented
@@ -68,12 +68,38 @@ label, ink value) → italic faint note rows for quiet status → at most one
 gold action button, full width, at the bottom. Fixed width 246px on the
 right edge. Padding `12px 14px 14px`, vertical gap 12px, radius 2px.
 
+**A control row** is the same label-left row with a small cluster on the
+right in place of the bare value — a count and a toggle (`Plank  3  ON`), or
+a value between two steppers (`Planks in colony  − 14 / 20 +`). The label
+may wrap; the cluster never does. Two rows use it so far, both from
+production control: every good on a stockpile's panel gets a count-and-toggle
+row, and a workshop's panel gets one "in colony" row for its output, under
+the per-building output count — the wording is what keeps the local plank
+number and the colony-wide one from reading as the same figure. The ceiling
+reads `unlimited` at the top of its range; the row never shows `∞`. A
+workshop held by its ceiling says so in the note row, in the house voice:
+`at limit (20 planks in the colony)`. A stockpile's note row carries the one
+sentence that keeps filters and ceilings apart — filters choose what a pile
+accepts, ceilings stop a good being made.
+
 ## Buttons, tags, meters
 
 - **Primary**: transparent, 1px gold border, gold text; hover adds
   `rgba(220,162,60,0.08)` fill; pressed `0.16`. Disabled: `line` border,
   `ink-faint` text.
 - **Secondary**: `line` border, `ink-dim` text.
+- **Steppers** (`−` / `+`, either side of a value): the secondary recipe in a
+  20px square, the glyph at 13px; hover `ink` on `rgba(0,0,0,0.25)`; at the
+  end of its range the button is `ink-faint` and disabled — quiet, not gone.
+  Never gold: the panel's one gold element is its action button, and a
+  ceiling is a setting, not an order.
+- **Toggles** (a stockpile's accept filters): the secondary recipe reading
+  `on` / `off` in 11px caps, `aria-pressed` carrying the state. On is `ink`
+  on `rgba(0,0,0,0.25)`; off is `ink-faint` text on nothing; the `line`
+  border is the same both ways so the row keeps its shape. **State is ink
+  weight and fill, never a colour** — gold is intent, sage and rust already
+  mean other things, and four toggles in one panel would otherwise be four
+  gold elements.
 - **Rail tools**: borderless, 2px transparent left edge; pressed = gold
   text, gold left edge, `rgba(220,162,60,0.13)` fill.
 - **Tags** (10px caps, 2px radius): POOL sage on `rgba(143,191,82,0.16)`;

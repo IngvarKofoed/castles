@@ -8,6 +8,7 @@ import {
   type Building,
   type Monster,
   type Sim,
+  unlimitedLimits,
 } from "./store";
 
 /**
@@ -56,6 +57,7 @@ export function flatSim(size = 12, height = 4): Sim {
     // A full interval, as `createSim` gives it: nothing counts down until a
     // House stands, so a test that never builds one never sees an arrival.
     wandererTimer: WANDERER_INTERVAL,
+    limits: unlimitedLimits(),
     enclosureDirty: 0,
   };
 }

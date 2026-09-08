@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { applyCommands } from "../commands";
 import { hashSim } from "../hash";
+import { inspect } from "../know";
 import { populationCap, settled } from "../settlers";
 import { testBuilding } from "../test-sim";
+import { BUILDING_DEFS } from "../buildings";
 import { BuildingKind, BuildingState, ItemType, TaskKind, type Sim } from "../store";
 import { advanceTick } from "../tick";
 import { WallState, canPlaceWall, isStoneWall } from "../walls";
@@ -21,6 +23,7 @@ import {
   V4_TICKS,
   V5_TICKS,
   V6_TICKS,
+  V7_TICKS,
   replay,
   v1Script,
   v2Script,
@@ -28,6 +31,7 @@ import {
   v4Script,
   v5Script,
   v6Script,
+  v7Script,
 } from "./fixtures/recipe";
 
 /**
@@ -68,6 +72,10 @@ import {
  *   thousand ticks later, holding all three ways an arrival can end at once — a
  *   settler who came by sea, the grave of the one after them, and a third
  *   mid-walk with a route half-consumed.
+ * - **v7**, written 2026-09-07 for production control: a plank ceiling of two
+ *   with the sawmill standing at it, a log parked in its buffer, and a stockpile
+ *   with its rock filter off — the first save ever to hold a `limits` slot that
+ *   is not `-1` or an accept flag that is not 1.
  *
  * None is an empty world: an empty store would round-trip past almost every
  * mistake this file exists to catch.
@@ -87,8 +95,12 @@ const V3 = new URL("./fixtures/v3.castles", import.meta.url);
 const V4 = new URL("./fixtures/v4.castles", import.meta.url);
 const V5 = new URL("./fixtures/v5.castles", import.meta.url);
 const V6 = new URL("./fixtures/v6.castles", import.meta.url);
+const V7 = new URL("./fixtures/v7.castles", import.meta.url);
 
 type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
+
+/** What `v7.castles` decodes to — a native v7 file, so no rung touches it. */
+const V7_HASH = "0ca62ff1";
 
 /** The entity kinds a pre-threat recipe can still be asked about. Monsters are
  *  excluded because those three recipes replay in an empty wilderness — see
@@ -153,8 +165,13 @@ describe("the committed v1 save", () => {
     // ea10914f → ab0c5574 at SAVE_VERSION 6: the 5 → 6 rung gives every
     // colonist a `patience` field of its own, so the wanderer's give-up clock
     // stops borrowing `work`.
+    //
+    // ab0c5574 → d01e0770 at SAVE_VERSION 7: the 6 → 7 rung gives the store
+    // its `limits` — four slots, all `-1`, which is the colony exactly as it
+    // played (docs/changelog/2026-09-07-production-limits-and-filters.md).
     const sim = await decode(readFileSync(V1));
-    expect(hashSim(sim)).toBe("ab0c5574");
+    expect(hashSim(sim)).toBe("d01e0770");
+    expect(sim.limits).toEqual([-1, -1, -1, -1]);
     // A v1 colony wakes up in a wilderness rather than in an empty world.
     expect(sim.monsters.length).toBeGreaterThan(0);
     // The half of that rung nothing else would catch: a pre-v3 stockpile that
@@ -240,9 +257,10 @@ describe("the committed v2 save", () => {
     // one, which is what keeps that wilderness equal to a fresh game's.
     // Then 41f2beab → e0a0ad53 at SAVE_VERSION 5, for the 4 → 5 rung the v1
     // pin above records: `dest` on every colonist, and the arrival clock. Then
-    // e0a0ad53 → 83891a24 at SAVE_VERSION 6 for the `patience` rung.
+    // e0a0ad53 → 83891a24 at SAVE_VERSION 6 for the `patience` rung, and
+    // 83891a24 → 28d26444 at 7 for the `limits` one.
     const sim = await decode(readFileSync(V2));
-    expect(hashSim(sim)).toBe("83891a24");
+    expect(hashSim(sim)).toBe("28d26444");
     for (const b of sim.buildings) {
       expect(b.acceptRock).toBe(1);
       expect(b.acceptBlock).toBe(1);
@@ -289,10 +307,11 @@ describe("the committed v3 save", () => {
     // the save's own world**, so a v3 colony wakes up in a wilderness rather
     // than in an empty one (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
     // The file is untouched and stays so.
-    // 7dcf3387 → 9935f38b at SAVE_VERSION 5, for the same 4 → 5 rung, and
-    // 9935f38b → 8c8cb6fc at 6 for the `patience` one.
+    // 7dcf3387 → 9935f38b at SAVE_VERSION 5, for the same 4 → 5 rung,
+    // 9935f38b → 8c8cb6fc at 6 for the `patience` one, and 8c8cb6fc → 30f9a9a0
+    // at 7 for the `limits` one.
     const sim = await decode(readFileSync(V3));
-    expect(hashSim(sim)).toBe("8c8cb6fc");
+    expect(hashSim(sim)).toBe("30f9a9a0");
     // The half of that rung nothing else would catch: a migrated colony that
     // came through with an empty `monsters` array would be a save of a game
     // that has no threats in it at all, and nothing would ever say so.
@@ -349,9 +368,9 @@ describe("the committed v4 save", () => {
     // (docs/changelog/2026-09-07-housing-and-wanderers.md). The file is
     // untouched and stays so.
     // Then 80b2f86e → aee29fc7 at SAVE_VERSION 6, for the rung that gives the
-    // give-up clock its own field.
+    // give-up clock its own field, and aee29fc7 → 65b5106b at 7 for `limits`.
     const sim = await decode(readFileSync(V4));
-    expect(hashSim(sim)).toBe("aee29fc7");
+    expect(hashSim(sim)).toBe("65b5106b");
     // The half of that rung nothing else would catch: a colonist that came
     // through without `dest` would be a store carrying `undefined`, which the
     // plain-data rule forbids and no other test looks for.
@@ -427,9 +446,9 @@ describe("the committed v5 save", () => {
     // own (docs/changelog/2026-09-07-housing-and-wanderers.md). The file is
     // untouched and stays so — it is the only fixture written by a codec that
     // had `dest` but not `patience`, which is exactly what makes it worth
-    // keeping.
+    // keeping. Then 1aba9400 → 3fb33394 at SAVE_VERSION 7 for `limits`.
     const sim = await decode(readFileSync(V5));
-    expect(hashSim(sim)).toBe("1aba9400");
+    expect(hashSim(sim)).toBe("3fb33394");
     for (const c of sim.colonists) expect(c.patience).toBe(0);
     // The wanderer it was caught carrying is still walking, clock and all.
     expect(sim.colonists.filter((c) => c.dest >= 0)).toHaveLength(1);
@@ -475,9 +494,12 @@ describe("the committed v6 save", () => {
     expect(sim.tasks.some((t) => t.kind === TaskKind.Chop)).toBe(true);
   });
 
-  it("decodes to the exact store it was written from", async () => {
+  it("decodes to the store the v7 migration turns it into", async () => {
+    // 7206746a → e0d58baa at SAVE_VERSION 7: the 6 → 7 rung adds `limits`,
+    // four slots of `-1`. The file is untouched and stays so.
     const sim = await decode(readFileSync(V6));
-    expect(hashSim(sim)).toBe("7206746a");
+    expect(hashSim(sim)).toBe("e0d58baa");
+    expect(sim.limits).toEqual([-1, -1, -1, -1]);
   });
 
   it("keeps running from where it was saved, and the third one arrives too", async () => {
@@ -490,6 +512,68 @@ describe("the committed v6 save", () => {
     expect(walking?.dest).toBe(-1);
     expect(settled(sim)).toBe(7);
     expect(populationCap(sim)).toBe(7);
+  });
+});
+
+describe("the committed v7 save", () => {
+  it("still loads, with a ceiling holding the mill and a filter turned off", async () => {
+    const sim = await decode(readFileSync(V7));
+    expect(sim.tick).toBe(V7_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED);
+
+    // The two states no earlier file could carry: a ceiling that is not
+    // unlimited, and an accept flag that is not on.
+    expect(sim.limits).toEqual([-1, 2, -1, -1]);
+    const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile)!;
+    expect([pile.acceptLog, pile.acceptPlank, pile.acceptRock, pile.acceptBlock]).toEqual([1, 1, 0, 1]);
+
+    // And what they produce together: exactly two planks in the colony, both
+    // in the pile, and a staffed mill standing at its ceiling with the spec's
+    // accepted quirk on show — logs parked in an input buffer nothing empties.
+    const planks = sim.items.filter((it) => it.type === ItemType.Plank);
+    expect(planks).toHaveLength(2);
+    expect(planks.every((it) => it.holder === pile.id)).toBe(true);
+    const mill = sim.buildings.find((b) => b.kind === BuildingKind.Sawmill)!;
+    expect(mill.worker).toBeGreaterThanOrEqual(0);
+    expect(mill.millProgress).toBe(-1);
+    expect(inspect(sim, mill.id)?.stall).toBe("at-limit");
+    expect(sim.items.some((it) => it.type === ItemType.Log && it.holder === mill.id)).toBe(true);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V7));
+    expect(hashSim(sim)).toBe(V7_HASH);
+  });
+
+  it("keeps running from where it was saved, and the brake releases when planks are spent", async () => {
+    const sim = await decode(readFileSync(V7));
+    const mill = sim.buildings.find((b) => b.kind === BuildingKind.Sawmill)!;
+    // The Outcome bullet on a loaded save rather than a fresh colony: raise the
+    // ceiling to what a House costs and place one. The reloaded mill fills the
+    // ceiling, the site takes all four planks, the build spends them, and the
+    // count falling back to zero is what restarts the mill — unaided.
+    //
+    // Raised first, deliberately. Delivered materials still *exist* until the
+    // build completes, so a House placed under a ceiling of two would hold the
+    // colony's two planks, still count them, and wait for two more the mill
+    // may not make — the documented consequence of counting every plank
+    // anywhere (docs/changelog/2026-09-07-production-limits-and-filters.md).
+    applyCommands(sim, [
+      { kind: "setLimit", type: ItemType.Plank, value: BUILDING_DEFS[BuildingKind.House].cost },
+      { kind: "place", building: BuildingKind.House, x: mill.x + 4, y: mill.y },
+    ]);
+    const house = sim.buildings.find((b) => b.kind === BuildingKind.House);
+    expect(house).toBeDefined();
+    let built = false;
+    let milledAfter = false;
+    for (let t = 0; t < 3000 && !milledAfter; t++) {
+      advanceTick(sim);
+      if (house!.state === BuildingState.Active) built = true;
+      if (built && mill.millProgress >= 0) milledAfter = true;
+    }
+    expect(built).toBe(true);
+    expect(milledAfter).toBe(true);
+    expect(sim.limits[ItemType.Plank]).toBe(BUILDING_DEFS[BuildingKind.House].cost);
   });
 });
 
@@ -525,6 +609,13 @@ describe("the fixtures still have the store shape this build produces", () => {
     const kinds = [...OLD_KINDS, "monsters"] as const;
     expect(shapeOf(await decode(readFileSync(V6)), kinds)).toEqual(
       shapeOf(replay(v6Script, V6_TICKS, FIXTURE_SEED_V6), kinds),
+    );
+  });
+
+  it("v7, natively — ceilings included", async () => {
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V7)), kinds)).toEqual(
+      shapeOf(replay(v7Script, V7_TICKS, FIXTURE_SEED), kinds),
     );
   });
 
