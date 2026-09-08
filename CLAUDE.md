@@ -19,6 +19,8 @@ Then the changelog, as **actions** rather than loads — no `@`-reference can ex
 
 **The grep is not optional and it is not a fallback**, with or without the delegated digest. Nothing here will *show* you a decision from six months back on its own — the index names it, the grep opens it, and skipping both means re-litigating it with nothing signalling that anything is missing. The digest helps but does not replace it: 20 lines distilled from hundreds of leads is necessarily lossy, and it reads leads rather than detail, so the thing you need may be in a `## Detail` it never opened. So before you write a changelog entry, confirm you did both: *did I list `docs/changelog/` this session, and grep it for what I touched?*
 
+Then read `docs/CLAUDE_TODO.md` — the list of work this project owes and hasn't done. Also an action rather than a load: the file doesn't exist until a session writes the first item, so an `@`-reference would dangle in every repo that owes nothing. Absent means nothing is outstanding. It is short by design, so read all of it — and read *Owed follow-ups* below before you act on any of it, because the one thing that section insists on is that finding an item there is never a reason to start on it.
+
 `CONCEPT.md` and `ARCHITECTURE.md` are the source of truth for *what* we're building, what we've built, and *how* it's structured. If something in the code contradicts them, either the code or the doc is wrong — flag it rather than guessing.
 
 ## Changelog discipline
@@ -30,6 +32,7 @@ Every change you make to this repository must be recorded in `docs/changelog/` a
 - **A landed entry file is never renamed, moved, or deleted.** Its path is its address — other docs, specs and code comments cite it by slug — and this is the one thing here that can break silently. Two changes claiming the same path is a merge conflict, which git blocks; a rename produces no conflict and breaks every citation to that entry with nothing noticing. **Cite in the other direction too:** when your change revisits, narrows or reverses a decision an earlier entry recorded, name that entry's slug in yours. That makes the chain greppable instead of something a future session has to reconstruct — and with no digest carrying it, this is *the* mechanism by which rationale reaches back past the recent window, without any entry growing.
 - Write the entry as part of the same change. One file per change: don't batch several changes into one file, and don't skip entries. If a change is genuinely several, give each its own file.
 - **Where `HEAD` is doesn't matter.** On `main`, on a branch, in a worktree — the entry file is written the same way in all of them, with nothing staged or moved at any point, because the file you write is the file that lands.
+- **A deferred follow-up gets written twice, deliberately.** Once in this entry's `## Detail`, where it is a permanent statement about what this change left undone, and once as a line in `docs/CLAUDE_TODO.md`, where it is a claim about what the project owes *right now* — see *Owed follow-ups* below for why neither can do the other's job.
 - **Write so the index and a grep can find it, because nothing else will.** There is no digest and no curated decision list — deliberately, since any such file is one every change appends to and every compaction rewrites, which is the collision the folder exists to remove. Your entry file is the only copy, reachable exactly two ways: by its slug in `ls docs/changelog`, and by grep over the folder. So the **slug names the thing, not the activity** — `expired-refresh-tokens`, not `auth-fixes` — because the slug is the only part of your entry every future session sees. And when the change carries a decision that must not be re-litigated, say it in the words someone would search for: name the alternative you rejected, the constraint that still binds, the thing you tried and removed. Don't allude to it. An entry nobody can find is an entry nobody wrote.
 
 Same change, bad vs. good entry — `docs/changelog/2026-03-14-expired-refresh-tokens.md`:
@@ -53,12 +56,37 @@ Same change, bad vs. good entry — `docs/changelog/2026-03-14-expired-refresh-t
     "never existed", so the error the client got would have been wrong.
   ```
 
+## Owed follow-ups
+
+`docs/CLAUDE_TODO.md` is one list of work this project **owes and has not done** — things a session found while doing something else and deliberately left alone. You write it and you drain it — the shape of the whole file is below. It doesn't exist until the first item needs writing, and it goes back to not existing when the last one is done.
+
+**It is not a work queue. Never begin an item because it is in the file.** The user asking is the only thing that starts work, here as everywhere. What the list is for is the moment *before* you start: you've been asked to change an area, and the list tells you what an earlier session already knew was wrong with it. Surface the relevant item then — one line, as context for the change you were actually asked to make — and let the user decide whether it comes into scope. An item stays on the list however long it sits there; age is not a mandate.
+
+**If you find an item you didn't write, treat it as a request, not a to-do.** The file is yours by convention, not by permission — nothing stops the user typing into it. Don't leave such a line sitting silently: say it's there and ask whether they want it done now.
+
+**How the user drives it.** Writing the list is yours; *acting* on it is always theirs. Four things they'll say, to honor plainly whenever they come up:
+
+- **"What's outstanding?"** / "anything owed in here?" — read the list back, narrowed to the area if they named one. If the file doesn't exist, say nothing is outstanding rather than that a file is missing.
+- **"Do that one."** — an ordinary request that happens to have a handle. Do the work, write the changelog entry, delete the line: one change.
+- **"Drop it."** / "we're not doing that" — delete the line *without* doing the work. This is the one deletion that isn't a completion, and it earns no changelog entry, because nothing changed. Don't argue for keeping it; a list whose items have to be defended out of it stops being a list anyone reads.
+- **"Add X to the TODO."** — write it in the item shape below, from what they said. This is them asking you to record something, which is not the same as them typing a line in themselves.
+
+**Say it in the turn when you add an item** — one line, *"noted a follow-up about X"*. Don't ask permission; deferring the work was already the decision, and the entry in the file is a consequence of it. But a file the user isn't watching that grows silently is a file they stop trusting.
+
+**What earns a line.** Something genuinely owed, that you found, that was out of scope for the change you were making — a limitation you hit, a gap in coverage you noticed, work the change you just landed implies but doesn't contain. The bar is *would a future session want to know this is still outstanding*, not *could this be better*. Three things that don't belong: work the user just asked for and you're about to do anyway; refactors and ideas with nothing behind them, which is how a list becomes something nobody reads; and anything small enough that writing it down costs more than doing it — if it's in scope and cheaper to fix than to record, fix it.
+
+**The whole file, and the shape of an item.** A heading, a short note for whoever opens the file without having read this section, then bullets — each one bullet, no nesting: what is owed in a bold clause phrased as the thing rather than the activity, a sentence of why it matters, then where it came from — the slug of the changelog entry that surfaced it, whenever there was one.
+
+**Structure stops there.** No grouping by area, no priorities, no owners, no dates, no status column, no done section, no item numbers. A list short enough to read whole needs no index into itself — and when it gets long enough for headings to help, the length is the finding: the bar for a line has slipped. The origin slug already carries the date; priorities are sequencing claims only the next request can make; and a done section or numbers are the two ways the file starts behaving like a record, which it isn't — `docs/changelog/` is.
+
+**Delete the item when the work lands** — in the same change that does the work. Not struck through, not moved to a done section, not kept with a note. The changelog entry is the permanent record and the item was never a record of anything; keeping both means the list stops draining and starts having to be read *past*. Deleting is what makes the file worth reading at session start: everything still in it is outstanding **now**, by construction. Never cite the file from anywhere — it has no stable anchors, by design.
+
 ## Nested guidance
 
 Each `src/` subtree has its own `CLAUDE.md` with scoped tool/skill rules:
 
 - `src/sim/CLAUDE.md` — the pure simulation: the hard import boundary, determinism rules, plain-data state, testing
-- `src/render/CLAUDE.md` — the three.js renderer: knowledge-only reads, chunked instancing, visual verification
+- `src/render/CLAUDE.md` — the three.js renderer: knowledge-only reads, chunked meshing, visual verification
 - `src/ui/CLAUDE.md` — HUD and menus: plain DOM rules, browser-driven verification
 
 ## Reviewing changes
@@ -164,4 +192,4 @@ The worktrees a multi-agent fan-out creates are **not** this: they're ephemeral,
 
 The version is `git describe --tags --long --always --dirty` (e.g. `v0.1.0-32-g98af7ae`), anchored at the annotated `v0.1.0` tag. New releases are new annotated tags — never a hand-bumped number in a file.
 
-Not wired into a build yet, because there is no build. When build-order step 1 lands (Vite): add `scripts/gen-version.mjs` that resolves `git describe` **once at build time** and writes a generated `src/version.ts` the app imports — the running app never shells out to git. If CI ever builds this, the checkout needs full history and tags (`fetch-depth: 0` on GitHub Actions), or the version silently degrades to a bare hash.
+Wired: `scripts/gen-version.mjs` resolves `git describe` **once at build time** (npm `predev`/`prebuild`) and writes the gitignored `src/version.ts` the app imports — the running app never shells out to git. If CI ever builds this, the checkout needs full history and tags (`fetch-depth: 0` on GitHub Actions), or the version silently degrades to a bare hash.
