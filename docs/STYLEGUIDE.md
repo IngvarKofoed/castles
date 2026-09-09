@@ -2,9 +2,16 @@
 
 *Last updated 2026-09-08. Distilled from the approved visual mock
 (https://claude.ai/code/artifact/fa8e50e2-7a08-422e-890b-23e3f262711c — the
-live, editable reference) and the HUD proven in `mockups/mockup3d.html`.
-Every session doing UI work copies from here; nothing visual gets invented
-per-session.*
+live, editable reference), the HUD refit canvas
+(https://claude.ai/code/artifact/abc3851b-250b-48b1-8406-6871d5816c66 — the
+Stores panel, the slim ribbon and the icon rail), and the HUD proven in
+`mockups/mockup3d.html`. Every session doing UI work copies from here; nothing
+visual gets invented per-session.*
+
+**The minimum supported viewport is 1280×720.** Every region below fits at that
+size without wrapping or scrolling, except the rail, which is allowed to scroll
+inside itself below 768px of window height. Nothing is designed for narrower or
+shorter than that.
 
 ## Tone
 
@@ -46,7 +53,7 @@ The game promises calm; the UI must keep it:
 | `rock` | `#8a9096` | rock resource icon (quarried rubble: cool, raw) |
 | `block` | `#b3ab97` | block resource icon (cut stone: warmer, paler) |
 | `grain` | `#a89b3e` | grain resource icon (straw: olive, so it is not the plank's tan) |
-| `flour` | `#eae3cd` | flour resource icon (sacking: the palest thing on the ribbon) |
+| `flour` | `#eae3cd` | flour resource icon (sacking: the palest pip in Stores) |
 | `bread` | `#96552b` | bread resource icon (crust: **darker and redder than `timber`**, so a loaf pip and a log pip are not the same brown) |
 
 World colors live in `src/render/palette.ts` and are not UI colors.
@@ -116,7 +123,19 @@ holds arrivals. Both are the italic faint recipe; neither is an alarm.
   mean other things, and four toggles in one panel would otherwise be four
   gold elements.
 - **Rail tools**: borderless, 2px transparent left edge; pressed = gold
-  text, gold left edge, `rgba(220,162,60,0.13)` fill.
+  text, gold left edge, `rgba(220,162,60,0.13)` fill. **Icon only** — the name
+  and cost live in the button's `aria-label` and `title` ("Stone wall — 1
+  block") and in the caption strip below.
+- **The rail's caption strip**: a fixed-height footer at the foot of the rail,
+  over a `line-soft` rule — the tool's name at 11px above its cost in
+  `ink-faint` 10px. **Always rendered, empty when there is nothing to name**,
+  so the rail cannot change height under the pointer — and **outside the rail's
+  scrolled box**, so a short window scrolls the tool sections and never clips
+  the strip. It names the hovered or
+  keyboard-focused tool first, else the active tool, else nothing — and the
+  name is **gold only while it is naming the active tool**, which is the rail's
+  one gold element. A preview of some other tool reads in plain ink: hover is
+  not intent.
 - **Tags** (10px caps, 2px radius): POOL sage on `rgba(143,191,82,0.16)`;
   SLOT `#e08a72` on `rgba(184,80,58,0.18)`; BLUEPRINT ink-dim on
   `rgba(126,122,104,0.18)`.
@@ -264,13 +283,18 @@ were measured against real terrain (`2026-09-01-tick-and-labour`):
 
 ## Layout regions
 
-- **Ribbon** — full-width top bar: brand, resource readouts (icon + value +
-  faint caps label), a `line-soft` divider, folk/idle counts, then
-  right-aligned speed group (pause, ×1, ×2, ×4 — active gets the gold
-  treatment) and the day/time caption. Seven goods and the threat meter make
-  it a wide bar; it wraps rather than scrolling, and the speed group keeps its
-  `margin-left: auto`, so a narrow viewport gets a second ribbon line with the
-  clock still at the right.
+- **Ribbon** — full-width top bar, and **colony facts only**: brand, the folk
+  count (with its hungry suffix), idle, a `line-soft` divider, the enclosed
+  count, another divider, the threat meter and its caption, then the
+  right-aligned clock group — speed buttons (pause, ×1, ×2, ×4 — active gets
+  the gold treatment), the day caption and Menu, keeping their `margin-left:
+  auto`.
+
+  **It is one line at every supported width, and it does not grow with the
+  economy.** Goods live in the Stores panel, so the only variable-width element
+  is the threat caption; the worst case ("far wilds:" plus the longest phrase)
+  is still inside the 1280px budget. `flex-wrap` stays as a safety net and
+  should never fire.
 
   **The folk readout carries the game's one hunger signal**: a `· 2 hungry`
   suffix in **ink-dim**, shown only while somebody is actually *slowed* — not
@@ -279,13 +303,25 @@ were measured against real terrain (`2026-09-01-tick-and-labour`):
   to. A breadless colony is a slower colony and it recovers by itself the
   moment loaves exist again, so the suffix appears and disappears with the
   slowdown and says nothing else. No toast, no banner, no meter.
-- **Build rail** — left edge, 62px wide, below the ribbon: a 10px caps
-  section head, then that section's vertical tools, repeating. Sections are
-  by *what the tool does to the world* — **Orders** (tell people to work on
-  what is already there), **Build** (put a building down), **Walls** (draw a
-  line) — and each head after the first carries a `line-soft` rule above it.
-  The rail is bounded by the viewport and scrolls inside itself rather than
-  running off the bottom edge.
+- **Build rail** — left edge, 96px wide, below the ribbon: a 10px caps section
+  head, then that section's tools in a **two-column grid** of icon-only
+  buttons, repeating, with the caption strip as the last thing in the rail. An
+  odd count leaves one empty cell. Sections are by *what the tool does to the
+  world* — **Orders** (tell people to work on what is already there), **Build**
+  (put a building down), **Walls** (draw a line) — and each head after the
+  first carries a `line-soft` rule above it.
+
+  Two columns is what puts all fifteen tools on screen at once at 768px of
+  window height. Below that the rail scrolls inside itself; it never slides
+  over Stores, because the two share one left-edge flex column in which the
+  rail is the item that gives.
+- **Stores** — bottom-left, 150px wide, mirroring Labour bottom-right (both
+  top corners are already spoken for). A 10px caps head, then per chain a 10px
+  caps group label over a `line-soft` rule — **Wood**, **Stone**, **Food**, in
+  that fixed order, the first without a rule — then one 13px row per good: the
+  9px rotated resource pip in the good's colour, its name in ink-dim, its count
+  right-aligned in ink and tabular. **Every good the game has, named and
+  counted**; a new good is one more row and the ribbon never changes.
 - **Inspector** — right edge, 246px, below the ribbon; a second panel may
   sit above the bottom edge. It has **two shapes**: a building, and a
   monster — display-20px kind as the title, an `ORC` / `TROLL` tag in the

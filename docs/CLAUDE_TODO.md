@@ -19,3 +19,13 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   about whether that number means *no task* or *available for work*, since the
   styleguide describes it either way. Surfaced by the commit review of
   `2026-09-08-bread-economy`.
+
+- **Comments outside `src/ui/` still call the ribbon the goods' home** — `GoodDef.label`
+  in `sim/goods.ts` is documented as "for the ribbon's faint caps label", and
+  `render/palette.ts` and `render/movers.ts` both justify the good colour table by
+  "the ribbon's icons"; goods moved to the Stores panel, so all three now point at a
+  place with no goods in it. Worth a pass because that table is what a future session
+  reads to justify a colour choice. `2026-09-08-stores-panel-and-icon-rail` truthed up
+  the `src/ui/` and styleguide copies but left these: its spec's carve-out for comment
+  edits across the sim boundary named only `Readout`'s doc in `know/index.ts`.
+

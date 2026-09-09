@@ -28,15 +28,15 @@
   --plank: #d0b078;
   /* The stone chain's two goods. Quarried rubble reads cooler than cut stone,
    * so a rock count and a block count are not the same grey pip; both match
-   * `src/render/palette.ts`, since the ribbon's icon and the pile on the
+   * `src/render/palette.ts`, since the Stores panel's pip and the pile on the
    * ground are the same object seen twice. */
   --rock: #8a9096;
   --block: #b3ab97;
   /* The bread chain's three goods — straw, sacking and crust. The loaf reads
    * darker and redder than `--timber` on purpose: a bread pip and a log pip
-   * sit on the same ribbon and must not be the same brown. All three match
-   * `src/render/palette.ts`, since the pip and the pile are one object seen
-   * twice. */
+   * sit in the same Stores panel and must not be the same brown. All three
+   * match `src/render/palette.ts`, since the pip and the pile are one object
+   * seen twice. */
   --grain: #a89b3e;
   --flour: #eae3cd;
   --bread: #96552b;
@@ -91,14 +91,6 @@
   font-weight: 600;
   font-size: 15px;
 }
-.res i {
-  width: 9px;
-  height: 9px;
-  border-radius: 1px;
-  display: inline-block;
-  transform: rotate(45deg);
-  align-self: center;
-}
 .res u {
   text-decoration: none;
   color: var(--ink-faint);
@@ -151,7 +143,7 @@
   gap: 6px;
 }
 /* The caption sits in the ribbon's own faint caps label style, so a monster
- * announcing itself looks exactly as loud as the word "logs". */
+ * announcing itself looks exactly as loud as the word "enclosed". */
 .threat u {
   text-decoration: none;
   color: var(--ink-faint);
@@ -198,26 +190,77 @@
   outline-offset: 1px;
 }
 
+/* ---------- the left-edge column: rail over stores ---------- */
+
+/*
+ * The rail and the Stores panel share one flex column rather than being pinned
+ * separately to the top and the bottom of the screen, which is the whole of how
+ * they are kept from sliding over each other.
+ *
+ * The rail takes the height it wants and is the one that gives (`flex: 0 1
+ * auto`, scrolling inside itself); Stores keeps its height and sits at the foot
+ * of the column. The browser resolves the split at every window size — no
+ * `calc()` against a stores height that the eighth good would invalidate. At
+ * 768px and up nothing scrolls: the rail runs ~405px and Stores ~250px inside
+ * the ~694px the column has.
+ */
+.leftcol {
+  position: absolute;
+  left: 12px;
+  top: 62px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: none;
+}
+/* In the column they are laid out, not pinned — but they are still panels. */
+#hud .leftcol > .panel {
+  position: relative;
+}
+
 /* ---------- build rail ---------- */
 
 /*
- * Eleven tools with three section heads is taller than a short window, so the
- * rail is bounded by the viewport and scrolls inside itself rather than
- * running off the bottom edge. It still hugs the left edge and still never
- * covers the centre.
+ * Fifteen tools, icon-only, two to a row under each section head, with a
+ * caption strip at the foot naming whichever one the pointer, the keyboard or
+ * the press is pointing at. Two columns rather than one is what puts all
+ * fifteen on a 768px window at once; the strip is what gives the words back.
+ *
+ * The tool sections scroll; the caption strip does not. It sits outside the
+ * scrolled box, pinned to the foot of the rail, because it is the strip that
+ * carries the names and costs the buttons gave up — and the 20px the column is
+ * short at 1280x720 would otherwise clip exactly that, leaving the cost line
+ * unreadable at the minimum supported viewport.
  */
 .rail {
-  left: 12px;
-  top: 62px;
-  width: 62px;
+  width: 96px;
   padding: 6px 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
   border-radius: 2px;
-  max-height: calc(100vh - 86px);
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.rail-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+/* Nothing inside the scroller gives: when the window is too short for it, the
+ * sections scroll rather than squeezing their buttons. */
+.rail-scroll > * {
+  flex: 0 0 auto;
+}
+.rail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
 }
 /* A head above each section (Orders / Build / Walls), so a long column reads
  * as groups rather than as a list. The first needs no top rule. */
@@ -243,13 +286,10 @@
   border-left: 2px solid transparent;
   color: var(--ink-dim);
   font-family: var(--ui);
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  padding: 5px 2px 4px;
+  padding: 8px 0 7px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   cursor: pointer;
   transition:
     color 0.12s,
@@ -272,10 +312,45 @@
   outline: 1px solid var(--gold);
   outline-offset: -1px;
 }
-.tool .cost {
+
+/*
+ * The caption strip: the always-visible home for the words the buttons gave
+ * up. Fixed height and always rendered — empty when there is nothing to name —
+ * so the rail cannot change height under the pointer.
+ *
+ * The name is **gold only while the strip is naming the active tool**, which is
+ * the rail's one gold element restated; a hover or focus preview reads in plain
+ * ink, because hover is not intent.
+ */
+.rail-caption {
+  flex: 0 0 auto;
+  min-height: 40px;
+  box-sizing: border-box;
+  margin-top: 5px;
+  padding: 7px 5px 4px;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  text-align: center;
+}
+.rail-caption b {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.rail-caption.on b {
+  color: var(--gold);
+}
+.rail-caption u {
+  text-decoration: none;
   font-size: 10px;
-  color: var(--ink-faint);
   letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  line-height: 1.2;
 }
 
 /* ---------- inspector ---------- */
@@ -505,6 +580,69 @@
   outline-offset: 2px;
 }
 
+/* ---------- stores panel ---------- */
+
+/*
+ * Every good the colony holds, named and counted, in the bottom-left corner —
+ * mirroring Labour bottom-right, because both top corners are already spoken
+ * for by the rail and the inspector.
+ *
+ * One row per good, grouped by chain. A future good is one more row and costs
+ * the HUD no arithmetic anywhere: this is what the ribbon gave the goods up
+ * for.
+ */
+.stores {
+  width: 150px;
+  padding: 10px 12px 12px;
+  border-radius: 2px;
+  /* Pinned to the foot of the left column. Auto margins resolve to zero once
+   * the column overflows, so a short window shrinks the rail instead. */
+  margin-top: auto;
+}
+/* A group head per chain, with the panel's hairline rule above it. The first
+ * needs none — the panel's own head is already there. */
+.stores h5 {
+  font-family: var(--ui);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 8px 0 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+}
+.stores h5:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.store {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 1px 0;
+  font-size: 13px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* The styleguide's resource icon: a 9px square rotated 45°, in the good's own
+ * colour — the same pip the ribbon used to carry. */
+.store i {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  flex: 0 0 auto;
+  transform: rotate(45deg);
+}
+.store span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.store b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* ---------- labour panel ---------- */
 
 .labour {
@@ -514,7 +652,8 @@
   padding: 10px 14px 12px;
   border-radius: 2px;
 }
-.labour h4 {
+.labour h4,
+.stores h4 {
   font-family: var(--ui);
   font-size: 10px;
   letter-spacing: 0.14em;

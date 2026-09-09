@@ -108,10 +108,10 @@ export function items(sim: Sim): readonly Item[] {
   return sim.items;
 }
 
-/** The ribbon's numbers. */
+/** The HUD's numbers: the ribbon's colony facts, and the Stores panel's goods. */
 export interface Readout {
   /** How much of each good the colony holds, indexed by `ItemType` — every
-   *  good the game has, so a new one appears on the ribbon by existing. */
+   *  good the game has, so a new one appears in the Stores panel by existing. */
   goods: number[];
   /**
    * Everyone who lives here. A wanderer still walking in from the coast is

@@ -25,8 +25,9 @@ import {
 import "./hud.css";
 
 /**
- * The HUD: top ribbon, left build rail, right inspector, and a labour panel
- * pinned to the bottom-right.
+ * The HUD: top ribbon, a left-edge column carrying the build rail over the
+ * Stores panel, the right inspector, and a labour panel pinned to the
+ * bottom-right.
  *
  * Plain DOM, per ARCHITECTURE.md — no framework. Every visual token comes from
  * `docs/STYLEGUIDE.md` via hud.css; nothing here picks a colour or a size.
@@ -111,6 +112,62 @@ const GOOD_VAR: Record<ItemTypeValue, string> = {
   [ItemType.Bread]: "var(--bread)",
 };
 
+/**
+ * The Stores panel's groups, in the order it emits them — **fixed here rather
+ * than read off the enum**, because `ItemType` is append-only and a future wood
+ * good would be appended after Bread.
+ */
+export const GROUP_ORDER = ["wood", "stone", "food"] as const;
+type GoodGroup = (typeof GROUP_ORDER)[number];
+
+/**
+ * Which chain each good belongs to, and so which of the Stores panel's three
+ * groups its row files itself under.
+ *
+ * Presentation, exactly like `GOOD_VAR` above — the sim's goods table knows
+ * what a good is called and how storage treats it, and nothing about how it is
+ * grouped on a panel. The `Record` is the forcing function: a new good with no
+ * entry is a compile error, and so is a typo'd group, rather than a fourth
+ * heading quietly appearing. A genuinely new group means widening the union,
+ * deliberately.
+ */
+export const GOOD_GROUP: Record<ItemTypeValue, GoodGroup> = {
+  [ItemType.Log]: "wood",
+  [ItemType.Plank]: "wood",
+  [ItemType.Rock]: "stone",
+  [ItemType.Block]: "stone",
+  [ItemType.Grain]: "food",
+  [ItemType.Flour]: "food",
+  [ItemType.Bread]: "food",
+};
+
+const GROUP_LABEL: Record<GoodGroup, string> = { wood: "Wood", stone: "Stone", food: "Food" };
+
+/** What the rail's caption strip is naming, and whether it may be gold. */
+export interface RailCaption {
+  readonly tool: string;
+  /**
+   * The rail's one gold element. Gold only while the strip names the **active**
+   * tool — a hover or focus preview of some other tool reads in plain ink,
+   * because hover is not intent.
+   */
+  readonly gold: boolean;
+}
+
+/**
+ * What the caption strip shows, as a pure function of the three things that
+ * can claim it: the tool under the pointer, the tool with keyboard focus, and
+ * the tool actually held. A preview wins over the active tool — you are asking
+ * what that button is — and with nothing to show the strip is empty rather
+ * than absent, so the rail never changes height under the pointer.
+ */
+export function railCaption(hovered: string | null, focused: string | null, active: string | null): RailCaption | null {
+  const preview = hovered ?? focused;
+  if (preview !== null) return { tool: preview, gold: preview === active };
+  if (active !== null) return { tool: active, gold: true };
+  return null;
+}
+
 /** How the inspector names where a slot worker is. */
 const WORKER_LABEL: Record<"none" | "walking" | "inside" | "eating", string> = {
   none: "none",
@@ -152,6 +209,16 @@ export class Hud {
   private readonly res: Record<string, HTMLElement> = {};
   private readonly speedButtons: HTMLButtonElement[] = [];
   private readonly toolButtons = new Map<string, HTMLButtonElement>();
+  private readonly toolCaptions = new Map<string, { name: string; cost: string }>();
+  /** The rail's caption strip, built up front because `buildRail` only hangs
+   *  it on the end of the column it returns. */
+  private readonly caption = el("div", { class: "rail-caption" });
+  private readonly captionName = el("b");
+  private readonly captionCost = el("u");
+  /** Which tool the pointer is over, and which one holds keyboard focus — the
+   *  two previews that outrank the active tool in the caption strip. */
+  private hovered: string | null = null;
+  private focused: string | null = null;
   private readonly inspector: HTMLElement;
   private readonly labourMeter: HTMLElement;
   private readonly labourLegend: HTMLElement;
@@ -195,7 +262,7 @@ export class Hud {
     this.threatBars = el("div", { class: "bars", role: "img" });
     this.threatCaption = el("u", {}, "wilds quiet");
     this.root = el("div", { id: "hud" });
-    this.root.append(this.buildRibbon(), this.buildRail());
+    this.root.append(this.buildRibbon(), this.buildLeftColumn());
     this.inspector = el("aside", { class: "panel inspector", "aria-live": "polite" });
     this.inspector.hidden = true;
     this.root.append(this.inspector);
@@ -299,6 +366,8 @@ export class Hud {
   /** Refresh the readouts. Called every frame; rebuilds only what changed. */
   update(): void {
     const r = readout(this.sim);
+    // One `textContent` per good, into the Stores panel's rows — the same
+    // numbers, off the same `readout()`, that the ribbon carried before them.
     for (const good of GOOD_LIST) this.res[`good${good.type}`].textContent = String(r.goods[good.type] ?? 0);
     // `folk` alone until the first House stands, then `folk / cap`. The suffix
     // arriving with the first house is the whole of the HUD's growth story —
@@ -347,12 +416,10 @@ export class Hud {
   private buildRibbon(): HTMLElement {
     const ribbon = el("div", { class: "panel ribbon" });
     ribbon.append(el("span", { class: "brand" }, "Castles"));
-    // One readout per good, walked from the goods table: a new good appears on
-    // the ribbon by existing rather than by someone remembering to add a row.
-    for (const good of GOOD_LIST) {
-      ribbon.append(this.resource(`good${good.type}`, GOOD_VAR[good.type], good.label));
-    }
-    ribbon.append(el("span", { class: "divider" }));
+    // Colony facts only. The goods left for the Stores panel, and with them the
+    // ribbon's one growth axis: it is the same width with seven goods as with
+    // twenty, so it stays a single line at the minimum supported viewport
+    // (1280×720) and never wraps again.
     ribbon.append(this.folkCluster());
     ribbon.append(this.count("idle", "idle"));
     ribbon.append(el("span", { class: "divider" }));
@@ -400,16 +467,6 @@ export class Hud {
     return ribbon;
   }
 
-  private resource(key: string, color: string, label: string): HTMLElement {
-    const span = el("span", { class: "res" });
-    const icon = el("i");
-    icon.style.background = color;
-    const value = el("b", {}, "0");
-    this.res[key] = value;
-    span.append(icon, value, el("u", {}, label));
-    return span;
-  }
-
   /**
    * The folk readout, plus the one signal hunger ever gives the player: a quiet
    * `· 2 hungry` suffix, shown only while somebody is actually **slowed**.
@@ -435,66 +492,205 @@ export class Hud {
     return span;
   }
 
+  // ----------------------------------------------------------- left column
+
+  /**
+   * The rail and the Stores panel, stacked in **one flex column** down the left
+   * edge rather than pinned independently to the top and the bottom.
+   *
+   * That is what lets the two coexist without arithmetic: the rail takes the
+   * height it wants and shrinks first (`flex: 0 1 auto`, scrolling inside
+   * itself), Stores keeps its own height beneath it, and the browser resolves
+   * the split at every window size — for ever, with no hardcoded stores height
+   * to rot the day an eighth good adds a row. Pinned separately they would
+   * simply slide over each other on a short window.
+   */
+  private buildLeftColumn(): HTMLElement {
+    const column = el("div", { class: "leftcol" });
+    column.append(this.buildRail(), this.buildStores());
+    return column;
+  }
+
+  // ---------------------------------------------------------------- stores
+
+  /**
+   * Every good the colony holds, named and counted — the home the ribbon gave
+   * up, and the reason the ribbon never has to grow again.
+   *
+   * Built by **bucketing `GOOD_LIST` by `GOOD_GROUP`**, with the groups emitted
+   * in `GROUP_ORDER` rather than in enum order. That difference is load-
+   * bearing: `ItemType` is append-only, so a future wood good is appended after
+   * Bread and an emit-a-head-when-the-group-changes walk would file it under
+   * Food. A new good adds a row to its own group, wherever it lands in the
+   * enum, and nothing else about the HUD changes.
+   */
+  private buildStores(): HTMLElement {
+    const stores = el("aside", { class: "panel stores" });
+    stores.append(el("h4", {}, "Stores"));
+    for (const group of GROUP_ORDER) {
+      const goods = GOOD_LIST.filter((good) => GOOD_GROUP[good.type] === group);
+      if (goods.length === 0) continue;
+      stores.append(el("h5", {}, GROUP_LABEL[group]));
+      for (const good of goods) stores.append(this.storeRow(good));
+    }
+    return stores;
+  }
+
+  /** One good's row: its pip, its name, and its count — the same number the
+   *  ribbon used to carry, read from the same `readout()`. */
+  private storeRow(good: GoodDef): HTMLElement {
+    const row = el("div", { class: "store" });
+    const pip = el("i");
+    pip.style.background = GOOD_VAR[good.type];
+    const value = el("b", {}, "0");
+    this.res[`good${good.type}`] = value;
+    row.append(pip, el("span", {}, good.name), value);
+    return row;
+  }
+
   // ------------------------------------------------------------------ rail
 
   /**
    * The rail, in three labelled sections — **Orders** (tell people to do
    * something to what is already there), **Build** (put a building down),
    * **Walls** (draw a line). Eleven tools in one unbroken column stopped being
-   * readable — fourteen since the bread chain — and the styleguide's rail
+   * readable — fifteen since the bread chain — and the styleguide's rail
    * anatomy already allowed section heads, so this is that allowance spent.
+   *
+   * Each section is a **two-column grid of icon-only buttons**, which is what
+   * fits all fifteen on a 768px-tall window without a scrollbar. The words the
+   * buttons gave up live in their accessible names and in the caption strip at
+   * the foot of the rail.
+   *
+   * The sections go in a scroller **inside** the rail rather than in the rail
+   * itself, so the one thing that gives on a short window is the tool grid and
+   * never the caption strip: at 1280x720 the column is ~20px short, and with
+   * the strip inside the scrolled box that shortfall landed squarely on the
+   * cost line — the rail clipping the very words its buttons gave up.
    */
   private buildRail(): HTMLElement {
     const rail = el("nav", { class: "panel rail", "aria-label": "Build tools" });
+    const sections = el("div", { class: "rail-scroll" });
 
-    rail.append(el("span", { class: "rail-label" }, "Orders"));
-    rail.append(this.toolButton("Chop", { kind: "chop" }, ""));
-    rail.append(this.toolButton("Mine", { kind: "mine" }, ""));
-    rail.append(this.toolButton("Level", { kind: "terraform" }, "labour"));
-    rail.append(this.toolButton("Raze", { kind: "raze" }, ""));
+    sections.append(el("span", { class: "rail-label" }, "Orders"));
+    sections.append(
+      this.railGrid([
+        this.toolButton("Chop", { kind: "chop" }, ""),
+        this.toolButton("Mine", { kind: "mine" }, ""),
+        this.toolButton("Level", { kind: "terraform" }, "labour"),
+        this.toolButton("Raze", { kind: "raze" }, ""),
+      ]),
+    );
 
-    rail.append(el("span", { class: "rail-label" }, "Build"));
-    for (const kind of [
-      BuildingKind.Stockpile,
-      BuildingKind.Sawmill,
-      BuildingKind.Mason,
-      BuildingKind.House,
-      BuildingKind.Farm,
-      BuildingKind.Mill,
-      BuildingKind.Oven,
-    ] as BuildingKindValue[]) {
-      const def = BUILDING_DEFS[kind];
-      // The caption names the def's own material: the House costs planks, and
-      // a button that said "4 logs" would be the rail lying about the one
-      // building that pulls the sawmill chain.
-      rail.append(this.toolButton(def.name, { kind: "build", building: kind }, costLabel(def.cost, def.costType)));
-    }
+    sections.append(el("span", { class: "rail-label" }, "Build"));
+    sections.append(
+      this.railGrid(
+        ([
+          BuildingKind.Stockpile,
+          BuildingKind.Sawmill,
+          BuildingKind.Mason,
+          BuildingKind.House,
+          BuildingKind.Farm,
+          BuildingKind.Mill,
+          BuildingKind.Oven,
+        ] as BuildingKindValue[]).map((kind) => {
+          const def = BUILDING_DEFS[kind];
+          // The cost names the def's own material: the House costs planks, and
+          // a button that said "4 logs" would be the rail lying about the one
+          // building that pulls the sawmill chain.
+          return this.toolButton(def.name, { kind: "build", building: kind }, costLabel(def.cost, def.costType));
+        }),
+      ),
+    );
 
     // Each wall button carries its own material and says what it costs, so the
     // choice is made by which button you press rather than by a mode you have
     // to remember. A gate costs the same material as a plain run of its
     // material and differs only in labour.
-    rail.append(el("span", { class: "rail-label" }, "Walls"));
+    sections.append(el("span", { class: "rail-label" }, "Walls"));
+    const walls: HTMLButtonElement[] = [];
     for (const material of ["timber", "stone"] as WallMaterial[]) {
       const cost = wallCost(material);
       const stone = material === "stone";
-      rail.append(this.toolButton(stone ? "Stone wall" : "Wall", { kind: "wall", material }, cost));
-      rail.append(this.toolButton(stone ? "Stone gate" : "Gate", { kind: "gate", material }, cost));
+      walls.push(this.toolButton(stone ? "Stone wall" : "Wall", { kind: "wall", material }, cost));
+      walls.push(this.toolButton(stone ? "Stone gate" : "Gate", { kind: "gate", material }, cost));
     }
+    sections.append(this.railGrid(walls));
+
+    // The caption strip: always rendered, fixed height, empty when there is
+    // nothing to name. Reserved space rather than a strip that appears — the
+    // rail may never change height under the pointer.
+    this.caption.append(this.captionName, this.captionCost);
+    rail.append(sections, this.caption);
     return rail;
   }
 
+  /** One section's tools, two to a row. An odd count leaves the last cell
+   *  empty — Build's seven sit in four rows. */
+  private railGrid(tools: readonly HTMLElement[]): HTMLElement {
+    const grid = el("div", { class: "rail-grid" });
+    grid.append(...tools);
+    return grid;
+  }
+
+  /**
+   * One rail button: the icon, and nothing else drawn on it.
+   *
+   * The name and cost the button used to print live in its `aria-label` and
+   * `title` as "Stone wall — 1 block", so the tooltip serves the pointer and
+   * the accessible name serves the screen reader, and in the caption strip,
+   * which is what serves the eye — including a keyboard user tabbing fifteen
+   * unlabelled icons.
+   */
   private toolButton(label: string, tool: Tool, cost: string): HTMLButtonElement {
     const key = toolKey(tool);
-    const b = el("button", { class: "tool", type: "button", "aria-pressed": "false" }) as HTMLButtonElement;
+    const named = cost ? `${label} — ${cost}` : label;
+    const b = el("button", {
+      class: "tool",
+      type: "button",
+      "aria-pressed": "false",
+      "aria-label": named,
+      title: named,
+    }) as HTMLButtonElement;
     b.innerHTML = ICONS[key] ?? "";
-    b.append(el("span", {}, label));
-    if (cost) b.append(el("span", { class: "cost" }, cost));
     b.addEventListener("click", () => {
       this.setTool(sameTool(this.tool_, tool) ? { kind: "none" } : tool);
     });
+    b.addEventListener("pointerenter", () => this.preview("hovered", key));
+    b.addEventListener("pointerleave", () => this.preview("hovered", null, key));
+    // `:focus-visible` rather than every focus: a click already says what it
+    // meant by setting the tool, and the strip should not keep naming a button
+    // the mouse merely left focused. It is the platform's own answer to "did
+    // the keyboard do this".
+    b.addEventListener("focus", () => {
+      if (b.matches(":focus-visible")) this.preview("focused", key);
+    });
+    b.addEventListener("blur", () => this.preview("focused", null, key));
     this.toolButtons.set(key, b);
+    this.toolCaptions.set(key, { name: label, cost });
     return b;
+  }
+
+  /**
+   * Claim or release one of the two preview slots. A release names the key it
+   * is releasing, so a `pointerleave` arriving after the pointer has already
+   * entered the next button cannot blank that one's caption.
+   */
+  private preview(slot: "hovered" | "focused", key: string | null, only?: string): void {
+    if (only !== undefined && this[slot] !== only) return;
+    this[slot] = key;
+    this.renderCaption();
+  }
+
+  /** Put the caption strip's pick on the page — the one gold element the rail
+   *  is allowed, spent on the active tool and on nothing else. */
+  private renderCaption(): void {
+    const active = this.tool_.kind === "none" ? null : toolKey(this.tool_);
+    const pick = railCaption(this.hovered, this.focused, active);
+    const named = pick ? this.toolCaptions.get(pick.tool) : undefined;
+    this.captionName.textContent = named?.name ?? "";
+    this.captionCost.textContent = named?.cost ?? "";
+    this.caption.classList.toggle("on", pick?.gold === true);
   }
 
   private setTool(tool: Tool): void {
@@ -504,6 +700,7 @@ export class Hud {
     for (const [key, b] of this.toolButtons) {
       b.setAttribute("aria-pressed", String(key === active));
     }
+    this.renderCaption();
   }
 
   // ------------------------------------------------------------- inspector
@@ -827,13 +1024,13 @@ function costLabel(cost: number, type: number): string {
   return `${cost} ${cost === 1 ? good.name.toLowerCase() : good.label}`;
 }
 
-/** Sentence case for a good's lower-case ribbon label, so a panel row reads
- *  "Planks delivered" without a second name per good living in the table. */
+/** Sentence case for a good's lower-case label, so a panel row reads "Planks
+ *  delivered" without a second name per good living in the table. */
 function capitalise(label: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-/** What one segment of this material costs, in the ribbon's own words. */
+/** What one segment of this material costs, in the goods table's own words. */
 function wallCost(material: WallMaterial): string {
   return costLabel(WALL_ITEM_COST, wallItem(material));
 }
