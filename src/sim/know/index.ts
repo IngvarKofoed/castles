@@ -129,7 +129,17 @@ export interface Readout {
    * labour meter invent a phantom slot worker (`slots` is `folk - pool`).
    */
   folk: number;
-  /** Pool workers not currently on a task — the number staffing a slot eats into. */
+  /**
+   * Pool workers **available for work**: no task claimed, and not away at a
+   * meal. What the player reads off it is how much slack the pool has, so it
+   * has to be hands that could take work now, not hands that merely hold
+   * nothing. Counted the other way, day two read `5 idle` with every starting
+   * hunger clock coming due at once and nobody idle.
+   *
+   * It is **not** a prediction of what staffing will cost: `staff` takes the
+   * *nearest* pool worker, busy or idle, on purpose (`sim/commands.ts`), so a
+   * workshop can be filled without this number moving at all.
+   */
   idle: number;
   /** Pool workers: population minus everyone locked in a workshop. */
   pool: number;
@@ -176,7 +186,10 @@ export function readout(sim: Sim): Readout {
     if (hungry(c)) starving++;
     if (c.slot >= 0) continue;
     pool++;
-    if (c.task < 0) idle++;
+    // Not merely task-less: an eater holds no task and cannot be spent
+    // either, so the meal errand is excluded here rather than in the HUD
+    // (docs/changelog/2026-09-09-idle-means-available.md).
+    if (c.task < 0 && c.eating === 0) idle++;
   }
   // A bed exists only in a finished House, so "any beds at all" is the same
   // question as "is a House standing" — and it is the one the suffix turns on.

@@ -480,6 +480,29 @@ describe("what the ribbon may know about hunger", () => {
   });
 });
 
+describe("what the ribbon may know about idle hands", () => {
+  it("counts hands the player could spend, so somebody at a meal is not idle", () => {
+    // `idle` is how the player reads the pool's slack, so it has to mean
+    // available for work: an eater holds no task and cannot take one either,
+    // and counted the other way day two reads `5 idle` with every starting
+    // hunger clock due at once
+    // (docs/changelog/2026-09-09-idle-means-available.md).
+    const sim = peopled();
+    const c = sim.colonists[0];
+    expect(readout(sim).idle).toBe(1);
+
+    // Away at a meal: still a pool worker, no longer a spendable pair of hands.
+    c.eating = 1;
+    expect(readout(sim).idle).toBe(0);
+    expect(readout(sim).pool).toBe(1);
+
+    // A claimed task is the other way to stop being idle, unchanged.
+    c.eating = 0;
+    c.task = 3;
+    expect(readout(sim).idle).toBe(0);
+  });
+});
+
 describe("what a House says about the food gate", () => {
   it("reports the table as short only when bread, not the cap, is what holds arrivals", () => {
     const sim = peopled();

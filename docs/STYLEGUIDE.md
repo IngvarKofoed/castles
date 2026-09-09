@@ -345,6 +345,11 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
   to. A breadless colony is a slower colony and it recovers by itself the
   moment loaves exist again, so the suffix appears and disappears with the
   slowdown and says nothing else. No toast, no banner, no meter.
+
+  **The idle count means *available for work***: a pool worker with no task
+  claimed who is not away at a meal. It is the player's read on how much slack
+  the pool has, so it reads as hands that could take work now rather than hands
+  that merely hold nothing (`Readout.idle` is the definition it follows).
 - **Build rail** — left edge, 96px wide, below the ribbon: a 10px caps section
   head, then that section's tools in a **two-column grid** of icon-only
   buttons, repeating, with the caption strip as the last thing in the rail. An
