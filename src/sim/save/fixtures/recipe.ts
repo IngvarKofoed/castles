@@ -357,6 +357,62 @@ export function v8Script(sim: Sim): Command[] {
 }
 
 /**
+ * v9: the Watchtower, on **its own seed** — 20261035, whose woods are seven
+ * tiles from the map centre and whose nearest den is sixteen. Both numbers are
+ * load-bearing and pull opposite ways: a tower costs *planks*, so the log
+ * chain has to run inside a fixture's lifetime, and a tower with no den inside
+ * `WATCH_RANGE` would carry the kind without carrying the point of it. Seeds
+ * with a den that near mostly lose the colony to it inside two thousand ticks;
+ * this one does not, which is why it is the seed and not one of its
+ * neighbours.
+ *
+ * What it carries, none of which the format has ever held: **a Watchtower
+ * standing and manned**, watching one den eighteen tiles out — the game's
+ * first 1×1 footprint, its first slot building with **no recipe at all**, and
+ * a colonist bound to a slot that produces nothing.
+ *
+ * Caught at 1750, a hundred and fifty ticks after the watcher steps inside and
+ * while the colony still holds loaves: before it the tower is a blueprint or a
+ * walk, and a few hundred ticks later the provisions are gone and everybody is
+ * hunting bread the recipe never builds a chain for.
+ *
+ * The v9 rung itself is an **identity** — the tower needed no store field — so
+ * this file exists to pin the *shape*, not a migration, and no older fixture's
+ * pinned hash moves for it.
+ */
+export const FIXTURE_SEED_V9 = 20261035;
+export const V9_TICKS = 1750;
+
+export function v9Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 40) }];
+    case 5: {
+      const site = buildSite(sim, 0);
+      return site ? [{ kind: "place", building: 0, x: site[0], y: site[1] }] : [];
+    }
+    case 200: {
+      const site = buildSite(sim, 1);
+      return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
+    }
+    // The sawmill has to be cutting before the tower is placed: the tower is
+    // the second thing in the game priced in planks.
+    case 600:
+      return staff(sim, 1);
+    case 1000: {
+      const site = buildSite(sim, 7);
+      return site ? [{ kind: "place", building: 7, x: site[0], y: site[1] }] : [];
+    }
+    // And the watcher last, so the file is caught with somebody in the tower
+    // rather than with an empty one.
+    case 1600:
+      return staff(sim, 7);
+    default:
+      return [];
+  }
+}
+
+/**
  * Place a chain building at the nearest site that fits, keeping five tiles
  * clear of everything already standing.
  *
@@ -431,7 +487,7 @@ function staff(sim: Sim, kind: number): Command[] {
 
 /** The first placeable site for a building kind, searched outward from the
  *  centre so the answer is a pure function of the store. */
-function buildSite(sim: Sim, kind: 0 | 1 | 2 | 3): [number, number] | null {
+function buildSite(sim: Sim, kind: 0 | 1 | 2 | 3 | 7): [number, number] | null {
   const size = sim.world.size;
   const centre = Math.floor(size / 2);
   for (let r = 2; r < 30; r++) {

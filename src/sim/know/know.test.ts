@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { MonsterPhase, type Colonist, type Sim } from "../store";
+import { MonsterPhase, type Building, type Colonist, type Sim } from "../store";
 import { flatSim, testBuilding, testMonster } from "../test-sim";
-import { DAY_TICKS, RHYTHM_FUZZ, THREAT_BUCKETS, THREAT_RANGE } from "../tuning";
+import {
+  DAY_TICKS,
+  RHYTHM_FUZZ,
+  THREAT_BUCKETS,
+  THREAT_RANGE,
+  WATCH_BUCKETS,
+  WATCH_RANGE,
+} from "../tuning";
 import { WallState } from "../walls";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { tileIndex } from "../world/world";
@@ -21,6 +28,44 @@ import { HUNGRY_TICKS, MEAL_TICKS, STARTING_COLONISTS } from "../tuning";
  */
 
 const at = (sim: Sim, x: number, y: number): number => tileIndex(x, y, sim.world.size);
+
+/** Where every tower in this file stands — far enough in that a `WATCH_RANGE`
+ *  square and a den past its edge both fit on the map. */
+const TOWER = 30;
+
+/**
+ * Put a Watchtower at `TOWER` with a watcher inside it, and hand both back.
+ *
+ * The staffing is set up by hand rather than by running `staff`: these tests
+ * are about the *gate* — slot set, worker bound, worker inside — so they have
+ * to be able to break each of its three parts on its own.
+ */
+function towered(sim: Sim, staffed = true): { tower: Building; watcher: Colonist } {
+  const tower = testBuilding({ id: 50, kind: BuildingKind.Watchtower, x: TOWER, y: TOWER, w: 1, h: 1 });
+  sim.buildings.push(tower);
+  const watcher = sim.colonists[0];
+  if (staffed) {
+    watcher.slot = tower.id;
+    watcher.inside = 1;
+    tower.worker = watcher.id;
+  }
+  return { tower, watcher };
+}
+
+/** A den `d` tiles from the tower on the x axis, resting, with a clock the
+ *  caller drives by writing `phaseTicks`. */
+function denAt(sim: Sim, dx: number, dy = 0, id = 1): ReturnType<typeof testMonster> {
+  const m = testMonster({
+    id,
+    lairX: TOWER + dx,
+    lairY: TOWER + dy,
+    phase: MonsterPhase.Rest,
+    restTicks: 1000,
+    phaseTicks: 1000,
+  });
+  sim.monsters.push(m);
+  return m;
+}
 
 function peopled(size = 24): Sim {
   const sim = flatSim(size);
@@ -125,6 +170,180 @@ describe("the rhythm estimate", () => {
     sim.monsters.push(testMonster({ id: 1, lairX: 4, lairY: 4, phase: MonsterPhase.GoingHome, phaseTicks: 0 }));
     expect(rhythm(sim, 1)?.phase).toBe("homeward");
     expect(rhythm(sim, 99)).toBeNull();
+  });
+});
+
+describe("a watchtower's coverage", () => {
+  /**
+   * The 4b product in one assertion: a watched den's estimate is finer *and*
+   * exact. Both halves matter — tenths alone would still be wrong by a fuzzed
+   * amount, and error-free fifths would not be finer.
+   */
+  it("reads a covered den in exact tenths", () => {
+    const sim = peopled(70);
+    towered(sim);
+    const m = denAt(sim, 4);
+
+    for (const left of [1000, 900, 750, 500, 250, 100, 1]) {
+      m.phaseTicks = left;
+      const r = rhythm(sim, m.id)!;
+      const spent = 1 - left / 1000;
+      expect(r.buckets).toBe(WATCH_BUCKETS);
+      expect(r.watched).toBe(true);
+      // No seeded error at all: the bucket is the true fraction, quantized.
+      expect(r.bucket).toBe(Math.min(WATCH_BUCKETS - 1, Math.floor(spent * WATCH_BUCKETS)));
+    }
+  });
+
+  it("makes two covered dens agree where two uncovered ones disagree", () => {
+    // The fuzz is per-monster, so the base game's estimate can be averaged out
+    // of two sightings only by guesswork. Under a watcher there is nothing to
+    // average: every covered den reports the same fraction the same way.
+    const sim = peopled(70);
+    const seen = new Set<number>();
+    for (let id = 1; id <= 20; id++) {
+      const m = denAt(sim, 4, 0, id);
+      // Parked on a *fifth* boundary, which is where the base game's error
+      // actually shows: mid-bucket the fuzz mostly rounds back to the same
+      // segment and the disagreement this test is about would be invisible.
+      m.phaseTicks = 1000 - Math.round(1000 / THREAT_BUCKETS);
+      seen.add(rhythm(sim, id)!.bucket);
+    }
+    expect(seen.size).toBeGreaterThan(1);
+
+    towered(sim);
+    const watched = new Set(sim.monsters.map((m) => rhythm(sim, m.id)!.bucket));
+    expect(watched.size).toBe(1);
+  });
+
+  it("leaves an uncovered den exactly as coarse as it was", () => {
+    // The base game's coarseness has to keep meaning something, so the
+    // comparison is against the same monster in a colony with no tower at all
+    // — not merely against "five buckets".
+    const bare = peopled(70);
+    const alone = denAt(bare, WATCH_RANGE + 1);
+    alone.phaseTicks = 400;
+
+    const sim = peopled(70);
+    towered(sim);
+    const m = denAt(sim, WATCH_RANGE + 1);
+    m.phaseTicks = 400;
+
+    expect(rhythm(sim, m.id)).toEqual(rhythm(bare, alone.id));
+    expect(rhythm(sim, m.id)!.buckets).toBe(THREAT_BUCKETS);
+    expect(rhythm(sim, m.id)!.watched).toBe(false);
+  });
+
+  it("cuts off exactly at WATCH_RANGE, and measures Chebyshev", () => {
+    const sim = peopled(70);
+    towered(sim);
+    // Straight out: 24 covered, 25 not. The edge is exact, so a den one tile
+    // past it is a den the player has to guess at.
+    expect(rhythm(sim, denAt(sim, WATCH_RANGE, 0, 1).id)!.watched).toBe(true);
+    expect(rhythm(sim, denAt(sim, WATCH_RANGE + 1, 0, 2).id)!.watched).toBe(false);
+    // And on the diagonal, which is where a *circle* of radius 24 would have
+    // disagreed with the square the overlay draws.
+    expect(rhythm(sim, denAt(sim, WATCH_RANGE, WATCH_RANGE, 3).id)!.watched).toBe(true);
+    expect(rhythm(sim, denAt(sim, WATCH_RANGE + 1, WATCH_RANGE, 4).id)!.watched).toBe(false);
+  });
+
+  it("is rented with hands: no watcher inside, no sharpening", () => {
+    const sim = peopled(70);
+    const { tower, watcher } = towered(sim);
+    const m = denAt(sim, 4);
+    m.phaseTicks = 400;
+    expect(rhythm(sim, m.id)!.buckets).toBe(WATCH_BUCKETS);
+
+    // Walking over: the slot is filled and the picture is still coarse. This
+    // is also what makes the watcher's lunch coarsen it — an eater has left
+    // the building, so `inside` is 0 for exactly the same reason.
+    watcher.inside = 0;
+    expect(rhythm(sim, m.id)!.buckets).toBe(THREAT_BUCKETS);
+    watcher.inside = 1;
+
+    // Bound to some other building: the gate matches the slot, not just the id.
+    watcher.slot = 999;
+    expect(rhythm(sim, m.id)!.buckets).toBe(THREAT_BUCKETS);
+    watcher.slot = tower.id;
+
+    // Unstaffed: back to fifths on the same read, with nothing remembered.
+    tower.worker = -1;
+    expect(rhythm(sim, m.id)!.buckets).toBe(THREAT_BUCKETS);
+    expect(rhythm(sim, m.id)!.watched).toBe(false);
+
+    // And an unfinished tower watches nothing however staffed the store says
+    // it is — a blueprint is a plot with stakes in it.
+    tower.worker = watcher.id;
+    tower.state = BuildingState.Blueprint;
+    expect(rhythm(sim, m.id)!.watched).toBe(false);
+  });
+
+  it("leaves the homeward branch its fixed shape, and still reports honestly", () => {
+    // `GoingHome` ends on arrival rather than on a clock, so there is no timer
+    // for a watcher to read more finely — but the note under the bar has to
+    // stay true, which is why `watched` is reported rather than inferred from
+    // the bucket count.
+    const sim = peopled(70);
+    towered(sim);
+    const m = denAt(sim, 4);
+    m.phase = MonsterPhase.GoingHome;
+
+    const r = rhythm(sim, m.id)!;
+    expect(r.phase).toBe("homeward");
+    expect(r.buckets).toBe(THREAT_BUCKETS);
+    expect(r.bucket).toBe(THREAT_BUCKETS - 1);
+    expect(r.watched).toBe(true);
+  });
+
+  it("sharpens the ribbon's meter through rhythm alone", () => {
+    // The meter renders `buckets` from data, so it needs no edit of its own —
+    // this is that claim pinned rather than assumed.
+    const sim = peopled(70);
+    const m = denAt(sim, 4);
+    m.phaseTicks = 400;
+    expect(threat(sim).buckets).toBe(THREAT_BUCKETS);
+    // And the caption keeps its exact vocabulary: finer, never a digit.
+    expect(threat(sim).caption).not.toMatch(/\d/);
+
+    towered(sim);
+    expect(threat(sim).buckets).toBe(WATCH_BUCKETS);
+    expect(threat(sim).caption).not.toMatch(/\d/);
+    expect(threat(sim).caption).toMatch(/^orc wakes /);
+  });
+});
+
+describe("a watchtower's panel", () => {
+  it("counts the dens in reach whether or not anybody is watching", () => {
+    // Staffing-blind on purpose: an unstaffed tower can then say what it
+    // *would* watch, which is what makes siting one a decision rather than a
+    // guess.
+    const sim = peopled(70);
+    const { tower } = towered(sim, false);
+    expect(inspect(sim, tower.id)?.watching).toBe(0);
+
+    denAt(sim, 4, 0, 1);
+    denAt(sim, WATCH_RANGE, WATCH_RANGE, 2);
+    denAt(sim, WATCH_RANGE + 1, 0, 3);
+    expect(inspect(sim, tower.id)?.watching).toBe(2);
+
+    // Unchanged by staffing — the wording is what carries that difference.
+    tower.worker = sim.colonists[0].id;
+    sim.colonists[0].slot = tower.id;
+    sim.colonists[0].inside = 1;
+    expect(inspect(sim, tower.id)?.watching).toBe(2);
+  });
+
+  it("reports -1 for everything that is not a tower", () => {
+    const sim = peopled(70);
+    const pile = testBuilding({ id: 60, x: 4, y: 4 });
+    sim.buildings.push(pile);
+    expect(inspect(sim, pile.id)?.watching).toBe(-1);
+    // And a tower has no recipe at all, which is what drops the chain chip and
+    // the input/output rows from its panel.
+    const { tower } = towered(sim, false);
+    expect(inspect(sim, tower.id)?.chain).toBeNull();
+    expect(inspect(sim, tower.id)?.outputType).toBe(-1);
+    expect(inspect(sim, tower.id)?.hasSlot).toBe(true);
   });
 });
 

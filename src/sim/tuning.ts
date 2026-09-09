@@ -299,6 +299,24 @@ export const THREAT_RANGE = 40;
 export const THREAT_BUCKETS = 5;
 export const RHYTHM_FUZZ = 0.1;
 
+/**
+ * The Watchtower's two numbers — the whole of 4b's sim surface
+ * (docs/specs/2026-09-09-watchtowers.md).
+ *
+ * `WATCH_RANGE` is measured **from the tower tile to a monster's lair**,
+ * Chebyshev, because a schedule is a property of the den: watching a
+ * creature's rounds is watching where it lives, so a prowler wandering past
+ * the tower sharpens nothing. At `LAIR_SPACING` 10 that covers the three or
+ * four dens around one expansion front, which is what makes siting a tower
+ * the question *which dens do I want to understand?*
+ *
+ * `WATCH_BUCKETS` replaces `THREAT_BUCKETS` for a watched monster, and the
+ * seeded error drops to zero with it. The bar gets finer; it never gets a
+ * digit — tenths of a phase in words and segments is the ceiling.
+ */
+export const WATCH_RANGE = 24;
+export const WATCH_BUCKETS = 10;
+
 // ------------------------------------------------------------------ housing
 //
 // Population inflow (docs/specs/2026-09-07-housing-wanderers.md). Growth is

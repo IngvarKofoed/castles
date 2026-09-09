@@ -290,6 +290,25 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
     grantProvisions(next, tileCount(s));
     return next;
   },
+
+  /**
+   * 8 → 9: the Watchtower. **An identity, deliberately** — the tower needed no
+   * store field at all (coverage is derived per read, like the population cap),
+   * so there is nothing here to change and this rung exists for a save it will
+   * never be handed (docs/specs/2026-09-09-watchtowers.md).
+   *
+   * The bump is for the **older build**. `BuildingKind` gained a seventh kind,
+   * and without a version rise an old build would load a kind-7 save cleanly
+   * and then crash on its first frame — `defOf` of an unknown kind is
+   * `undefined` — which is precisely the "loads garbage" ARCHITECTURE.md's
+   * versioning policy forbids. `decode`'s future-version check is the one
+   * refusal mechanism already shipped, so a new kind rides it and an old build
+   * says "this save was made by a newer version of Castles" instead.
+   *
+   * State passes through untouched rather than being spread into a fresh
+   * object: an identity that copies is an identity that can drift.
+   */
+  8: (state) => state,
 };
 
 /**

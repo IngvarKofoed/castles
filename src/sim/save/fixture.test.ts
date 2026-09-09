@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { applyCommands } from "../commands";
 import { hashSim } from "../hash";
-import { inspect } from "../know";
+import { inspect, rhythm } from "../know";
 import { populationCap, settled } from "../settlers";
 import { testBuilding } from "../test-sim";
 import { BUILDING_DEFS } from "../buildings";
 import { BuildingKind, BuildingState, ItemType, TaskKind, type Sim } from "../store";
-import { PROVISION_BREAD } from "../tuning";
+import { PROVISION_BREAD, THREAT_BUCKETS, WATCH_BUCKETS, WATCH_RANGE } from "../tuning";
 import { advanceTick } from "../tick";
 import { WallState, canPlaceWall, isStoneWall } from "../walls";
 import { tileIndex } from "../world/world";
@@ -19,6 +19,7 @@ import {
   FIXTURE_SEED_V5,
   FIXTURE_SEED_V6,
   FIXTURE_SEED_V8,
+  FIXTURE_SEED_V9,
   V1_TICKS,
   V2_TICKS,
   V3_TICKS,
@@ -27,6 +28,7 @@ import {
   V6_TICKS,
   V7_TICKS,
   V8_TICKS,
+  V9_TICKS,
   replay,
   v1Script,
   v2Script,
@@ -36,6 +38,7 @@ import {
   v6Script,
   v7Script,
   v8Script,
+  v9Script,
 } from "./fixtures/recipe";
 
 /**
@@ -84,6 +87,11 @@ import {
  *   and staffed on a seed with stone five tiles out, grain, flour and bread in
  *   the colony, five running hunger clocks, and a colonist **mid-meal** with a
  *   route to a particular loaf in flight.
+ * - **v9**, written 2026-09-09 for the Watchtower: a **1×1 tower standing and
+ *   manned**, watching a den eighteen tiles out — the format's first slot
+ *   building with no recipe at all, and its first colonist bound to a slot
+ *   that produces nothing. On its own seed, because the tower needs both a
+ *   near wood and a den inside `WATCH_RANGE` (`fixtures/recipe.ts`).
  *
  * None is an empty world: an empty store would round-trip past almost every
  * mistake this file exists to catch.
@@ -105,6 +113,7 @@ const V5 = new URL("./fixtures/v5.castles", import.meta.url);
 const V6 = new URL("./fixtures/v6.castles", import.meta.url);
 const V7 = new URL("./fixtures/v7.castles", import.meta.url);
 const V8 = new URL("./fixtures/v8.castles", import.meta.url);
+const V9 = new URL("./fixtures/v9.castles", import.meta.url);
 
 type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
 
@@ -671,6 +680,65 @@ describe("the committed v8 save", () => {
   });
 });
 
+describe("the committed v9 save", () => {
+  it("still loads, with a manned Watchtower reading a den", async () => {
+    const sim = await decode(readFileSync(V9));
+    expect(sim.tick).toBe(V9_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED_V9);
+
+    // The kind no earlier file could hold: 1×1, slot, no recipe.
+    const tower = sim.buildings.find((b) => b.kind === BuildingKind.Watchtower)!;
+    expect(tower.state).toBe(BuildingState.Active);
+    expect([tower.w, tower.h]).toEqual([1, 1]);
+    expect(BUILDING_DEFS[BuildingKind.Watchtower].recipe).toBeNull();
+    // Nothing is stored in it and nothing ever will be: its output is not a
+    // good, so a save that came back with something in its buffer would mean
+    // the haul rules had started treating it as a workshop.
+    expect(sim.items.some((it) => it.holder === tower.id)).toBe(false);
+    expect(tower.millProgress).toBe(-1);
+
+    // And a colonist bound to that slot, standing **inside** it — which is the
+    // whole of what makes the coverage below real rather than nominal.
+    const watcher = sim.colonists.find((c) => c.id === tower.worker)!;
+    expect(watcher.slot).toBe(tower.id);
+    expect(watcher.inside).toBe(1);
+
+    // The reloaded colony's picture is sharp, off the file alone: one den in
+    // reach, reading in exact tenths rather than fuzzy fifths.
+    expect(inspect(sim, tower.id)?.watching).toBe(1);
+    const covered = sim.monsters.filter(
+      (m) => Math.max(Math.abs(m.lairX - tower.x), Math.abs(m.lairY - tower.y)) <= WATCH_RANGE,
+    );
+    expect(covered).toHaveLength(1);
+    expect(rhythm(sim, covered[0].id)?.buckets).toBe(WATCH_BUCKETS);
+    expect(rhythm(sim, covered[0].id)?.watched).toBe(true);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V9));
+    expect(hashSim(sim)).toBe("accc7f2f");
+  });
+
+  it("keeps watching from where it was saved, and blurs the frame it is unstaffed", async () => {
+    const sim = await decode(readFileSync(V9));
+    const tower = sim.buildings.find((b) => b.kind === BuildingKind.Watchtower)!;
+    const den = sim.monsters.find(
+      (m) => Math.max(Math.abs(m.lairX - tower.x), Math.abs(m.lairY - tower.y)) <= WATCH_RANGE,
+    )!;
+    // Coverage is derived per read, not stored, so it survives a load by
+    // being recomputed rather than by having been saved.
+    for (let t = 0; t < 200; t++) advanceTick(sim);
+    expect(sim.tick).toBe(V9_TICKS + 200);
+    expect(rhythm(sim, den.id)?.buckets).toBe(WATCH_BUCKETS);
+
+    // The running price, on a loaded colony: pull the watcher and the picture
+    // is coarse on the very next read, with nothing banked.
+    applyCommands(sim, [{ kind: "unstaff", building: tower.id }]);
+    expect(rhythm(sim, den.id)?.buckets).toBe(THREAT_BUCKETS);
+    expect(rhythm(sim, den.id)?.watched).toBe(false);
+  });
+});
+
 /**
  * The drift alarm the pinned hashes cannot sound. A failure here means the
  * store grew or lost a field since a fixture was frozen, so that save no
@@ -717,6 +785,13 @@ describe("the fixtures still have the store shape this build produces", () => {
     const kinds = [...OLD_KINDS, "monsters"] as const;
     expect(shapeOf(await decode(readFileSync(V8)), kinds)).toEqual(
       shapeOf(replay(v8Script, V8_TICKS, FIXTURE_SEED_V8), kinds),
+    );
+  });
+
+  it("v9, natively — a manned Watchtower included", async () => {
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V9)), kinds)).toEqual(
+      shapeOf(replay(v9Script, V9_TICKS, FIXTURE_SEED_V9), kinds),
     );
   });
 

@@ -1,6 +1,6 @@
 # Castles — HUD style guide
 
-*Last updated 2026-09-08. Distilled from the approved visual mock
+*Last updated 2026-09-09. Distilled from the approved visual mock
 (https://claude.ai/code/artifact/fa8e50e2-7a08-422e-890b-23e3f262711c — the
 live, editable reference), the HUD refit canvas
 (https://claude.ai/code/artifact/abc3851b-250b-48b1-8406-6871d5816c66 — the
@@ -146,10 +146,11 @@ holds arrivals. Both are the italic faint recipe; neither is an alarm.
 
 ### The threat meter, and the rhythm bar
 
-Two widgets, one recipe, both **five segments of rust in a `line-soft`
-trough**, 2px gaps, 6px tall — the labour meter's anatomy with a fixed
-segment count. Unlit segments are the trough, not a dimmer rust: a meter that
-is never fully off would read as a permanent low alarm.
+Two widgets, one recipe, both **rust segments in a `line-soft` trough**, 2px
+gaps, 6px tall — the labour meter's anatomy, at whichever segment count the
+estimate is honest to (five, or ten under a watcher; see below). Unlit
+segments are the trough, not a dimmer rust: a meter that is never fully off
+would read as a permanent low alarm.
 
 - **Threat meter** — in the ribbon, after the enclosed count, with a faint
   caps caption beside it in the resource-label style. It tracks the colony's
@@ -174,11 +175,29 @@ bar and not in the caption, which is why the time is a phrase and not a
 figure. CONCEPT's rule is that schedules show *approximately* and precision is
 buildable, so fifths is the resolution the base game sells and a per-monster
 error is baked into the estimate. A minutes-and-seconds readout here would
-spend the watchtower's whole product before it exists, and a digit invites
-arithmetic the estimate cannot support. Fifths is also why there is no
-transition: the bar steps, and a step is not animation. It is also why a long
-phase never reads *any moment now* — a fifth of a three-day rest is well over
-a day, and the estimate honestly does not know.
+spend the watchtower's whole product, and a digit invites arithmetic the
+estimate cannot support. Fifths is also why there is no transition: the bar
+steps, and a step is not animation. It is also why a long phase never reads
+*any moment now* — a fifth of a three-day rest is well over a day, and the
+estimate honestly does not know.
+
+**Under a watcher, both meters go to ten segments** — same rust, same trough,
+same 2px gaps, twice as many of them, and **still not a digit anywhere**. A
+monster whose den sits within a manned Watchtower's reach reads in exact
+tenths: the seeded error is gone and the segment count doubles, so the bar is
+finer *and* honest where the base game's is neither. Everything downstream
+follows from that one change — the ribbon's meter, a monster's rhythm bar and
+the verbal captions all keep their exact recipe and vocabulary, and a phrase
+narrows because its bucket did, never because a new phrase was written. The
+tower buys **resolution, not arithmetic**; the no-number law above is what it
+must never buy past.
+
+The segment count is data, so nothing about either widget hard-codes five. The
+ribbon absorbs the ~55px a ten-segment bar adds and stays one line at 1280px.
+A monster's inspector says which world it is in beneath the bar, in the house
+voice: `its hours are read off the map, never exactly`, or **`a watcher knows
+its hours`**. A *watcher*, not a tower — the price is the pair of hands, and
+the sentence goes back the frame they step out.
 
 **No alarm anywhere else.** A monster at the wall produces no banner, no
 toast, no colour change on any other element, and no sound. The meter moving,
@@ -247,9 +266,32 @@ Drawn by `src/render/`, same vocabulary as the panels:
   right on a placement ghost — this is ground the colony may use — and the
   two never appear in conflict, because the run ghost sits on wall tiles and
   wall tiles are never enclosed ground.
+- **Watch range** (how far a Watchtower reads): the enclosure boundary's
+  recipe with **no wash under it** — a keylined sage line at `0.85` alpha and
+  ~0.11 tiles wide, traced per tile along the boundary of the tower's
+  Chebyshev-`WATCH_RANGE` square, at each tile's own ground height so it
+  follows the terrain.
 
-Three rules the world imposes on all three, added once the first overlays
-were measured against real terrain (`2026-09-01-tick-and-labour`):
+  **A square, not a circle, because a square is what the rule tests.**
+  Coverage is Chebyshev distance from the tower to a monster's *den*, so a
+  circle of radius 24 would exclude covered diagonal dens — the picture
+  denying knowledge the player has already paid a pair of hands for. The
+  overlay and the predicate are the same shape or the overlay is a lie.
+
+  **Outline only.** The enclosure's faint interior fill earns its place by
+  saying which side of a line the colony's ground is on; a square 49 tiles
+  across is not a region the colony owns, and at any strength where such a
+  wash read by itself it would be tinting the world.
+
+  Shown **only while the tower tool is held** — every tower on the map plus
+  the ghost's, so a new tower is sited against the coverage there is — or
+  while **a tower is selected**, when it shows its own. Never permanently,
+  and the ghost's square is drawn first so it is never the one a budget
+  drops. A tile off the map edge is simply skipped: a tower near the coast
+  really does reach past the shore, and an open line is the honest picture.
+
+Three rules the world imposes on every overlay above, added once the first
+of them were measured against real terrain (`2026-09-01-tick-and-labour`):
 
 - **Every overlay line sits on a `ground` (`#14170f`) keyline at `0.5`,
   drawn one line-width wider underneath.** The meaning colours do not survive
@@ -311,7 +353,7 @@ were measured against real terrain (`2026-09-01-tick-and-labour`):
   (put a building down), **Walls** (draw a line) — and each head after the
   first carries a `line-soft` rule above it.
 
-  Two columns is what puts all fifteen tools on screen at once at 768px of
+  Two columns is what puts all sixteen tools on screen at once at 768px of
   window height. Below that the rail scrolls inside itself; it never slides
   over Stores, because the two share one left-edge flex column in which the
   rail is the item that gives.

@@ -24,6 +24,7 @@ import {
   monsters,
   BUILDING_DEFS,
   MonsterKind,
+  WATCH_RANGE,
   type BuildingKindValue,
   type ItemTypeValue,
   type MonsterKindValue,
@@ -125,6 +126,22 @@ const MAX_OVERLAY = 8192;
  */
 const MAX_INSIDE = 16384;
 const MAX_BOUNDARY = 4096;
+/**
+ * The watch-range boundaries: `SQUARE_BARS` per tower, and the tool shows every
+ * tower on the map at once. Sized for a few dozen towers — well past what a
+ * colony builds — and past the cap a square is refused **whole** rather than
+ * truncated, because a half-drawn square is worse than a missing one: it claims
+ * a smaller reach than the tower actually has.
+ *
+ * The ghost's own square is queued **first** by the caller for exactly that
+ * reason: if a budget ever runs out it must not be the overlay the player is
+ * actively aiming with that goes missing (the `ghostKeyline` lesson).
+ */
+const MAX_WATCH = 8192;
+/** Bars one watch square costs, in each of its two layers: four runs of
+ *  `2·WATCH_RANGE + 1`, which is one per ring tile plus a second on each of the
+ *  four corners — a corner needs a bar on both of its outward faces. */
+const SQUARE_BARS = 4 * (2 * WATCH_RANGE + 1);
 /**
  * A wall drag is an L, so its two legs together reach at most twice a map edge
  * — and each tile draws four bars. Sized for the whole L: a cap that only
@@ -277,6 +294,8 @@ export class MoverRenderer {
   private readonly insideFill: Layer;
   private readonly insideKeyline: Layer;
   private readonly insideEdge: Layer;
+  private readonly watchKeyline: Layer;
+  private readonly watchEdge: Layer;
 
   constructor(
     private readonly scene: Scene,
@@ -307,6 +326,11 @@ export class MoverRenderer {
     this.insideFill = overlayLayer(scene, MAX_INSIDE, SAGE, 0.14);
     this.insideKeyline = overlayLayer(scene, MAX_BOUNDARY, KEYLINE, 0.5);
     this.insideEdge = overlayLayer(scene, MAX_BOUNDARY, SAGE, 0.85);
+    // A watch range is the enclosure boundary's recipe with **no wash under
+    // it**: 49 tiles across, a fill would tint the world rather than mark a
+    // limit, and the world is the hero (docs/STYLEGUIDE.md, Tone).
+    this.watchKeyline = overlayLayer(scene, MAX_WATCH, KEYLINE, 0.5);
+    this.watchEdge = overlayLayer(scene, MAX_WATCH, SAGE, 0.85);
   }
 
   /**
@@ -328,13 +352,22 @@ export class MoverRenderer {
    * Draw one frame. `alpha` is the leftover tick fraction from the app loop —
    * 0 at the tick just simulated, approaching 1 at the next.
    */
-  sync(alpha: number, ghost: Ghost | null, showEnclosure = false): void {
+  sync(
+    alpha: number,
+    ghost: Ghost | null,
+    showEnclosure = false,
+    watch: readonly { x: number; y: number }[] = [],
+  ): void {
     for (const l of this.layers) l.used = 0;
     this.drawColonists(alpha);
     this.drawMonsters(alpha);
     this.drawGoods();
     this.drawDesignations();
     if (showEnclosure) this.drawEnclosure();
+    // Before the ghost, and in the order the caller gave: the ghost's own
+    // square leads the list, so a starved layer drops a distant tower's
+    // boundary rather than the one being aimed with.
+    for (const tower of watch) this.drawWatchRange(tower.x, tower.y);
     if (ghost) this.drawGhost(ghost);
     for (const l of this.layers) {
       l.mesh.count = l.used;
@@ -357,6 +390,8 @@ export class MoverRenderer {
       this.insideFill,
       this.insideKeyline,
       this.insideEdge,
+      this.watchKeyline,
+      this.watchEdge,
     ];
   }
 
@@ -565,14 +600,74 @@ export class MoverRenderer {
 
   /** One bar hugging the (dx, dy) edge of tile (x, y), from the inside. */
   private boundary(x: number, y: number, top: number, dx: number, dy: number): void {
+    this.edgeBar(this.insideKeyline, this.insideEdge, x, y, top, dx, dy);
+  }
+
+  /** The bar itself, on whichever pair of layers is asking for it — the
+   *  enclosure traces the wall's inside edge with it, a watch range traces the
+   *  outer ring of its own square. */
+  private edgeBar(
+    keyline: Layer,
+    edge: Layer,
+    x: number,
+    y: number,
+    top: number,
+    dx: number,
+    dy: number,
+  ): void {
     const t = INSIDE_LINE;
     const w = dx === 0 ? 1 : t;
     const h = dy === 0 ? 1 : t;
     const cx = x + (dx === 0 ? 0.5 : dx > 0 ? 1 - t / 2 : t / 2);
     const cy = y + (dy === 0 ? 0.5 : dy > 0 ? 1 - t / 2 : t / 2);
     const grow = KEYLINE_GROWTH;
-    put(this.insideKeyline, cx, top, cy, dx === 0 ? w : w + grow, 0.02, dy === 0 ? h : h + grow, 0);
-    put(this.insideEdge, cx, top + 0.01, cy, w, 0.02, h, 0);
+    put(keyline, cx, top, cy, dx === 0 ? w : w + grow, 0.02, dy === 0 ? h : h + grow, 0);
+    put(edge, cx, top + 0.01, cy, w, 0.02, h, 0);
+  }
+
+  /**
+   * One Watchtower's reach: a keylined sage **square outline** at Chebyshev
+   * `WATCH_RANGE` around its tile, shown only while the tower tool is held or
+   * a tower is selected — never permanently.
+   *
+   * **A square, because a square is what the predicate tests.** Coverage is
+   * Chebyshev distance from the tower to a den, so a circle of radius 24 would
+   * draw a picture that excluded covered diagonal dens — the overlay denying
+   * knowledge the player has already paid a pair of hands for.
+   *
+   * **Outline only, no interior wash.** The enclosure's faint fill works
+   * because it says which side of a line the colony's ground is on; 49 tiles
+   * across, the same wash would simply tint the world.
+   *
+   * Traced per tile at each tile's own ground height, like the enclosure
+   * boundary, so the line follows the terrain instead of cutting through a
+   * rise. Tiles off the map are skipped: a tower near the coast really does
+   * reach past the edge, and an open line is the honest picture of that.
+   */
+  private drawWatchRange(cx: number, cy: number): void {
+    const size = this.sim.world.size;
+    const r = WATCH_RANGE;
+    // Refuse a square that will not fit **whole**. `put` drops instances one at
+    // a time, and the four runs are laid interleaved per `d`, so a square that
+    // merely ran out of budget would render as an open box stopping short on
+    // all four sides — a boundary claiming *less* ground than the predicate
+    // covers, which is the one thing this overlay may never do. The ghost is
+    // queued first, so what a full layer refuses is always a distant tower.
+    if (this.watchKeyline.used + SQUARE_BARS > MAX_WATCH) return;
+    for (let d = -r; d <= r; d++) {
+      // The two horizontal runs then the two vertical ones. The four corner
+      // tiles are visited twice on purpose — each needs a bar on both of its
+      // outward faces, or the square has four notches in it.
+      this.watchBar(cx + d, cy - r, 0, -1, size);
+      this.watchBar(cx + d, cy + r, 0, 1, size);
+      this.watchBar(cx - r, cy + d, -1, 0, size);
+      this.watchBar(cx + r, cy + d, 1, 0, size);
+    }
+  }
+
+  private watchBar(x: number, y: number, dx: number, dy: number, size: number): void {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    this.edgeBar(this.watchKeyline, this.watchEdge, x, y, this.groundY(x, y) + 0.02, dx, dy);
   }
 
   /**

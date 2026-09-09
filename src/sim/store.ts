@@ -64,6 +64,12 @@ export const BuildingKind = {
   /** Flour into bread, and the first building priced in **blocks** — the
    *  mason's first customer that is not a wall. */
   Oven: 6,
+  /**
+   * The Watchtower: a slot with no recipe, whose whole output is knowledge.
+   * While its watcher is inside, every den within `WATCH_RANGE` reads in
+   * tenths instead of fifths (docs/specs/2026-09-09-watchtowers.md).
+   */
+  Watchtower: 7,
 } as const;
 export type BuildingKindValue = (typeof BuildingKind)[keyof typeof BuildingKind];
 

@@ -240,6 +240,31 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
       outputCap: WORKSHOP_OUTPUT_CAP,
     },
   },
+  /**
+   * The Watchtower: **the first slot building with no recipe**, and the first
+   * 1×1 footprint. Its whole output is knowledge — while its watcher is
+   * inside, every den within `WATCH_RANGE` reads in tenths rather than fifths
+   * (docs/specs/2026-09-09-watchtowers.md).
+   *
+   * `recipe: null` is what makes that cheap rather than a phantom good:
+   * `stepWorkshops` skips it, `generateHaulToInput` never orders it anything,
+   * `freeCapacity` gives it no room, and staffing, unstaffing and the labour
+   * meter all work by table. The watcher is a slot like any other — a pair of
+   * hands spent on information, which is CONCEPT's "information is
+   * infrastructure" made literal, and it is the *running* price that makes
+   * coverage rented rather than banked.
+   */
+  [BuildingKind.Watchtower]: {
+    kind: BuildingKind.Watchtower,
+    name: "Watchtower",
+    w: 1,
+    h: 1,
+    cost: 4,
+    costType: ItemType.Plank,
+    hasSlot: true,
+    beds: 0,
+    recipe: null,
+  },
 };
 
 export function defOf(b: Building): BuildingDef {

@@ -42,6 +42,8 @@ import {
   THREAT_RANGE,
   UNLIMITED,
   WALL_ITEM_COST,
+  WATCH_BUCKETS,
+  WATCH_RANGE,
 } from "../tuning";
 import {
   WallState,
@@ -95,6 +97,13 @@ export type { WallMaterial } from "../walls";
  * number itself. `UNLIMITED` is what the panel reads as "no ceiling".
  */
 export { stepLimit, LIMIT_MAX, LIMIT_STEP, UNLIMITED };
+/**
+ * How far a Watchtower reads, in tiles, Chebyshev — for the range boundary the
+ * renderer traces. Knowledge in the strict sense: the range is a flat, stated
+ * rule with no line of sight and no terrain in it, so showing it denies the
+ * player nothing (docs/specs/2026-09-09-watchtowers.md).
+ */
+export { WATCH_RANGE };
 
 export function colonists(sim: Sim): readonly Colonist[] {
   return sim.colonists;
@@ -373,6 +382,17 @@ export interface Inspection {
    * False for everything that is not a House with beds standing.
    */
   tableShort: boolean;
+  /**
+   * For a Watchtower: **how many dens are within `WATCH_RANGE` of it**,
+   * counted whether or not anybody is standing in it. `-1` for everything
+   * else, which is how the panel tells a tower from a workshop.
+   *
+   * Deliberately staffing-blind, so an unstaffed tower's panel can honestly
+   * say what it *would* watch — "3 dens in reach — no watcher" — while
+   * `rhythm()` sharpens nothing until a watcher is inside. The panel's wording
+   * is what carries the difference, off `worker` (docs/specs/2026-09-09-watchtowers.md).
+   */
+  watching: number;
 }
 
 export function inspect(sim: Sim, id: number): Inspection | null {
@@ -436,6 +456,7 @@ export function inspect(sim: Sim, id: number): Inspection | null {
       : consumes(recipe) ? "no-input"
       : "none",
     tableShort: def.beds > 0 && b.state === BuildingState.Active && settled(sim) < populationCap(sim) && !tableSet(sim),
+    watching: b.kind === BuildingKind.Watchtower ? densInReach(sim, b) : -1,
   };
 }
 
@@ -523,23 +544,39 @@ export function monsterName(kind: number): string {
 
 /**
  * How far through its current phase a monster is — **coarse, and off by a
- * little on purpose**.
+ * little on purpose**, unless somebody is paid to watch.
  *
  * The true timer is bucketed into fifths and shifted by a per-monster error of
  * up to `RHYTHM_FUZZ`, derived here from the monster's id and the world seed
  * and stored nowhere: it is a property of what the player can *work out*, not
  * of the world. So the display is honest about the rhythm — watch a troll and
- * you learn its hours — and never exact about the minute, which is precisely
- * what CONCEPT reserves for watchtowers to sell back.
+ * you learn its hours — and never exact about the minute.
  *
- * The output is quantized after the shift, so it is never sharper than a fifth
- * whatever the error happened to be.
+ * **A watched monster drops the error and buckets in tenths** (`isWatched`).
+ * That is the whole of the watchtower's product and the whole of its sim
+ * surface: this one function, and everything downstream sharpens by itself
+ * because `threat()` and `when()` already read `buckets` from here
+ * (docs/specs/2026-09-09-watchtowers.md). It buys resolution, never
+ * arithmetic — tenths of a phase in words and segments, and never a digit.
+ *
+ * The output is quantized after the shift, so it is never sharper than its own
+ * bucket whatever the error happened to be.
  */
 export interface Rhythm {
   phase: "resting" | "prowling" | "homeward";
   /** 0 .. `buckets` − 1, how much of the phase is spent. */
   bucket: number;
   buckets: number;
+  /**
+   * Is a manned Watchtower reading this den's hours right now?
+   *
+   * Carried as a fact rather than left for a consumer to infer from
+   * `buckets === WATCH_BUCKETS`, so the panel's wording keys off *why* the bar
+   * is fine instead of off how many segments it happens to have — and so the
+   * homeward branch below can report it honestly while keeping its own fixed
+   * shape.
+   */
+  watched: boolean;
 }
 
 const RHYTHM_SALT = 0x2545f491;
@@ -547,15 +584,79 @@ const RHYTHM_SALT = 0x2545f491;
 export function rhythm(sim: Sim, id: number): Rhythm | null {
   const m = findMonster(sim, id);
   if (!m) return null;
+  const watched = isWatched(sim, m);
   if (m.phase === MonsterPhase.GoingHome) {
-    return { phase: "homeward", bucket: THREAT_BUCKETS - 1, buckets: THREAT_BUCKETS };
+    // Untouched by the tower on purpose: `GoingHome` ends on arrival and not
+    // on a clock, so there is no timer for anybody to read more finely — a
+    // watcher cannot sharpen a phase that has none. The flag still reports
+    // honestly, so the inspector's note stays true beside a fixed-shape bar.
+    return { phase: "homeward", bucket: THREAT_BUCKETS - 1, buckets: THREAT_BUCKETS, watched };
   }
   const resting = m.phase === MonsterPhase.Rest;
   const length = Math.max(1, resting ? m.restTicks : m.prowlTicks);
   const spent = 1 - Math.min(1, Math.max(0, m.phaseTicks / length));
-  const error = (hash(m.id, RHYTHM_SALT, sim.world.seed) - 0.5) * 2 * RHYTHM_FUZZ;
-  const bucket = Math.min(THREAT_BUCKETS - 1, Math.max(0, Math.floor((spent + error) * THREAT_BUCKETS)));
-  return { phase: resting ? "resting" : "prowling", bucket, buckets: THREAT_BUCKETS };
+  const buckets = watched ? WATCH_BUCKETS : THREAT_BUCKETS;
+  const error = watched ? 0 : (hash(m.id, RHYTHM_SALT, sim.world.seed) - 0.5) * 2 * RHYTHM_FUZZ;
+  const bucket = Math.min(buckets - 1, Math.max(0, Math.floor((spent + error) * buckets)));
+  return { phase: resting ? "resting" : "prowling", bucket, buckets, watched };
+}
+
+/**
+ * Every Watchtower on the map, whatever state it is in.
+ *
+ * Exported for the range overlay, which draws a boundary for a tower the
+ * player has only just placed as well as for a finished one — the coverage
+ * you are siting the next tower against includes the site you just committed,
+ * and a boundary that vanished the instant the ghost became a blueprint would
+ * be the overlay flinching at the one moment it is being used.
+ */
+export function watchtowers(sim: Sim): readonly Building[] {
+  return sim.buildings.filter((b) => b.kind === BuildingKind.Watchtower);
+}
+
+/**
+ * Is any manned Watchtower reading this monster's den?
+ *
+ * **Lair-anchored**, Chebyshev, at `WATCH_RANGE` — a schedule is a property of
+ * the den, so a prowler wandering past a tower changes nothing and placement
+ * becomes the question the game wants asked: which dens do I want to
+ * understand? The square is also exactly the shape the overlay draws, so the
+ * picture can never deny knowledge the player has.
+ *
+ * **Manned or nothing**, gated the same way production is — the slot filled,
+ * the worker still bound to this building, and *inside* it. So an unstaffed
+ * tower sharpens nothing, unstaffing blurs the picture back the same frame,
+ * and the watcher's lunch coarsens it for the walk: knowledge is rented with
+ * hands and never banked.
+ */
+function isWatched(sim: Sim, m: Monster): boolean {
+  for (const b of sim.buildings) {
+    if (b.kind !== BuildingKind.Watchtower || b.state !== BuildingState.Active) continue;
+    // Range before staffing: the Chebyshev test is two subtractions, while
+    // `manned` walks the colonist array. Asked the other way round this scans
+    // every colonist once per tower per monster, for towers that were never in
+    // reach of this den in the first place.
+    if (Math.max(Math.abs(m.lairX - b.x), Math.abs(m.lairY - b.y)) > WATCH_RANGE) continue;
+    if (manned(sim, b)) return true;
+  }
+  return false;
+}
+
+/** Is this building's slot worker actually in it? `stepWorkshop`'s gate,
+ *  asked of a building that makes knowledge instead of goods. */
+function manned(sim: Sim, b: Building): boolean {
+  if (b.worker < 0) return false;
+  const worker = sim.colonists.find((c) => c.id === b.worker);
+  return worker !== undefined && worker.slot === b.id && worker.inside === 1;
+}
+
+/** How many dens a Watchtower on this tile could read, staffed or not. */
+function densInReach(sim: Sim, b: Building): number {
+  let n = 0;
+  for (const m of sim.monsters) {
+    if (Math.max(Math.abs(m.lairX - b.x), Math.abs(m.lairY - b.y)) <= WATCH_RANGE) n++;
+  }
+  return n;
 }
 
 /** What the ribbon's threat meter shows. */

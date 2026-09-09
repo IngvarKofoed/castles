@@ -93,6 +93,9 @@ export const BUFFER_Y: Record<BuildingKindValue, number> = {
   [BuildingKind.Mill]: 2.38 * BH,
   // The dome's shoulder — two courses, no roof.
   [BuildingKind.Oven]: 1.4 * BH,
+  // A Watchtower holds nothing at all — its output is knowledge, not goods —
+  // so it takes the deck like a House and the table stays total.
+  [BuildingKind.Watchtower]: 0.16 * BH,
 };
 
 /** The deck a stockpile's pile and a blueprint's materials stack on. */
@@ -183,6 +186,10 @@ export function buildingBoxes(b: Building, h: number, out: Box[]): void {
   }
   if (b.kind === BuildingKind.Oven) {
     oven(cx, g, cz, b, out);
+    return;
+  }
+  if (b.kind === BuildingKind.Watchtower) {
+    watchtower(cx, g, cz, out);
     return;
   }
   sawmill(cx, g, cz, b, out);
@@ -301,6 +308,67 @@ function oven(cx: number, g: number, cz: number, b: Building, out: Box[]): void 
   // A short chimney off the back corner, and the fire's own glow is not drawn:
   // nothing in this game pulses (docs/STYLEGUIDE.md, Tone).
   out.push(box(b.x + 0.42, g + 1.4 * BH, b.y + 0.42, 0.26, 0.7 * BH, 0.26, PROP.stone, 0, 0.9));
+}
+
+/**
+ * Watchtower: four battered legs, a braced shaft and a railed platform with a
+ * shallow cap over it.
+ *
+ * **The tallest thing the colony builds, and the only one that is all
+ * height** — it stands well over the stone gate, because a tower whose whole
+ * product is seeing further has to read as looking over the wall from across
+ * the map. That is the entire silhouette job: at 1×1 there is no footprint to
+ * recognise it by, so the taper and the platform are what say *tower* rather
+ * than *shed*.
+ *
+ * Timber and stake, no clay and no stone body: it is the carpenter's work, not
+ * the mason's, which is also what it costs. Nobody is drawn on the platform —
+ * a colonist `inside` is not rendered, by the existing rule, and the panel's
+ * worker row is the tell (docs/specs/2026-09-09-watchtowers.md).
+ */
+function watchtower(cx: number, g: number, cz: number, out: Box[]): void {
+  // A scraped stone footing, so the legs do not read as sticks pushed into
+  // grass.
+  out.push(box(cx, g, cz, 0.86, 0.16 * BH, 0.86, PROP.stone, 0, 0.92));
+  // Four legs, set in from the tile edge so the platform above can overhang
+  // them — the overhang is what makes the taper read at distance.
+  const LEG = 0.26;
+  const legs: [number, number][] = [
+    [-LEG, -LEG],
+    [LEG, -LEG],
+    [-LEG, LEG],
+    [LEG, LEG],
+  ];
+  for (const [ox, oz] of legs) {
+    out.push(box(cx + ox, g + 0.16 * BH, cz + oz, 0.15, 3.1 * BH, 0.15, PROP.timber));
+  }
+  // Cross-bracing at two heights, one bar per axis — enough to say "framed"
+  // without the pair of bars per side that would close the tower in.
+  for (const h of [1.0, 2.2]) {
+    out.push(box(cx, g + h * BH, cz - LEG, 2 * LEG, 0.1 * BH, 0.1, PROP.stake, 0, 0.94));
+    out.push(box(cx - LEG, g + h * BH, cz, 0.1, 0.1 * BH, 2 * LEG, PROP.stake, 0, 0.94));
+  }
+  // The platform, overhanging the legs on every side — but **not its own
+  // tile**, which is the one place this differs from the sawmill's roof.
+  // Every other building overhangs a little (`b.w + 0.16` on a shed roof) and
+  // pays nothing for it, because a 2×2 still has interior tiles whose top face
+  // picks correctly. A 1×1 has none: the cap *is* the tile, so a rim hanging
+  // over the neighbour makes `Picker.tileAt` (which floors the hit position)
+  // resolve a click on the tower's most clickable surface to the tile next
+  // door — and the tower is the only 1×1 target in the game. Everything above
+  // the legs therefore stays inside 1.0.
+  out.push(box(cx, g + 3.26 * BH, cz, 0.94, 0.22 * BH, 0.94, PROP.timber, 0, 0.96));
+  // A rail round it: four low bars at the platform's edge.
+  const R = 0.42;
+  out.push(box(cx, g + 3.48 * BH, cz - R, 0.94, 0.4 * BH, 0.1, PROP.stake, 0, 0.9));
+  out.push(box(cx, g + 3.48 * BH, cz + R, 0.94, 0.4 * BH, 0.1, PROP.stake, 0, 0.9));
+  out.push(box(cx - R, g + 3.48 * BH, cz, 0.1, 0.4 * BH, 0.94, PROP.stake, 0, 0.9));
+  out.push(box(cx + R, g + 3.48 * BH, cz, 0.1, 0.4 * BH, 0.94, PROP.stake, 0, 0.9));
+  // A shallow cap on two short posts — shade, not a roof, so the watch post
+  // still reads as open.
+  out.push(box(cx - 0.34, g + 3.88 * BH, cz - 0.34, 0.1, 0.6 * BH, 0.1, PROP.timber));
+  out.push(box(cx + 0.34, g + 3.88 * BH, cz + 0.34, 0.1, 0.6 * BH, 0.1, PROP.timber));
+  out.push(box(cx, g + 4.48 * BH, cz, 0.98, 0.2 * BH, 0.98, PROP.plank, 0, 0.94));
 }
 
 /** Which way a segment's run goes, as a bitmask of neighbours holding wall. */

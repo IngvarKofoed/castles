@@ -10,6 +10,7 @@ import {
   WALL_ITEM_COST,
   inspect,
   monsterName,
+  type Inspection,
   monsters,
   readout,
   rhythm,
@@ -199,6 +200,9 @@ const ICONS: Record<string, string> = {
   mill: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3 h10 l-2 5 h-6 Z"/><rect x="5" y="10" width="12" height="4"/><path d="M11 8 v2"/><path d="M4 15 h14"/></svg>`,
   oven: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V9 q7 -6 14 0 v6 Z"/><path d="M9 15 v-3 h4 v3"/><path d="M16 6 q2 -2 0 -4"/></svg>`,
   mason: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="9" width="14" height="6"/><path d="M11 9 v6"/><path d="M8 6 h6"/><path d="M11 3 v3"/></svg>`,
+  // Watchtower: battered legs under a railed platform with a cap over it —
+  // the prop's own silhouette, which is all a 1×1 has to be recognised by.
+  watchtower: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 15 L9 7"/><path d="M15 15 L13 7"/><path d="M8 11 h6"/><path d="M6 7 h10"/><path d="M6 5 h10"/><path d="M8 5 V3 h6 v2"/></svg>`,
   // Stone wall: coursed blocks. Stone gate: the same arch, squared.
   stonewall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="6" width="16" height="4"/><rect x="3" y="10" width="16" height="4"/><path d="M8 6 v4"/><path d="M14 6 v4"/><path d="M5 10 v4"/><path d="M11 10 v4"/><path d="M17 10 v4"/></svg>`,
   stonegate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4" width="16" height="3"/><path d="M5 15 V7 h3 v8"/><path d="M17 15 V7 h-3 v8"/></svg>`,
@@ -297,6 +301,16 @@ export class Hud {
 
   get tool(): Tool {
     return this.tool_;
+  }
+
+  /**
+   * What the inspector is showing, for the one overlay that keys off a
+   * selection rather than off a tool: a selected Watchtower draws its own
+   * watch range. Read-only — `select` and `selectMonster` are still the only
+   * ways in.
+   */
+  get selection(): { kind: "building" | "monster"; id: number } | null {
+    return this.selected;
   }
 
   /**
@@ -554,11 +568,12 @@ export class Hud {
    * The rail, in three labelled sections — **Orders** (tell people to do
    * something to what is already there), **Build** (put a building down),
    * **Walls** (draw a line). Eleven tools in one unbroken column stopped being
-   * readable — fifteen since the bread chain — and the styleguide's rail
-   * anatomy already allowed section heads, so this is that allowance spent.
+   * readable — sixteen since the bread chain and the Watchtower — and the
+   * styleguide's rail anatomy already allowed section heads, so this is that
+   * allowance spent.
    *
    * Each section is a **two-column grid of icon-only buttons**, which is what
-   * fits all fifteen on a 768px-tall window without a scrollbar. The words the
+   * fits all sixteen on a 768px-tall window without a scrollbar. The words the
    * buttons gave up live in their accessible names and in the caption strip at
    * the foot of the rail.
    *
@@ -593,6 +608,9 @@ export class Hud {
           BuildingKind.Farm,
           BuildingKind.Mill,
           BuildingKind.Oven,
+          // The eighth cell, which the seven above left empty: the rail's
+          // height does not move for this one.
+          BuildingKind.Watchtower,
         ] as BuildingKindValue[]).map((kind) => {
           const def = BUILDING_DEFS[kind];
           // The cost names the def's own material: the House costs planks, and
@@ -626,7 +644,7 @@ export class Hud {
   }
 
   /** One section's tools, two to a row. An odd count leaves the last cell
-   *  empty — Build's seven sit in four rows. */
+   *  empty — Build's eight fill four rows exactly. */
   private railGrid(tools: readonly HTMLElement[]): HTMLElement {
     const grid = el("div", { class: "rail-grid" });
     grid.append(...tools);
@@ -639,7 +657,7 @@ export class Hud {
    * The name and cost the button used to print live in its `aria-label` and
    * `title` as "Stone wall — 1 block", so the tooltip serves the pointer and
    * the accessible name serves the screen reader, and in the caption strip,
-   * which is what serves the eye — including a keyboard user tabbing fifteen
+   * which is what serves the eye — including a keyboard user tabbing sixteen
    * unlabelled icons.
    */
   private toolButton(label: string, tool: Tool, cost: string): HTMLButtonElement {
@@ -774,7 +792,12 @@ export class Hud {
     }
     this.inspector.hidden = false;
 
-    const signature = `m${id}|${seen.stance}|${r.phase}|${r.bucket}`;
+    // `buckets` and `watched` are in the signature, not just `bucket`: a
+    // staff/unstaff flip changes the bar's *length* and the note beneath it,
+    // and on the flip where the bucket value happens to coincide this panel
+    // would otherwise redraw nothing — a stale ten-segment bar defeating
+    // "returns to fifths the same frame" (docs/specs/2026-09-09-watchtowers.md).
+    const signature = `m${id}|${seen.stance}|${r.phase}|${r.bucket}/${r.buckets}|${r.watched}`;
     if (signature === this.lastPanel) return;
     this.lastPanel = signature;
 
@@ -799,8 +822,12 @@ export class Hud {
       // "reconcile" them.
       bars(r.bucket + 1, r.buckets, RHYTHM_LABEL[r.phase]),
       // The house voice, and the whole of what the base game will tell you:
-      // watch it long enough and you learn its hours. Watchtowers narrow this.
-      note("its hours are read off the map, never exactly"),
+      // watch it long enough and you learn its hours. A manned Watchtower
+      // within range of this monster's *den* is what changes the sentence —
+      // and it says a watcher rather than a tower, because the price is the
+      // pair of hands and not the building (docs/CONCEPT.md: information is
+      // infrastructure, bought with the scarcest currency in the game).
+      note(r.watched ? "a watcher knows its hours" : "its hours are read off the map, never exactly"),
     );
   }
 
@@ -880,7 +907,11 @@ export class Hud {
       // `Input 0 / 0` would invite the player to look for the buffer it does
       // not have (docs/specs/2026-09-08-bread-economy.md).
       ...(b.inputCap > 0 ? ([["Input", `${b.inputCount} / ${b.inputCap}`]] as [string, string][]) : []),
-      ["Output", `${b.outputCount} / ${b.outputCap}`],
+      // And **no output row at all** for a slot building with no recipe: the
+      // Watchtower's whole output is knowledge, so `Output 0 / 0` would be the
+      // panel inviting a look for a buffer that does not exist — the Farm's
+      // input lesson, one row down (docs/specs/2026-09-09-watchtowers.md).
+      ...(b.chain ? ([["Output", `${b.outputCount} / ${b.outputCap}`]] as [string, string][]) : []),
     ]);
     // The ceiling, directly under the per-building output count and worded
     // "in colony" so the two plank numbers on this panel cannot be mistaken
@@ -890,7 +921,8 @@ export class Hud {
     if (b.outputType >= 0) box.append(this.limitRow(b));
     nodes.push(box);
     if (b.milling >= 0) nodes.push(meter(b.milling));
-    nodes.push(note(millNote(b)));
+    // A tower has no recipe to stall, so it says what it is watching instead.
+    nodes.push(note(b.watching >= 0 ? watchNote(b) : millNote(b)));
     nodes.push(
       b.staffed ?
         this.actionButton("Unstaff", () => this.ports.send({ kind: "unstaff", building: b.id }))
@@ -1059,6 +1091,30 @@ function millNote(b: NonNullable<ReturnType<typeof inspect>>): string {
   if (b.stall === "output-full") return `output full — nowhere to put the ${chainOf.output.toLowerCase()}s`;
   if (b.stall === "no-input" && chainOf.input) return `waiting for ${chainOf.input.toLowerCase()}`;
   return "working";
+}
+
+/**
+ * The Watchtower's note row: what it is watching, in the house voice.
+ *
+ * **Keyed off the worker's whereabouts, never off `staffed`, so the panel
+ * cannot lie.** Coverage requires the watcher *inside* — the same gate
+ * production uses — so a tower whose watcher is walking over, or away at a
+ * loaf, is sharpening nothing at that moment and has to say so. That is the
+ * only place the game ever tells the player their picture just went coarse,
+ * and the worker row above it is the corroboration
+ * (docs/specs/2026-09-09-watchtowers.md).
+ *
+ * `watching` counts dens whether or not anybody is standing in it, which is
+ * what lets an unstaffed tower honestly say what it *would* watch.
+ */
+export function watchNote(b: Pick<Inspection, "watching" | "worker">): string {
+  // Nothing in range outranks every other wording: a tower watching no dens is
+  // a tower in the wrong place, and that is worth saying whoever is in it.
+  if (b.watching === 0) return "the watcher sees no dens from here";
+  const dens = `${b.watching} ${b.watching === 1 ? "den" : "dens"}`;
+  if (b.worker === "none") return `${dens} in reach — no watcher`;
+  if (b.worker !== "inside") return `${dens} in reach — the watcher is away`;
+  return `watching ${dens}`;
 }
 
 /**

@@ -14,10 +14,12 @@ import {
 } from "../render/pick";
 import { createStage } from "../render/scene";
 import {
+  BuildingKind,
   canMine,
   canPlace,
   canPlaceWall,
   buildingAtTile,
+  buildings,
   groundHeight,
   hasTree,
   hasWall,
@@ -28,6 +30,7 @@ import {
   isTerraformMarked,
   monsterAtTile,
   readout,
+  watchtowers,
   type BuildingKindValue,
 } from "../sim/know";
 import type { Command } from "../sim/commands";
@@ -134,6 +137,8 @@ interface Session {
   /** Hand the queued commands to the caller and start a fresh queue. */
   takeCommands(): Command[];
   ghost(): Ghost | null;
+  /** Which Watchtowers should draw their watch range this frame, ghost first. */
+  watchRanges(): { x: number; y: number }[];
   dispose(): void;
 }
 
@@ -446,6 +451,47 @@ function buildSession(sim: Sim): Session {
     return null;
   }
 
+  /**
+   * Whose watch range to draw, and when.
+   *
+   * Two moments only, both pinned to the enclosure's precedent of showing a
+   * whole layer while its tool is held: with the **tower tool** active the
+   * ghost's square shows plus every tower already on the map, so siting a new
+   * one is done against the coverage there is; with a **tower selected** it
+   * shows its own. Any other tool, any other selection, nothing
+   * (docs/specs/2026-09-09-watchtowers.md).
+   *
+   * The ghost leads the list deliberately — if the layer's budget ever ran
+   * out it must not be the square being aimed with that goes missing. And
+   * every tower counts, blueprint or standing: the boundary must not vanish
+   * at the instant the ghost is committed, which is exactly when the player
+   * is placing the next one.
+   */
+  function watchRanges(): { x: number; y: number }[] {
+    const tool = hud.tool;
+    if (tool.kind === "build" && tool.building === BuildingKind.Watchtower) {
+      const out = hover ? [{ x: hover[0], y: hover[1] }] : [];
+      for (const t of watchtowers(sim)) {
+        // A tower already standing on the hovered tile would draw the ghost's
+        // square a second time, in the same place: two 0.85-alpha outlines
+        // blend to a near-opaque one, so the boundary reads *heavier* over the
+        // one tile the tool refuses to build on. One square per tile.
+        if (hover && t.x === hover[0] && t.y === hover[1]) continue;
+        out.push({ x: t.x, y: t.y });
+      }
+      return out;
+    }
+    const picked = hud.selection;
+    if (picked?.kind === "building") {
+      // Straight off the live array rather than through `watchtowers`, which
+      // allocates: this branch runs every frame for *any* selected building,
+      // and the filter would build a throwaway array on each of them.
+      const tower = buildings(sim).find((b) => b.id === picked.id && b.kind === BuildingKind.Watchtower);
+      if (tower) return [{ x: tower.x, y: tower.y }];
+    }
+    return [];
+  }
+
   return {
     sim,
     hud,
@@ -457,6 +503,7 @@ function buildSession(sim: Sim): Session {
       return out;
     },
     ghost,
+    watchRanges,
     dispose: () => {
       events.abort();
       hud.dispose();
@@ -698,7 +745,7 @@ function frame(nowMs: number): void {
   s.chunks.sync();
   // At ×0 the world is frozen, so there is nothing between two ticks to
   // interpolate: pin the fraction rather than letting it drift.
-  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool));
+  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool), s.watchRanges());
   s.hud.update();
   stage.renderer.render(stage.scene, rig.camera);
   requestAnimationFrame(frame);
