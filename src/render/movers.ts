@@ -496,7 +496,8 @@ export class MoverRenderer {
 
     for (const item of items(this.sim)) {
       // One colour table for every good (palette.ts), so a rock pile and a
-      // block pile are told apart by the same rule the ribbon's icons use.
+      // block pile are told apart by the same rule the Stores panel's pips
+      // use — the pip and the pile are one object seen twice.
       const tint = GOOD_HEX[item.type as ItemTypeValue] ?? PROP.crate;
       if (item.loc === Loc.Ground) {
         const key = tileIndex(item.x, item.y, this.sim.world.size);

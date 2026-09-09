@@ -21,7 +21,9 @@ export interface GoodDef {
   readonly type: ItemTypeValue;
   /** Title case, for panel rows and chain chips. */
   readonly name: string;
-  /** Lower case, for the ribbon's faint caps label. */
+  /** Lower case and plural (mass nouns stay singular), for the prose that
+   *  counts a good in a sentence — the rail's cost captions, a stockpile's
+   *  accept toggles, "2 planks in the colony". Stores' rows use `name`. */
   readonly label: string;
   readonly accept:
     | "acceptLog"

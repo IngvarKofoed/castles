@@ -91,8 +91,10 @@ export const OVERLAY = {
 
 /**
  * Which colour a good is drawn in, keyed by `ItemType` — one table, so the
- * ribbon's icon, the mover layer's ground pile and a building's buffer
- * contents cannot disagree about what a rock looks like.
+ * mover layer's ground pile and a building's buffer contents cannot disagree
+ * about what a rock looks like. These are the styleguide's good tokens, the
+ * same ones the Stores panel's pips read as CSS vars: the pip and the pile
+ * are one object seen twice.
  */
 export const GOOD_HEX: Record<ItemTypeValue, number> = {
   [ItemType.Log]: PROP.timber,
