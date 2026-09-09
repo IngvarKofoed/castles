@@ -1,21 +1,23 @@
 # Castles — Architecture
 
-*Last updated 2026-09-01. The game is not yet built: the first half of this
-document is the intended architecture of the real thing, the second half is
-the record of the two visual mockups that came first.*
+*Last updated 2026-09-09. The first half of this document is the
+architecture **as built** — every system below has shipped (the record is
+`docs/changelog/`, the designs `docs/specs/`); the second half is the record
+of the two visual mockups that came first.*
 
 ## Tech stack
 
 Decided 2026-09-01:
 
 - **TypeScript**, strict, everywhere.
-- **three.js** (pinned, currently r160) for rendering. The voxel look, the
-  instancing budget, and the two shader injections are already proven in
-  `mockup3d.html` — the renderer's job is to port them into modules, not
-  reinvent them.
+- **three.js** (pinned, currently r160) for rendering. The voxel look and
+  the two shader injections were proven in `mockup3d.html` and have been
+  ported into `render/` on chunked meshing, as planned.
 - **Vite** for dev server and build, **Vitest** for tests.
-- **Plain DOM for the HUD.** No UI framework until a real need shows up; the
-  mockups' HUD is a handful of elements.
+- **Plain DOM for the HUD.** No UI framework; the HUD (ribbon, Stores
+  panel, build rail, inspector, labour panel, centre modal) is built
+  entirely from the recipes in `docs/STYLEGUIDE.md`, which is the source of
+  truth for everything visual.
 - **No backend.** The game ships as static files, browser-first; wrapped with
   Tauri (or Electron) for Steam/desktop later if it earns it. Nothing in the
   architecture may assume a server.
@@ -23,14 +25,16 @@ Decided 2026-09-01:
 ## The one hard boundary
 
 `src/sim/` is the game. It is pure TypeScript with **no DOM and no three.js
-imports** — a rule worth enforcing mechanically (ESLint
-`no-restricted-imports` per directory). Everything else — renderer, HUD,
-persistence plumbing — is a consumer that reads sim state and feeds it
-commands.
+imports** — enforced mechanically in `eslint.config.js`
+(`no-restricted-imports` per directory, `no-restricted-globals` for
+`document` / `window` / `navigator`, and `no-restricted-properties` so
+`Math.random` and `Date.now` cannot enter `sim/`). Everything else —
+renderer, HUD, persistence plumbing — is a consumer that reads sim state and
+feeds it commands.
 
 Three commitments inside that boundary:
 
-- **Fixed tick.** The sim advances at a fixed rate (working target: 10
+- **Fixed tick.** The sim advances at a fixed rate (`TICK_HZ` = 10
   ticks/second of game time), decoupled from the render loop;
   `requestAnimationFrame` interpolates between ticks. Game speed multiplies
   ticks per real second; pause is zero.
@@ -73,28 +77,28 @@ src/
     save/         snapshot, versioning, migrations
   render/         three.js — chunked meshing, materials, shaders
   ui/             HUD, build menus, overlays (plain DOM)
-  app/            bootstrap, main loop, sim ↔ render ↔ ui wiring
-assets/           content data: buildings, recipes, monster kinds, palettes
-mockups/          mockup.html and mockup3d.html move here when src/ appears
-docs/             CONCEPT.md, this file, changelog/
+  app/            bootstrap, main loop, storage, sim ↔ render ↔ ui wiring
+  types/          ambient declarations
+mockups/          mockup.html and mockup3d.html — the pre-build record below
+docs/             CONCEPT.md, this file, STYLEGUIDE.md, specs/, changelog/
 ```
 
-Content — buildings, recipes, monster kinds — is data in `assets/`, not
-code. The mockups' prop system (a building is a footprint plus trim rules)
-is already nearly that format.
+Content — buildings, recipes, monster kinds, goods — currently lives as
+tables in `sim/` (`BUILDING_DEFS`, `GOODS`, `MONSTER_DEFS`), documented as
+"data, not behaviour". The planned `assets/` folder does not exist yet; the
+tables move out to it when a content format earns its keep, and nothing
+consumes them by anything but the table shape.
 
 ## World model
 
-- The mockups are 34 × 34; the real game wants **a lot larger** — 256 × 256
-  is the working target, with a correspondingly larger starting castle. The
-  numbers are tunable; the consequence is not: the world is **chunked**
-  (16 × 16 tiles), so terrain rebuilds, render meshing, and dirty-marking
-  are per-chunk, never whole-world. The mockups' bake-once-blit-forever
-  trick does not survive a map this size; its successor is bake-per-chunk,
-  rebuild only what changed.
-- Terrain generation gets simpler than the mockups': fairly flat
+- The world ships at **256 × 256** (`WORLD_SIZE`), **chunked** (16 × 16
+  tiles), so terrain rebuilds, render meshing, and dirty-marking are
+  per-chunk, never whole-world — the mockups' bake-once-blit-forever trick
+  did not survive a map this size, and bake-per-chunk with
+  rebuild-only-what-changed is what replaced it.
+- Terrain generation is simpler than the mockups': fairly flat
   (CONCEPT.md: terraforming is labour-only), few height steps, water and
-  rock as features rather than topography.
+  rock as features rather than topography, an island with no land edge.
 - **Enclosure is computed, not prescribed.** There are no rings — the player
   chooses where to expand. "Inside" is derived from the wall graph:
   flood-fill **from the map edge and from every monster lair**, and anything
@@ -149,22 +153,33 @@ is already nearly that format.
   saves. Pre-1.0 the escape hatch is allowed — breaking saves is fine, but
   it bumps the version and fails loudly, never loads garbage.
 
-## Build order
+## Build order — as it happened
 
-1. **Bootstrap.** Vite + TS + Vitest; port the (currently duplicated) world
-   generator into `sim/world` with tests; port the mockup3d renderer into
-   `render/` on chunked meshing. Playable result: a large empty world you
-   can orbit.
-2. **Tick + labour.** The fixed tick, the sim store, pool/slot workers, the
-   task queue, filtered-storage hauling. First because every later system
-   spends the same currency — people.
-3. **Walls + enclosure.** Lifecycle states, the incremental flood-fill,
-   terraforming as labour tasks.
-4. **Threats + knowledge.** Schedules, notice/attack/flee, then watchtowers
-   and the knowledge model.
-5. **Persistence** as soon as the store shape settles — earlier than feels
-   natural, because the plain-data rule makes it cheap and it enforces state
-   discipline.
+The five planned steps all shipped, each behind a spec in `docs/specs/` and
+a changelog entry — in the planned order but for persistence, which came
+early (step 4 below, and the plan's own reason for allowing it); the plan
+then kept extending the same way. The shipped sequence:
+
+1. **Bootstrap** — world gen in `sim/world`, the renderer on chunked
+   meshing (`2026-09-01-bootstrap-world`).
+2. **Tick + labour** — fixed tick, store, pool/slot workers, task queue,
+   filtered-storage hauling (`2026-09-01-tick-and-labour`).
+3. **Walls + enclosure, then stone + terraform** — lifecycle states, the
+   batched flood-fill, labour-only levelling
+   (`2026-09-02-palisade-walls`, `2026-09-02-stone-and-terraform`).
+4. **Persistence** — pulled *earlier* than planned, exactly for the stated
+   reason (`2026-09-02-versioned-save-snapshots`).
+5. **Threats + knowledge** — schedules, notice/attack/flee, the fuzzed
+   rhythm display (`2026-09-05-monsters-and-the-hours-they-keep`); the
+   watchtowers that sharpen it came as 4b
+   (`2026-09-09-watchtowers`).
+6. **Population and food** — housing and sea-borne wanderers (5a), then
+   the bread economy with hunger-that-slows and the tightened gate (5b),
+   with production ceilings and stockpile filter UI landing between them
+   (`2026-09-07-housing-and-wanderers`,
+   `2026-09-07-production-limits-and-filters`, `2026-09-08-bread-economy`).
+7. **The HUD refit** — slim ribbon, Stores panel, icon rail
+   (`2026-09-08-stores-panel-and-icon-rail`).
 
 ---
 

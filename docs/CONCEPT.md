@@ -1,6 +1,6 @@
 # Castles — Concept
 
-*Last updated 2026-09-01.*
+*Last updated 2026-09-09.*
 
 A voxel colony builder about claiming land from a dangerous wilderness. Inside
 your walls, nothing can ever hurt you. Outside, threats roam in plain sight.
@@ -176,9 +176,13 @@ excerpts were readable), and the patch notes.
 ## Decisions still open
 
 None at concept level — the pillars, the labour model, and the threat model
-are settled and all point at the same promise. What remains is tuning and
-spec work: exact speeds and damage, schedule shapes, watch precision, chain
-recipes, map generation. Those belong in specs, not here.
+are settled, all point at the same promise, and all have shipped. The
+tuning and spec work this section once deferred now exists: walls,
+terraforming, monsters and their schedules, housing, the bread economy,
+production control and watchtowers each have a spec in `docs/specs/` and a
+record in `docs/changelog/`. Of this document's promises, only the *alarm
+systems* half of the watchtower sentence and the belts-and-carts automation
+tier remain unbuilt — both still intended, neither yet specced.
 
 ## Not in scope
 
