@@ -9,7 +9,7 @@ import { spawnItem } from "./items";
 import { countItems } from "./items";
 import { bedsBuilt, populationCap, settled, tableSet, wanderer } from "./settlers";
 import { BuildingKind, BuildingState, ItemType, createSim, type Sim } from "./store";
-import { flatSim, testBuilding, testMonster } from "./test-sim";
+import { flatSim, testBuilding, testColonist, testMonster } from "./test-sim";
 import { advanceTick } from "./tick";
 import { MonsterPhase } from "./store";
 import { STARTING_COLONISTS, WANDERER_PATIENCE } from "./tuning";
@@ -491,26 +491,7 @@ describe("the bread gate", () => {
     expect(tableSet(sim)).toBe(true);
 
     for (let i = 0; i < 3; i++) {
-      sim.colonists.push({
-        id: sim.nextId++,
-        x: 6.5,
-        y: 6.5,
-        px: 6.5,
-        py: 6.5,
-        heading: 0,
-        slot: -1,
-        inside: 0,
-        task: -1,
-        phase: 0,
-        work: 0,
-        carrying: -1,
-        dest: -1,
-        patience: 0,
-        hunger: 0,
-        eating: 0,
-        path: [],
-        step: 0,
-      });
+      sim.colonists.push(testColonist({ id: sim.nextId++, x: 6.5, y: 6.5 }));
     }
     // Three settled folk and no bread: now the bar binds.
     expect(settled(sim)).toBe(3);
@@ -533,26 +514,7 @@ describe("the bread gate", () => {
     }
     // Somebody lives here, so the empty-colony exemption does not apply and the
     // bar is two loaves: theirs and the newcomer's.
-    sim.colonists.push({
-      id: sim.nextId++,
-      x: 10.5,
-      y: 13.5,
-      px: 10.5,
-      py: 13.5,
-      heading: 0,
-      slot: -1,
-      inside: 0,
-      task: -1,
-      phase: 0,
-      work: 0,
-      carrying: -1,
-      dest: -1,
-      patience: 0,
-      hunger: 0,
-      eating: 0,
-      path: [],
-      step: 0,
-    });
+    sim.colonists.push(testColonist({ id: sim.nextId++, x: 10.5, y: 13.5 }));
     const parked = sim.wandererTimer;
     for (let t = 0; t < 400; t++) advanceTick(sim);
     expect(wanderer(sim)).toBeNull();
@@ -573,26 +535,7 @@ describe("arrivals", () => {
     homeAt(sim, 10, 10);
     // A colony already at its cap: seven folk against five plus two beds.
     for (let i = 0; i < STARTING_COLONISTS + 2; i++) {
-      sim.colonists.push({
-        id: sim.nextId++,
-        x: 10.5,
-        y: 12.5,
-        px: 10.5,
-        py: 12.5,
-        heading: 0,
-        slot: -1,
-        inside: 0,
-        task: -1,
-        phase: 0,
-        work: 0,
-        carrying: -1,
-        dest: -1,
-        patience: 0,
-        hunger: 0,
-        eating: 0,
-        path: [],
-        step: 0,
-      });
+      sim.colonists.push(testColonist({ id: sim.nextId++, x: 10.5, y: 12.5 }));
     }
     for (let t = 0; t < 800; t++) advanceTick(sim);
     // Nobody came, and the clock is exactly where it started: the countdown

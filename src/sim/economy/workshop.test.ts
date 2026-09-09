@@ -6,7 +6,7 @@ import { spawnItem } from "../items";
 import { generateTasks } from "../labour/tasks";
 import { inspect } from "../know";
 import { BuildingKind, BuildingState, ItemType, Loc, TaskKind, type Building, type Sim } from "../store";
-import { flatSim } from "../test-sim";
+import { flatSim, testColonist } from "../test-sim";
 import { advanceTick } from "../tick";
 import { ROCK_PER_BLOCK, WORKSHOP_OUTPUT_CAP } from "../tuning";
 
@@ -23,26 +23,7 @@ import { ROCK_PER_BLOCK, WORKSHOP_OUTPUT_CAP } from "../tuning";
 function peopledSim(size = 20): Sim {
   const sim = flatSim(size);
   for (let i = 0; i < 3; i++) {
-    sim.colonists.push({
-      id: sim.nextId++,
-      x: 2 + i + 0.5,
-      y: 2.5,
-      px: 2 + i + 0.5,
-      py: 2.5,
-      heading: 0,
-      slot: -1,
-      inside: 0,
-      task: -1,
-      phase: 0,
-      work: 0,
-      carrying: -1,
-      dest: -1,
-      patience: 0,
-      hunger: 0,
-      eating: 0,
-      path: [],
-      step: 0,
-    });
+    sim.colonists.push(testColonist({ id: sim.nextId++, x: 2 + i + 0.5, y: 2.5 }));
   }
   return sim;
 }

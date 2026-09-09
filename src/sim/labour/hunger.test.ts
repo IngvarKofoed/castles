@@ -12,7 +12,7 @@ import {
   type Colonist,
   type Sim,
 } from "../store";
-import { flatSim, testBuilding, testMonster } from "../test-sim";
+import { flatSim, testBuilding, testColonist, testMonster } from "../test-sim";
 import { advanceTick } from "../tick";
 import {
   CHOP_TICKS,
@@ -40,27 +40,7 @@ import { hungry, mealDue, walkBudget, worksThisTick } from "./hunger";
 const at = (sim: Sim, x: number, y: number): number => tileIndex(x, y, sim.world.size);
 
 function colonist(sim: Sim, patch: Partial<Colonist> = {}): Colonist {
-  const c: Colonist = {
-    id: sim.nextId++,
-    x: 6.5,
-    y: 6.5,
-    px: 6.5,
-    py: 6.5,
-    heading: 0,
-    slot: -1,
-    inside: 0,
-    task: -1,
-    phase: 0,
-    work: 0,
-    carrying: -1,
-    dest: -1,
-    patience: 0,
-    hunger: 0,
-    eating: 0,
-    path: [],
-    step: 0,
-    ...patch,
-  };
+  const c = testColonist({ id: sim.nextId++, x: 6.5, y: 6.5, ...patch });
   sim.colonists.push(c);
   return c;
 }
@@ -188,7 +168,7 @@ describe("a meal", () => {
 
   it("takes a slot worker out through the door and puts them back", () => {
     const sim = world();
-    const c = colonist(sim, { x: 10.5, y: 14.5, px: 10.5, py: 14.5 });
+    const c = colonist(sim, { x: 10.5, y: 14.5 });
     applyCommands(sim, [{ kind: "place", building: BuildingKind.Mill, x: 10, y: 10 }]);
     const mill = sim.buildings[0];
     mill.state = BuildingState.Active;
@@ -300,7 +280,7 @@ describe("hunger with no bread anywhere", () => {
 
   it("never kills, and never stops the colony working", () => {
     const sim = world();
-    for (let i = 0; i < 3; i++) colonist(sim, { x: 6.5 + i, px: 6.5 + i, hunger: HUNGRY_TICKS * 2 });
+    for (let i = 0; i < 3; i++) colonist(sim, { x: 6.5 + i, hunger: HUNGRY_TICKS * 2 });
     sim.world.treeMap[at(sim, 9, 6)] = 1;
     sim.chopMap[at(sim, 9, 6)] = 1;
     for (let t = 0; t < 600; t++) advanceTick(sim);
@@ -319,7 +299,7 @@ describe("a wanderer", () => {
     const sim = world();
     const home = testBuilding({ kind: BuildingKind.House, x: 10, y: 10 });
     sim.buildings.push(home);
-    const walker = colonist(sim, { dest: home.id, x: 2.5, y: 2.5, px: 2.5, py: 2.5 });
+    const walker = colonist(sim, { dest: home.id, x: 2.5, y: 2.5 });
     spawnItem(sim, ItemType.Bread, 6, 6);
     for (let t = 0; t < 200 && walker.dest >= 0; t++) advanceTick(sim);
     expect(walker.hunger).toBe(0);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MonsterPhase, type Building, type Colonist, type Sim } from "../store";
-import { flatSim, testBuilding, testMonster } from "../test-sim";
+import { flatSim, testBuilding, testColonist, testMonster } from "../test-sim";
 import {
   DAY_TICKS,
   RHYTHM_FUZZ,
@@ -69,26 +69,7 @@ function denAt(sim: Sim, dx: number, dy = 0, id = 1): ReturnType<typeof testMons
 
 function peopled(size = 24): Sim {
   const sim = flatSim(size);
-  const c: Colonist = {
-    id: sim.nextId++,
-    x: 12.5,
-    y: 12.5,
-    px: 12.5,
-    py: 12.5,
-    heading: 0,
-    slot: -1,
-    inside: 0,
-    task: -1,
-    phase: 0,
-    work: 0,
-    carrying: -1,
-    dest: -1,
-    patience: 0,
-    hunger: 0,
-    eating: 0,
-    path: [],
-    step: 0,
-  };
+  const c = testColonist({ id: sim.nextId++, x: 12.5, y: 12.5 });
   sim.colonists.push(c);
   recomputeEnclosure(sim);
   return sim;

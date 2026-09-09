@@ -13,6 +13,7 @@ import {
   REST_BASE,
 } from "../tuning";
 import { MIGRATIONS } from "../save/migrations";
+import { testColonist } from "../test-sim";
 import { WallState } from "../walls";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { threatNear } from "./flee";
@@ -235,28 +236,7 @@ describe("the lair pass", () => {
 
     // And a colonist standing in there has nothing to run from, whatever the
     // wilds outside are doing.
-    migrated.colonists = [
-      {
-        id: 1,
-        x: RING.x + 4.5,
-        y: RING.y + 4.5,
-        px: RING.x + 4.5,
-        py: RING.y + 4.5,
-        heading: 0,
-        slot: -1,
-        inside: 0,
-        task: -1,
-        phase: 0,
-        work: 0,
-        carrying: -1,
-        dest: -1,
-        patience: 0,
-        hunger: 0,
-        eating: 0,
-        path: [],
-        step: 0,
-      },
-    ];
+    migrated.colonists = [testColonist({ id: 1, x: RING.x + 4.5, y: RING.y + 4.5 })];
     for (const m of migrated.monsters) m.phase = MonsterPhase.Prowl;
     expect(threatNear(migrated, migrated.colonists[0])).toBeNull();
   });

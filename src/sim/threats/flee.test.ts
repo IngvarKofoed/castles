@@ -5,7 +5,7 @@ import { stepColonists } from "../labour/colonists";
 import { generateTasks } from "../labour/tasks";
 import { occupancy } from "../path";
 import { ItemType, MonsterPhase, TaskKind, type Colonist, type Sim } from "../store";
-import { flatSim, testBuilding, testMonster } from "../test-sim";
+import { flatSim, testBuilding, testColonist, testMonster } from "../test-sim";
 import { advanceTick } from "../tick";
 import { PALISADE_HP, REPAIR_HP_PER_SECOND, TICK_HZ } from "../tuning";
 import { WallState } from "../walls";
@@ -21,27 +21,7 @@ import { stepMonsters } from "./monsters";
 const at = (sim: Sim, x: number, y: number): number => tileIndex(x, y, sim.world.size);
 
 function walker(sim: Sim, x: number, y: number, patch: Partial<Colonist> = {}): Colonist {
-  const c: Colonist = {
-    id: sim.nextId++,
-    x: x + 0.5,
-    y: y + 0.5,
-    px: x + 0.5,
-    py: y + 0.5,
-    heading: 0,
-    slot: -1,
-    inside: 0,
-    task: -1,
-    phase: 0,
-    work: 0,
-    carrying: -1,
-    dest: -1,
-    patience: 0,
-    hunger: 0,
-    eating: 0,
-    path: [],
-    step: 0,
-    ...patch,
-  };
+  const c = testColonist({ id: sim.nextId++, x: x + 0.5, y: y + 0.5, ...patch });
   sim.colonists.push(c);
   return c;
 }

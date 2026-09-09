@@ -6,6 +6,7 @@ import {
   MonsterKind,
   MonsterPhase,
   type Building,
+  type Colonist,
   type Monster,
   type Sim,
   unlimitedLimits,
@@ -128,6 +129,50 @@ export function testBuilding(patch: Partial<Building> = {}): Building {
     acceptBread: 1,
     worker: -1,
     millProgress: -1,
+    ...patch,
+  };
+}
+
+/**
+ * A settled pool worker standing on a tile — fed, idle, carrying nothing — for
+ * tests that want folk on the ground rather than a colony that grew them. Here
+ * for the same reason `flatSim`, `testMonster` and `testBuilding` are: a
+ * hand-written `Colonist` literal in a test file goes stale the moment the
+ * entity grows a field, and this one has grown four of them since step 2
+ * (`dest`, `patience`, `hunger`, `eating`) across a dozen files at once.
+ *
+ * It builds and returns without pushing, as the other two do. A test that wants
+ * the colonist in a sim mints the id itself (`id: sim.nextId++`) and pushes:
+ * several colonists per sim is the normal case, so a shared default id is a
+ * collision waiting to happen rather than a convenience.
+ */
+export function testColonist(patch: Partial<Colonist> = {}): Colonist {
+  // `px`/`py` are derived from whichever position the caller actually gave, for
+  // the reason `testMonster` spells out: a previous position half a tile from
+  // the current one is what the renderer lerps, and it is enough to bias a
+  // range assertion. The spread still wins, so a test that wants them apart
+  // says so.
+  const x = patch.x ?? 0.5;
+  const y = patch.y ?? 0.5;
+  return {
+    id: 90,
+    x,
+    y,
+    px: x,
+    py: y,
+    heading: 0,
+    slot: -1,
+    inside: 0,
+    task: -1,
+    phase: 0,
+    work: 0,
+    carrying: -1,
+    dest: -1,
+    patience: 0,
+    hunger: 0,
+    eating: 0,
+    path: [],
+    step: 0,
     ...patch,
   };
 }

@@ -4,7 +4,7 @@ import { dropTile, spawnItem } from "../items";
 import { generateTasks } from "../labour/tasks";
 import { occupancy } from "../path";
 import { ItemType, Loc, TaskKind, createSim, type Sim } from "../store";
-import { flatSim, testBuilding } from "../test-sim";
+import { flatSim, testBuilding, testColonist } from "../test-sim";
 import { advanceTick } from "../tick";
 import { Terrain, tileIndex } from "../world/world";
 import { WallState, canPlaceWall } from "./index";
@@ -16,26 +16,7 @@ const at = (sim: Sim, x: number, y: number): number => tileIndex(x, y, sim.world
 function peopledSim(size = 20): Sim {
   const sim = flatSim(size);
   for (let i = 0; i < 3; i++) {
-    sim.colonists.push({
-      id: sim.nextId++,
-      x: 2 + i + 0.5,
-      y: 2.5,
-      px: 2 + i + 0.5,
-      py: 2.5,
-      heading: 0,
-      slot: -1,
-      inside: 0,
-      task: -1,
-      phase: 0,
-      work: 0,
-      carrying: -1,
-      dest: -1,
-      patience: 0,
-      hunger: 0,
-      eating: 0,
-      path: [],
-      step: 0,
-    });
+    sim.colonists.push(testColonist({ id: sim.nextId++, x: 2 + i + 0.5, y: 2.5 }));
   }
   return sim;
 }
