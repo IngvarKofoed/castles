@@ -130,8 +130,9 @@ export interface Readout {
    */
   folk: number;
   /**
-   * Pool workers **available for work**: no task claimed, and not away at a
-   * meal. What the player reads off it is how much slack the pool has, so it
+   * Pool workers **available for work**: no task claimed, and not away on a
+   * self-errand — a meal or a fitting. What the player reads off it is how much
+   * slack the pool has, so it
    * has to be hands that could take work now, not hands that merely hold
    * nothing. Counted the other way, day two read `5 idle` with every starting
    * hunger clock coming due at once and nobody idle.
@@ -186,10 +187,11 @@ export function readout(sim: Sim): Readout {
     if (hungry(c)) starving++;
     if (c.slot >= 0) continue;
     pool++;
-    // Not merely task-less: an eater holds no task and cannot be spent
-    // either, so the meal errand is excluded here rather than in the HUD
+    // Not merely task-less: an eater and somebody at a fitting both hold no
+    // task and neither can be spent, so both self-errands are excluded here
+    // rather than in the HUD
     // (docs/changelog/2026-09-09-idle-means-available.md).
-    if (c.task < 0 && c.eating === 0) idle++;
+    if (c.task < 0 && c.eating === 0 && c.dressing === 0) idle++;
   }
   // A bed exists only in a finished House, so "any beds at all" is the same
   // question as "is a House standing" — and it is the one the suffix turns on.
@@ -336,12 +338,14 @@ export interface Inspection {
    * drawing them, so this row and the labour meter's rust segment are the
    * only things telling the player someone is in there.
    *
-   * `eating` is the fourth state and it exists to stop the panel lying: a
-   * miller out at a meal is not a stall, and "waiting for grain" while they
-   * walk to a loaf would be the one thing this panel may never do
-   * (docs/specs/2026-09-08-bread-economy.md).
+   * `eating` and `dressing` are the fourth and fifth states and they exist to
+   * stop the panel lying: a miller out at a meal is not a stall, and "waiting
+   * for grain" while they walk to a loaf — or "waiting for wool" while the
+   * weaver is at a fitting — would be the one thing this panel may never do
+   * (docs/specs/2026-09-08-bread-economy.md,
+   * docs/specs/2026-09-10-sheep-and-clothes.md).
    */
-  worker: "none" | "walking" | "inside" | "eating";
+  worker: "none" | "walking" | "inside" | "eating" | "dressing";
   /**
    * Every good in the building, in `ItemType` order — the stockpile panel
    * walks this rather than naming logs and planks, which is what keeps a new
@@ -388,10 +392,10 @@ export interface Inspection {
    */
   stall: "none" | "no-input" | "output-full" | "at-limit";
   /**
-   * For a House: **the bread gate, not the cap, is what holds arrivals right
+   * For a House: **the food gate, not the cap, is what holds arrivals right
    * now**. The panel says so in one quiet line, because this gate can stand for
    * game-days, it is player-caused, and one interplay makes silence dangerous —
-   * a bread ceiling at or below the settled count holds it shut for good.
+   * ceilings at or below the settled count on every food hold it shut for good.
    * False for everything that is not a House with beds standing.
    */
   tableShort: boolean;
@@ -460,10 +464,14 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     limit,
     colonyCount,
     stall:
-      // A worker away at a meal is not a stall of any kind, and neither is a
-      // recipe with no input ever "waiting for" anything: the two guards are
-      // what keep the panel honest about the Farm and about lunch.
-      !recipe || b.worker < 0 || b.millProgress >= 0 || worker === "eating" ? "none"
+      // A worker away on either self-errand is not a stall of any kind, and
+      // neither is a recipe with no input ever "waiting for" anything: the two
+      // guards are what keep the panel honest about the Farm, about lunch and
+      // about a fitting.
+      (
+        !recipe || b.worker < 0 || b.millProgress >= 0 || worker === "eating" || worker === "dressing"
+      ) ?
+        "none"
       : overLimit(limit, colonyCount) ? "at-limit"
       : outputCount >= recipe.outputCap ? "output-full"
       : consumes(recipe) ? "no-input"
@@ -473,11 +481,14 @@ export function inspect(sim: Sim, id: number): Inspection | null {
   };
 }
 
-function workerState(sim: Sim, b: Building): "none" | "walking" | "inside" | "eating" {
+function workerState(sim: Sim, b: Building): Inspection["worker"] {
   if (b.worker < 0) return "none";
   const worker = sim.colonists.find((c) => c.id === b.worker);
   if (!worker) return "none";
+  // At most one errand flag is ever set (`startMeal` clears the other), so the
+  // order here is a formality rather than a precedence rule.
   if (worker.eating) return "eating";
+  if (worker.dressing) return "dressing";
   return worker.inside ? "inside" : "walking";
 }
 

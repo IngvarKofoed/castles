@@ -370,6 +370,10 @@ function place(sim: Sim, kind: BuildingKindValue, x: number, y: number): void {
     acceptGrain: 1,
     acceptFlour: 1,
     acceptBread: 1,
+    acceptWool: 1,
+    acceptCloth: 1,
+    acceptClothes: 1,
+    acceptCheese: 1,
     worker: -1,
     millProgress: -1,
   };

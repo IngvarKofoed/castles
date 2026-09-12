@@ -127,6 +127,10 @@ export function testBuilding(patch: Partial<Building> = {}): Building {
     acceptGrain: 1,
     acceptFlour: 1,
     acceptBread: 1,
+    acceptWool: 1,
+    acceptCloth: 1,
+    acceptClothes: 1,
+    acceptCheese: 1,
     worker: -1,
     millProgress: -1,
     ...patch,
@@ -138,8 +142,9 @@ export function testBuilding(patch: Partial<Building> = {}): Building {
  * tests that want folk on the ground rather than a colony that grew them. Here
  * for the same reason `flatSim`, `testMonster` and `testBuilding` are: a
  * hand-written `Colonist` literal in a test file goes stale the moment the
- * entity grows a field, and this one has grown four of them since step 2
- * (`dest`, `patience`, `hunger`, `eating`) across a dozen files at once.
+ * entity grows a field, and this one has grown six of them since step 2
+ * (`dest`, `patience`, `hunger`, `eating`, `clothes`, `dressing`) across a dozen
+ * files at once.
  *
  * It builds and returns without pushing, as the other two do. A test that wants
  * the colonist in a sim mints the id itself (`id: sim.nextId++`) and pushes:
@@ -171,6 +176,8 @@ export function testColonist(patch: Partial<Colonist> = {}): Colonist {
     patience: 0,
     hunger: 0,
     eating: 0,
+    clothes: 0,
+    dressing: 0,
     path: [],
     step: 0,
     ...patch,

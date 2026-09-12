@@ -21,3 +21,11 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   (`2026-09-09-good-label-and-colour-docs`); the input case needs an `inputType` on
   `Inspection` first, mirroring `outputType`, and a Playwright pass because it
   changes rendered HUD text. Surfaced by the commit review of that entry.
+
+- **Six buildings share one silhouette** — the Dairy, Weaver and Tailor fall through
+  to the timber-workshop prop that the Sawmill, Mason and Mill already share, so half
+  the buildings in the game read identically across the map in a game whose whole
+  toolkit is reading the map. The Mill set that precedent for one building; three more
+  at once is what makes it worth a line. The Pasture and the Farm have props of their
+  own, so the pattern for fixing it exists. Surfaced by
+  `2026-09-11-sheep-and-clothes`.

@@ -29,10 +29,27 @@ export const ItemType = {
   Grain: 4,
   /** Ground grain; the oven's input. */
   Flour: 5,
-  /** The one food in the game. A colonist walks to a loaf and eats it once a
-   *  game-day, and the wanderer gate wants one for everybody plus the newcomer
-   *  (docs/specs/2026-09-08-bread-economy.md). */
+  /** A food. A colonist walks to a loaf and eats it once a game-day, and the
+   *  wanderer gate wants one food for everybody plus the newcomer
+   *  (docs/specs/2026-09-08-bread-economy.md). Cheese is the other; `FOODS`
+   *  in `goods.ts` is the list both the meal errand and the gate read. */
   Bread: 6,
+  /** Raised on a pasture out of nothing but a shepherd's hours; the weaver's
+   *  input. The Farm's `per: 0` recipe, one chain over
+   *  (docs/specs/2026-09-10-sheep-and-clothes.md). */
+  Wool: 7,
+  /** Woven wool; the tailor's input. */
+  Cloth: 8,
+  /**
+   * The game's first **equipment**. A colonist with none walks to a garment
+   * and puts it on exactly as they walk to a loaf and eat it — the item comes
+   * off the map, and they work 25% faster until it wears out
+   * (docs/specs/2026-09-10-sheep-and-clothes.md).
+   */
+  Clothes: 9,
+  /** The dairy's grain-fed output, and bread's equal as a meal: ovens and
+   *  dairies compete for the same fields. */
+  Cheese: 10,
 } as const;
 export type ItemTypeValue = (typeof ItemType)[keyof typeof ItemType];
 
@@ -70,6 +87,20 @@ export const BuildingKind = {
    * tenths instead of fifths (docs/specs/2026-09-09-watchtowers.md).
    */
   Watchtower: 7,
+  /**
+   * The Pasture: wool out of nothing but a shepherd's hours, on the game's
+   * joint-biggest footprint. The Farm's `per: 0` recipe repeated, which is why
+   * it costs no engine at all (docs/specs/2026-09-10-sheep-and-clothes.md).
+   */
+  Pasture: 8,
+  /** Grain into cheese — **deliberately grain-fed**, so the cloth chain's
+   *  neighbour pulls on the fields the bread chain already pulls on. */
+  Dairy: 9,
+  /** Wool into cloth. The Mason move again: one def row, no machinery. */
+  Weaver: 10,
+  /** Cloth into clothes — the one workshop in the game whose output nobody
+   *  hauls to a site: colonists come and put it on. */
+  Tailor: 11,
 } as const;
 export type BuildingKindValue = (typeof BuildingKind)[keyof typeof BuildingKind];
 
@@ -275,6 +306,34 @@ export interface Colonist {
    * a pool worker does not claim a task on top of its lunch.
    */
   eating: number;
+  /**
+   * Wear ticks **remaining** on the clothes this colonist is wearing; 0 means
+   * unclothed, which is what everybody starts and ends as. While it is above
+   * zero they work at `CLOTHED_FACTOR`, and it counts down every tick, worn —
+   * so the tailor has a customer again about ten game-days after each fitting,
+   * which is what keeps the cloth chain an economy rather than a checkbox
+   * (docs/specs/2026-09-10-sheep-and-clothes.md).
+   *
+   * **Remaining rather than elapsed**, which is a stated deviation from the
+   * store's damage-not-remaining precedent (`wallDamageMap`): there the point
+   * was that 0 = pristine costs no write, and here it is that 0 = unclothed
+   * comes free. The accepted cost is the mirror image — retuning
+   * `CLOTHES_WEAR_TICKS` never reaches clothes already on somebody's back.
+   *
+   * Shoes are the named next rung and would sit beside this as `shod`; that is
+   * the whole of the preparation, and nothing here anticipates them further.
+   */
+  clothes: number;
+  /**
+   * 1 while the dressing errand is in hand — `eating`'s mirror, and its own
+   * named field for the same reason: `stepColonists` skips the pool/slot split
+   * while it is set, so a slot worker walking to a garment is not re-routed to
+   * its station and a pool worker does not claim a task on top of a fitting.
+   *
+   * At most one errand flag is ever set: a meal coming due mid-fitting takes
+   * over and clears this (hunger is the sharper clock), and a flee clears both.
+   */
+  dressing: number;
   /** Remaining route as tile indices; `step` is the index of the next one. */
   path: number[];
   step: number;
@@ -330,6 +389,10 @@ export interface Building {
   acceptGrain: number;
   acceptFlour: number;
   acceptBread: number;
+  acceptWool: number;
+  acceptCloth: number;
+  acceptClothes: number;
+  acceptCheese: number;
   /** Slot worker, or -1. */
   worker: number;
   /**
@@ -574,6 +637,12 @@ export function createSim(seed: number): Sim {
       patience: 0,
       hunger: 0,
       eating: 0,
+      // The opening five arrive **unclothed**, which is the default and the
+      // permanent state of anybody the colony never dresses. There is no
+      // provisioning counterpart to the loaves below: clothes are a buff, not
+      // a floor, so having none has never cost anybody anything.
+      clothes: 0,
+      dressing: 0,
       path: [],
       step: 0,
     });

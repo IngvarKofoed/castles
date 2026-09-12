@@ -16,16 +16,19 @@ import { flatSim, testBuilding, testColonist, testMonster } from "../test-sim";
 import { advanceTick } from "../tick";
 import {
   CHOP_TICKS,
+  CLOTHED_FACTOR,
+  CLOTHES_WEAR_TICKS,
   HUNGRY_FACTOR,
   HUNGRY_TICKS,
   MEAL_TICKS,
   PROVISION_BREAD,
+  REPAIR_HP_PER_SECOND,
   STARTING_COLONISTS,
   WALK_TILES_PER_TICK,
 } from "../tuning";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { tileIndex } from "../world/world";
-import { hungry, mealDue, walkBudget, worksThisTick } from "./hunger";
+import { clothed, hungry, mealDue, walkBudget, workTicks } from "./hunger";
 
 /**
  * Meals, hunger, and the plateau (docs/specs/2026-09-08-bread-economy.md).
@@ -215,26 +218,21 @@ describe("a meal", () => {
   });
 });
 
-describe("hunger with no bread anywhere", () => {
+describe("hunger with no food anywhere", () => {
   it("slows work to the factor, on a cadence of whole ticks", () => {
     // Never a fractional work float: every accumulator in the game is an
     // integer count against an integer target, and paying 0.6 of a tick would
     // put fractions in the store and therefore in the golden hash.
     const sim = world();
     const c = colonist(sim, { hunger: HUNGRY_TICKS });
-    let worked = 0;
-    for (let t = 0; t < 1000; t++) {
-      sim.tick = t;
-      if (worksThisTick(sim, c)) worked++;
-    }
-    expect(worked).toBe(Math.round(1000 * HUNGRY_FACTOR));
+    expect(paidOver(sim, c, 1000)).toBe(Math.round(1000 * HUNGRY_FACTOR));
 
     // And a colonist short of `HUNGRY_TICKS` is not slowed at all: being *due*
     // a meal costs nothing, which is why the ribbon counts the slowed set.
     const fed = colonist(sim, { hunger: MEAL_TICKS });
     for (let t = 0; t < 50; t++) {
       sim.tick = t;
-      expect(worksThisTick(sim, fed)).toBe(true);
+      expect(workTicks(sim, fed)).toBe(1);
     }
   });
 
@@ -309,5 +307,100 @@ describe("a wanderer", () => {
     expect(walker.dest).toBe(-1);
     for (let t = 0; t < 30; t++) advanceTick(sim);
     expect(walker.hunger).toBeGreaterThan(0);
+  });
+});
+
+/** Work ticks this colonist is paid over `n` consecutive ticks. */
+function paidOver(sim: Sim, c: Colonist, n: number, from = 0): number {
+  let paid = 0;
+  for (let t = from; t < from + n; t++) {
+    sim.tick = t;
+    paid += workTicks(sim, c);
+  }
+  return paid;
+}
+
+/**
+ * The composed work cadence (docs/specs/2026-09-10-sheep-and-clothes.md).
+ *
+ * The ×0.75 case is the whole reason this suite exists: the spec pinned it
+ * because the two honest readings of "one extra tick every fourth" ship
+ * different numbers, and the other one is ×0.85. If this file ever goes green
+ * on 0.85, the bonus has stopped being gated on the hunger gate.
+ */
+describe("the work cadence", () => {
+  it("pays a clothed worker 1.25 ticks a tick, and a hungry one 0.6", () => {
+    const sim = world();
+    const dressed = colonist(sim, { clothes: CLOTHES_WEAR_TICKS });
+    const starved = colonist(sim, { hunger: HUNGRY_TICKS });
+    expect(paidOver(sim, dressed, 2000)).toBe(Math.round(2000 * CLOTHED_FACTOR));
+    expect(paidOver(sim, starved, 2000)).toBe(Math.round(2000 * HUNGRY_FACTOR));
+
+    // Never a fraction, and never more than a doubled tick: every accumulator
+    // downstream is an integer, so the golden hash stays integral.
+    for (let t = 0; t < 40; t++) {
+      sim.tick = t;
+      expect([1, 2]).toContain(workTicks(sim, dressed));
+      expect([0, 1]).toContain(workTicks(sim, starved));
+    }
+  });
+
+  it("pays a hungry clothed worker exactly 0.75 — at every phase offset", () => {
+    // 4 and 5 are coprime, so the bonus lands on a hunger-passed tick exactly
+    // three times in every twenty however the two periods are aligned: 0.6 plus
+    // 3/20. Checked at all twenty offsets rather than one, because "at every
+    // phase offset" is the half of the claim that a single window cannot see —
+    // and the id offset is what varies it in the real colony.
+    const sim = world();
+    for (let offset = 0; offset < 20; offset++) {
+      const c = testColonist({ id: offset, hunger: HUNGRY_TICKS, clothes: CLOTHES_WEAR_TICKS });
+      expect(paidOver(sim, c, 20)).toBe(15);
+      expect(paidOver(sim, c, 2000)).toBe(1500);
+    }
+  });
+
+  it("puts the extra tick into every accumulator, the repair rate included", () => {
+    // A dressed chopper against an undressed one on the identical world, so
+    // what is measured is the ratio and the walk is in both numbers.
+    const fell = (clothes: number): number => {
+      const sim = world();
+      colonist(sim, { clothes });
+      sim.world.treeMap[at(sim, 7, 6)] = 1;
+      sim.chopMap[at(sim, 7, 6)] = 1;
+      return until(sim, 400, () => sim.world.treeMap[at(sim, 7, 6)] === 0);
+    };
+    const ragged = fell(0);
+    const dressed = fell(CLOTHES_WEAR_TICKS);
+    expect(dressed).toBeGreaterThan(0);
+    expect(dressed).toBeLessThan(ragged);
+
+    // And the repair site, where a gated tick adds `REPAIR_HP_PER_SECOND`
+    // rather than 1: the extra tick doubles the whole increment, because the
+    // gate is per tick and never per point.
+    const sim = world();
+    const worker = colonist(sim, { clothes: CLOTHES_WEAR_TICKS });
+    let points = 0;
+    for (let t = 0; t < 400; t++) {
+      sim.tick = t;
+      points += workTicks(sim, worker) * REPAIR_HP_PER_SECOND;
+    }
+    expect(points).toBe(Math.round(400 * CLOTHED_FACTOR) * REPAIR_HP_PER_SECOND);
+  });
+
+  it("wears the clothes out and hands the tailor a customer back", () => {
+    const sim = world();
+    const c = colonist(sim, { clothes: 30 });
+    expect(clothed(c)).toBe(true);
+    // Worn always: the clock is not paused by anything, unlike hunger's, which
+    // a wanderer's `dest` gates.
+    for (let t = 0; t < 30; t++) advanceTick(sim);
+    expect(c.clothes).toBe(0);
+    expect(clothed(c)).toBe(false);
+    expect(workTicks(sim, c)).toBe(1);
+    // And it stops at zero rather than going negative — `clothes` is a count,
+    // and a negative would read as unclothed while still being a live number in
+    // every save from there on.
+    for (let t = 0; t < 20; t++) advanceTick(sim);
+    expect(c.clothes).toBe(0);
   });
 });

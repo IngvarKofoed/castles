@@ -232,7 +232,15 @@ describe("the scripted settling", () => {
     // before anybody may land. The assertions below are what say the number
     // moved for that and not for something quiet: the walk, the settle, the
     // second arrival and the cap are all unchanged in kind, only later.
-    expect(hashSim(settling())).toBe("2cecf74f");
+    //
+    // 2cecf74f → 3d64cb83 with the sheep chain (SAVE_VERSION 10,
+    // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape only**, and
+    // proved rather than argued: strip the two new colonist fields and the four
+    // new `limits` slots back out and this run hashes to 2cecf74f exactly. It could
+    // not be otherwise — no script here builds a Tailor, so no garment exists,
+    // so the composed `workTicks` pays every tick what the old boolean gate
+    // paid, and every assertion in this file is unchanged and still passes.
+    expect(hashSim(settling())).toBe("3d64cb83");
   });
 
   it("builds a House out of planks, which is what planks are for", () => {
@@ -311,7 +319,15 @@ describe("the scripted death en route", () => {
     // moved every timing by a few seconds and 20260912's orc now misses the
     // wanderer entirely (see `CAUGHT`). What is pinned is the same scenario,
     // re-found the same way.
-    expect(hashSim(caught())).toBe("3050f53e");
+    //
+    // 3050f53e → 78fd60d6 with the sheep chain (SAVE_VERSION 10,
+    // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape only**, and
+    // proved rather than argued: strip the two new colonist fields and the four
+    // new `limits` slots back out and this run hashes to 3050f53e exactly. It could
+    // not be otherwise — no script here builds a Tailor, so no garment exists,
+    // so the composed `workTicks` pays every tick what the old boolean gate
+    // paid, and every assertion in this file is unchanged and still passes.
+    expect(hashSim(caught())).toBe("78fd60d6");
   });
 
   it("loses the wanderer to an orc, and buries them like anyone", () => {

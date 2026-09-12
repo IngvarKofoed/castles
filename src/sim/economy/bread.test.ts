@@ -48,7 +48,7 @@ const SIZE = 256;
 const TICKS = 2400;
 
 /** The pinned hash of the run. Named so a move history can cite it. */
-const PINNED = "dacffdb6";
+const PINNED = "077aabf8";
 
 function trees(sim: Sim, count: number): number[] {
   const out: number[] = [];
@@ -187,6 +187,14 @@ describe("the scripted bread chain", () => {
     // A hash change here is a change to the food chain or to the meal loop. If
     // this fails, say in the changelog what moved and why — the assertions
     // below are what tell you whether it moved for a reason.
+    //
+    // dacffdb6 → PINNED with the sheep chain (SAVE_VERSION 10,
+    // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape only**, and
+    // proved rather than argued: strip the two new colonist fields and the four
+    // new `limits` slots back out and this run hashes to dacffdb6 exactly. It could
+    // not be otherwise — no script here builds a Tailor, so no garment exists,
+    // so the composed `workTicks` pays every tick what the old boolean gate
+    // paid, and every assertion in this file is unchanged and still passes.
     expect(hashSim(colony())).toBe(PINNED);
   });
 

@@ -96,7 +96,7 @@ function script(sim: Sim): Command[] {
 }
 
 /** The pinned hash of the run, named so the move history above can cite it. */
-const PINNED_V8 = "4e86c393";
+const PINNED_V10 = "88d00a73";
 
 const damage = (sim: Sim): number => [...sim.wallDamageMap].reduce((n, v) => n + v, 0);
 
@@ -174,14 +174,22 @@ describe("the scripted encounter", () => {
     // for the same reason v5 did: `limits` sits on `Sim`. Shape only — no
     // workshop, no ceiling, nothing here ever counts a plank.
     //
-    // fe31cb4d → PINNED_V8 with the bread economy (SAVE_VERSION 8,
+    // fe31cb4d → 4e86c393 with the bread economy (SAVE_VERSION 8,
     // docs/changelog/2026-09-08-bread-economy.md). Shape and behaviour: two
     // fields per colonist, three `limits` slots, fifteen loaves in the clearing
     // — and folk who walk off to eat once a game-day, which is what moved the
     // two wall placements in the script above. Every beat this file asserts is
     // unchanged: bitten hard, left standing, mended by labour, and somebody
     // does not come home.
-    expect(hashSim(final())).toBe(PINNED_V8);
+    //
+    // 4e86c393 → PINNED_V10 with the sheep chain (SAVE_VERSION 10,
+    // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape only**, and
+    // proved rather than argued: strip the two new colonist fields and the four
+    // new `limits` slots back out and this run hashes to 4e86c393 exactly. It could
+    // not be otherwise — no script here builds a Tailor, so no garment exists,
+    // so the composed `workTicks` pays every tick what the old boolean gate
+    // paid, and every assertion in this file is unchanged and still passes.
+    expect(hashSim(final())).toBe(PINNED_V10);
   });
 
   it("bites a standing palisade, and leaves it standing when its hours run out", () => {

@@ -426,20 +426,27 @@ function isOutputOf(b: Building, item: Item): boolean {
 /**
  * The nearest unreserved item of a type that `ok` accepts, by Manhattan
  * distance with ties broken by id. Exported alongside `sourceForSite` for the
- * meal errand, which asks the same question about bread that task generation
- * asks about logs.
+ * self-errands, which ask the same question about food and clothes that task
+ * generation asks about logs.
+ *
+ * `type` takes a **list** as well as a single good, for the meal errand's sake:
+ * a colonist eats the nearest free *food* of any kind, with no preference order
+ * between bread and cheese, and comparing per-type winners afterwards would
+ * break the id tie-break across the boundary between two equally near goods
+ * (docs/specs/2026-09-10-sheep-and-clothes.md).
  */
 export function nearestFreeItem(
   sim: Sim,
-  type: number,
+  type: number | readonly number[],
   x: number,
   y: number,
   ok: (sim: Sim, item: Item) => boolean,
 ): Item | null {
   let best: Item | null = null;
   let bestD = Infinity;
+  const wanted = (t: number): boolean => (typeof type === "number" ? t === type : type.includes(t));
   for (const item of sim.items) {
-    if (item.type !== type || !isFree(item) || !ok(sim, item)) continue;
+    if (!wanted(item.type) || !isFree(item) || !ok(sim, item)) continue;
     const at = itemTile(sim, item);
     if (!at) continue;
     const d = Math.abs(at[0] - x) + Math.abs(at[1] - y);

@@ -68,8 +68,9 @@ export const OVEN_TICKS = 5 * TICK_HZ;
 
 /**
  * Eating (docs/specs/2026-09-08-bread-economy.md). A colonist is due a meal
- * every `MEAL_TICKS` — one game-day — and walks to the nearest free loaf to
- * take it. From `HUNGRY_TICKS` since their last meal with none found they work
+ * every `MEAL_TICKS` — one game-day — and walks to the nearest free **food**
+ * (`FOODS` in `goods.ts`: bread or cheese, nearest wins) to take it. From
+ * `HUNGRY_TICKS` since their last meal with none found they work
  * and walk at `HUNGRY_FACTOR`, and **that is the entire penalty**: nobody
  * starves, nobody stops, nothing alerts (docs/CONCEPT.md — a supply failure
  * plateaus, it never spirals). Fleeing is exempt at full speed, because
@@ -88,6 +89,45 @@ export const HUNGRY_FACTOR = 0.6;
  * the player could possibly have acted.
  */
 export const PROVISION_BREAD = 3;
+
+/**
+ * The sheep chain and the game's first equipment
+ * (docs/specs/2026-09-10-sheep-and-clothes.md).
+ *
+ * A shepherd raises a wool every `WOOL_TICKS` out of nothing but their hours
+ * (the Farm's `per: 0` recipe, one chain over), the dairy turns one grain into
+ * one cheese, the weaver one wool into one cloth, the tailor one cloth into one
+ * garment. One tailor at 6 s a garment covers a colony of about fifteen —
+ * demand is roughly 1.5 a day — so the chain's real price is its four slots
+ * and the wool logistics, not the cadence.
+ */
+export const WOOL_TICKS = 6 * TICK_HZ;
+export const DAIRY_TICKS = 5 * TICK_HZ;
+export const WEAVE_TICKS = 4 * TICK_HZ;
+export const TAILOR_TICKS = 6 * TICK_HZ;
+
+/**
+ * Equipment: how long a garment lasts, and what wearing one is worth.
+ *
+ * `CLOTHES_WEAR_TICKS` counts **down** on `Colonist.clothes` every tick, worn
+ * — about ten game-days — and at zero the colonist is a tailor's customer
+ * again. That wear clock is what makes clothes an economy instead of a
+ * one-shot upgrade.
+ *
+ * `CLOTHED_FACTOR` is applied as a **cadence over whole ticks** exactly as
+ * `HUNGRY_FACTOR` is, at the same three work accumulators: its excess over 1
+ * is the rate at which a clothed worker gets an *extra* work tick, so 1.25
+ * means one extra every fourth. The two gates **compose**, and the composition
+ * is pinned rather than left to read two ways: the extra tick is granted only
+ * on a tick the hunger gate already lets through, so clothed is ×1.25, hungry
+ * ×0.6, and both together exactly ×0.75 (4 and 5 are coprime, so the
+ * intersection is 3 ticks in 20 at every phase offset). Granting it
+ * unconditionally would ship ×0.85 while still matching the words.
+ *
+ * Walk speed is untouched: that is **shoes**, a later rung and not designed.
+ */
+export const CLOTHES_WEAR_TICKS = 10 * DAY_TICKS;
+export const CLOTHED_FACTOR = 1.25;
 
 /**
  * Terraforming: 3 s of pool labour per tile per height step, and **no

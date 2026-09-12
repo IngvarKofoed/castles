@@ -96,6 +96,14 @@ export const BUFFER_Y: Record<BuildingKindValue, number> = {
   // A Watchtower holds nothing at all — its output is knowledge, not goods —
   // so it takes the deck like a House and the table stays total.
   [BuildingKind.Watchtower]: 0.16 * BH,
+  // The Pasture is the Farm's case: fleece sits on the grazed ground inside the
+  // fence, not on a roof it does not have.
+  [BuildingKind.Pasture]: 0.26 * BH,
+  // The cloth chain's three sheds share the timber-workshop model (see
+  // `buildingBoxes`), so they share its roofline.
+  [BuildingKind.Dairy]: 2.38 * BH,
+  [BuildingKind.Weaver]: 2.38 * BH,
+  [BuildingKind.Tailor]: 2.38 * BH,
 };
 
 /** The deck a stockpile's pile and a blueprint's materials stack on. */
@@ -192,6 +200,16 @@ export function buildingBoxes(b: Building, h: number, out: Box[]): void {
     watchtower(cx, g, cz, out);
     return;
   }
+  if (b.kind === BuildingKind.Pasture) {
+    pasture(cx, g, cz, b, out);
+    return;
+  }
+  // The Dairy, the Weaver and the Tailor fall through to the timber workshop,
+  // exactly as the Mill shares it with the Mason and the Sawmill: three 2×2
+  // sheds with the same carpentry and the same plank cost, and a distinct prop
+  // per workshop is polish this step did not buy
+  // (docs/changelog/2026-09-08-bread-economy.md records the same trade for the
+  // Mill). What tells them apart is the panel and the goods on the roof.
   sawmill(cx, g, cz, b, out);
 }
 
@@ -289,6 +307,58 @@ function farm(cx: number, g: number, cz: number, b: Building, out: Box[]): void 
   const hz = b.y + b.h - 0.75;
   out.push(box(hx, g, hz, 1.0, 1.0 * BH, 1.0, PROP.timber));
   out.push(box(hx, g + 1.0 * BH, hz, 1.16, 0.26 * BH, 1.16, PROP.clay, 0, 0.94));
+  out.push(box(hx, g, hz + 0.46, 0.34, 0.7 * BH, 0.08, PROP.door));
+}
+
+/**
+ * Pasture: grazed turf inside a rail fence, with a few sheep standing on it and
+ * the shepherd's hut at the south edge where the work tile is.
+ *
+ * The Farm's grammar with the furrows taken out — flat for the same reason (a
+ * 3×3 with a body and a roof would loom over the colony) and fenced for the
+ * same reason (it is what keeps a flat prop from reading as a stain on the
+ * grass), but a proper rail fence rather than the Farm's two low bars, because
+ * a pasture's whole job is to hold something in.
+ *
+ * **The sheep are static props, never entities.** They are placed off the
+ * footprint's own coordinates and baked into the chunk with the fence: the
+ * mockup's wander machine stays retired, and renderer-owned animation state is
+ * a door this step does not open (docs/specs/2026-09-10-sheep-and-clothes.md).
+ * Nothing in the sim knows they exist.
+ */
+function pasture(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
+  out.push(box(cx, g, cz, b.w - 0.1, 0.1 * BH, b.h - 0.1, PROP.crop, 0, 0.9));
+  // A post at each corner and one midway along each side, with two rails
+  // between them — a fence that reads as a fence at map distance.
+  for (const [ox, oz] of corners(b)) {
+    out.push(box(ox, g, oz, 0.13, 0.85 * BH, 0.13, PROP.stake));
+  }
+  for (const h of [0.34, 0.66]) {
+    out.push(box(cx, g + h * BH, b.y + 0.18, b.w - 0.36, 0.08 * BH, 0.08, PROP.timber, 0, 0.92));
+    out.push(box(cx, g + h * BH, b.y + b.h - 0.18, b.w - 0.36, 0.08 * BH, 0.08, PROP.timber, 0, 0.92));
+    out.push(box(b.x + 0.18, g + h * BH, cz, 0.08, 0.08 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
+    out.push(box(b.x + b.w - 0.18, g + h * BH, cz, 0.08, 0.08 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
+  }
+  // Three sheep, heads down, at fixed spots inside the rails and clear of the
+  // hut's corner. Fleece body, dark face — the same two-box grammar the
+  // colonists and the monsters are built from.
+  const flock: [number, number, number][] = [
+    [0.62, 0.55, 0.5],
+    [1.55, 1.35, -0.7],
+    [0.75, 1.9, 0.2],
+  ];
+  for (const [ox, oz, rot] of flock) {
+    const sx = b.x + ox;
+    const sz = b.y + oz;
+    out.push(box(sx, g + 0.1 * BH, sz, 0.5, 0.42 * BH, 0.34, PROP.fleece, rot));
+    out.push(box(sx, g + 0.1 * BH, sz + 0.24, 0.2, 0.24 * BH, 0.18, PROP.door, rot, 0.9));
+  }
+  // The hut, in the south-east corner beside the work tile: the Farm's, one
+  // shade lighter on the roof so the two 3×3 plots are tellable apart.
+  const hx = b.x + b.w - 0.75;
+  const hz = b.y + b.h - 0.75;
+  out.push(box(hx, g, hz, 1.0, 1.0 * BH, 1.0, PROP.timber));
+  out.push(box(hx, g + 1.0 * BH, hz, 1.16, 0.26 * BH, 1.16, PROP.linen, 0, 0.94));
   out.push(box(hx, g, hz + 0.46, 0.34, 0.7 * BH, 0.08, PROP.door));
 }
 

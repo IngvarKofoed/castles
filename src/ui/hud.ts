@@ -111,14 +111,24 @@ const GOOD_VAR: Record<ItemTypeValue, string> = {
   [ItemType.Grain]: "var(--grain)",
   [ItemType.Flour]: "var(--flour)",
   [ItemType.Bread]: "var(--bread)",
+  [ItemType.Wool]: "var(--wool)",
+  [ItemType.Cloth]: "var(--cloth)",
+  [ItemType.Clothes]: "var(--clothes)",
+  [ItemType.Cheese]: "var(--cheese)",
 };
 
 /**
  * The Stores panel's groups, in the order it emits them — **fixed here rather
  * than read off the enum**, because `ItemType` is append-only and a future wood
- * good would be appended after Bread.
+ * good would be appended after Bread. Cheese is exactly that case: it is the
+ * newest good in the enum and it files under Food, at its foot — between Bread
+ * and Wool.
+ *
+ * Cloth goes **after** food: the chain arrived after the bread chain, it is the
+ * one group whose goods are not consumed by a building, and reading the panel
+ * top to bottom then tells the colony's own story in the order it was built.
  */
-export const GROUP_ORDER = ["wood", "stone", "food"] as const;
+export const GROUP_ORDER = ["wood", "stone", "food", "cloth"] as const;
 type GoodGroup = (typeof GROUP_ORDER)[number];
 
 /**
@@ -140,9 +150,20 @@ export const GOOD_GROUP: Record<ItemTypeValue, GoodGroup> = {
   [ItemType.Grain]: "food",
   [ItemType.Flour]: "food",
   [ItemType.Bread]: "food",
+  [ItemType.Wool]: "cloth",
+  [ItemType.Cloth]: "cloth",
+  [ItemType.Clothes]: "cloth",
+  // Cheese is a meal, so it files with the food it is: the group is what a
+  // colonist does with the good, never which building made it.
+  [ItemType.Cheese]: "food",
 };
 
-const GROUP_LABEL: Record<GoodGroup, string> = { wood: "Wood", stone: "Stone", food: "Food" };
+const GROUP_LABEL: Record<GoodGroup, string> = {
+  wood: "Wood",
+  stone: "Stone",
+  food: "Food",
+  cloth: "Cloth",
+};
 
 /** What the rail's caption strip is naming, and whether it may be gold. */
 export interface RailCaption {
@@ -169,12 +190,20 @@ export function railCaption(hovered: string | null, focused: string | null, acti
   return null;
 }
 
+/** What `millNote` needs off an `Inspection` — narrowed so a test can hand it
+ *  a literal, as `watchNote`'s signature already allows. */
+type MillNote = Pick<
+  Inspection,
+  "staffed" | "worker" | "chain" | "stall" | "colonyCount" | "outputType"
+>;
+
 /** How the inspector names where a slot worker is. */
-const WORKER_LABEL: Record<"none" | "walking" | "inside" | "eating", string> = {
+const WORKER_LABEL: Record<Inspection["worker"], string> = {
   none: "none",
   walking: "on the way",
   inside: "inside",
   eating: "eating",
+  dressing: "dressing",
 };
 
 const ICONS: Record<string, string> = {
@@ -203,6 +232,14 @@ const ICONS: Record<string, string> = {
   // Watchtower: battered legs under a railed platform with a cap over it —
   // the prop's own silhouette, which is all a 1×1 has to be recognised by.
   watchtower: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 15 L9 7"/><path d="M15 15 L13 7"/><path d="M8 11 h6"/><path d="M6 7 h10"/><path d="M6 5 h10"/><path d="M8 5 V3 h6 v2"/></svg>`,
+  // The sheep chain, four flat line marks in the same hand as the rest.
+  // Pasture: a fenced run with a sheep standing in it. Dairy: a churn under a
+  // wheel of cheese. Weaver: a warp on a loom frame. Tailor: shears over a
+  // folded bolt.
+  pasture: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5 h16"/><path d="M6 3 v4"/><path d="M16 3 v4"/><path d="M3 15 h16"/><path d="M8 13 q0 -3 3 -3 q3 0 3 3 Z"/><path d="M14 11 l2 -1"/><path d="M9 13 v2"/><path d="M13 13 v2"/></svg>`,
+  dairy: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 L7 7 h5 l1 8 Z"/><path d="M7 4 h5"/><path d="M9 4 v3"/><path d="M15 15 a3 3 0 0 1 3 -3 v3 Z"/></svg>`,
+  weaver: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="3" width="14" height="12"/><path d="M7 3 v12"/><path d="M11 3 v12"/><path d="M15 3 v12"/><path d="M4 9 h14"/></svg>`,
+  tailor: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="10" width="16" height="5"/><path d="M3 12.5 h16"/><path d="M7 8 L13 3"/><path d="M13 8 L7 3"/><circle cx="6" cy="8.6" r="1.2"/><circle cx="14" cy="8.6" r="1.2"/></svg>`,
   // Stone wall: coursed blocks. Stone gate: the same arch, squared.
   stonewall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="6" width="16" height="4"/><rect x="3" y="10" width="16" height="4"/><path d="M8 6 v4"/><path d="M14 6 v4"/><path d="M5 10 v4"/><path d="M11 10 v4"/><path d="M17 10 v4"/></svg>`,
   stonegate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4" width="16" height="3"/><path d="M5 15 V7 h3 v8"/><path d="M17 15 V7 h-3 v8"/></svg>`,
@@ -568,12 +605,16 @@ export class Hud {
    * The rail, in three labelled sections — **Orders** (tell people to do
    * something to what is already there), **Build** (put a building down),
    * **Walls** (draw a line). Eleven tools in one unbroken column stopped being
-   * readable — sixteen since the bread chain and the Watchtower — and the
-   * styleguide's rail anatomy already allowed section heads, so this is that
-   * allowance spent.
+   * readable — twenty since the bread chain, the Watchtower and the sheep
+   * chain — and the styleguide's rail anatomy already allowed section heads, so
+   * this is that allowance spent.
    *
    * Each section is a **two-column grid of icon-only buttons**, which is what
-   * fits all sixteen on a 768px-tall window without a scrollbar. The words the
+   * put all sixteen on a 768px-tall window without a scrollbar. **Twenty no
+   * longer fit**: the sheep chain takes the rail past the height the column has
+   * at 768px, and the four rows over budget scroll — gracefully, inside the
+   * rail, never over Stores. Stated rather than discovered
+   * (docs/specs/2026-09-10-sheep-and-clothes.md). The words the
    * buttons gave up live in their accessible names and in the caption strip at
    * the foot of the rail.
    *
@@ -611,6 +652,16 @@ export class Hud {
           // The eighth cell, which the seven above left empty: the rail's
           // height does not move for this one.
           BuildingKind.Watchtower,
+          // And the sheep chain's four, which take Build from four grid rows to
+          // six — the change that moves the rail's scroll-free floor from ~750px
+          // of window height to ~900px. At 1280x720 and at 768px of height the
+          // tool sections scroll inside the rail, which is what the left
+          // column's flex split was built for
+          // (docs/specs/2026-09-10-sheep-and-clothes.md).
+          BuildingKind.Pasture,
+          BuildingKind.Dairy,
+          BuildingKind.Weaver,
+          BuildingKind.Tailor,
         ] as BuildingKindValue[]).map((kind) => {
           const def = BUILDING_DEFS[kind];
           // The cost names the def's own material: the House costs planks, and
@@ -644,7 +695,7 @@ export class Hud {
   }
 
   /** One section's tools, two to a row. An odd count leaves the last cell
-   *  empty — Build's eight fill four rows exactly. */
+   *  empty — Build's twelve fill six rows exactly. */
   private railGrid(tools: readonly HTMLElement[]): HTMLElement {
     const grid = el("div", { class: "rail-grid" });
     grid.append(...tools);
@@ -657,7 +708,7 @@ export class Hud {
    * The name and cost the button used to print live in its `aria-label` and
    * `title` as "Stone wall — 1 block", so the tooltip serves the pointer and
    * the accessible name serves the screen reader, and in the caption strip,
-   * which is what serves the eye — including a keyboard user tabbing sixteen
+   * which is what serves the eye — including a keyboard user tabbing twenty
    * unlabelled icons.
    */
   private toolButton(label: string, tool: Tool, cost: string): HTMLButtonElement {
@@ -869,7 +920,7 @@ export class Hud {
       // be told once that this building *is* the population cap.
       nodes.push(rows([["Beds", String(b.beds)]]));
       nodes.push(note(`raises the cap by ${b.beds}`));
-      // And when the *bread* gate is what holds arrivals, this is where the
+      // And when the *food* gate is what holds arrivals, this is where the
       // colony says so. Load-bearing rather than polish: the gate is silent,
       // player-caused, and can stand for game-days.
       if (b.tableShort) nodes.push(note("no one will come while the table is short"));
@@ -1074,12 +1125,16 @@ function wallCost(material: WallMaterial): string {
  * goods are named from the chain, so the mason waits for *rock* rather than
  * inheriting the sawmill's words.
  */
-function millNote(b: NonNullable<ReturnType<typeof inspect>>): string {
+export function millNote(b: MillNote): string {
   if (!b.staffed) return "no one is working here";
-  // A worker away at a meal, said plainly: the row above already says `eating`,
-  // and a note claiming "working" while nobody is in there would be the panel
-  // lying about the one thing it exists to explain.
+  // A worker away on a self-errand, said plainly: the row above already says
+  // `eating` or `dressing`, and a note claiming "working" while nobody is in
+  // there would be the panel lying about the one thing it exists to explain.
+  // Both errands need their own line — falling through to the stall ladder
+  // would report a stall that is not happening, and falling through past it
+  // says "working" of an empty workshop.
   if (b.worker === "eating") return "gone to eat — back shortly";
+  if (b.worker === "dressing") return "gone for clothes — back shortly";
   const chainOf = b.chain;
   if (!chainOf) return "";
   // The ceiling holding the mill is the player's own setting, said in the

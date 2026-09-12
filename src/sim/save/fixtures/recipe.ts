@@ -413,6 +413,78 @@ export function v9Script(sim: Sim): Command[] {
 }
 
 /**
+ * v10: the sheep chain and the game's first equipment, on **its own seed** —
+ * 20261126, whose woods are seven tiles from the map centre and whose nearest
+ * den is forty-eight. Both numbers are load-bearing and this time they pull the
+ * same way: the whole cloth chain is priced in *planks*, so the log chain has to
+ * run first and then keep running (sixteen planks for four buildings), and a
+ * 4250-tick recipe on a seed with a near den loses the colony it is meant to
+ * freeze long before the tailor opens.
+ *
+ * What it carries, none of which the format has ever held: **all seven
+ * buildings standing** — Stockpile, Sawmill, Farm, Pasture, Dairy, Weaver,
+ * Tailor — **all four new goods in the colony at once** (wool, cloth, clothes
+ * and cheese), **three colonists wearing clothes on three different wear
+ * clocks**, and **two more caught mid-fitting** with routes to a garment in
+ * flight, which is the id-order race for the tailor's output resolving on
+ * camera. The dressing errand is the state a save could most plausibly lose,
+ * exactly as the meal errand was at v8.
+ *
+ * **The staffing schedule is the recipe**, and it is what five pairs of hands
+ * against seven buildings actually looks like: never more than three slots at
+ * once, so two haulers always remain to carry between them. The Dairy is staffed
+ * early and deliberately — cheese lands before the opening provisions run out,
+ * so the colony is fed through the long middle instead of crawling at
+ * `HUNGRY_FACTOR`, which is the labour trap being played rather than described.
+ */
+export const FIXTURE_SEED_V10 = 20261126;
+export const V10_TICKS = 4250;
+
+export function v10Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 44) }];
+    case 5:
+      return chainPlace(sim, 0 /* Stockpile */);
+    case 150:
+      return chainPlace(sim, 1 /* Sawmill */);
+    // The Farm is priced in logs, so it can go up before a single plank exists.
+    case 300:
+      return chainPlace(sim, 4 /* Farm */);
+    case 400:
+      return staff(sim, 1 /* Sawmill */);
+    case 600:
+      return staff(sim, 4 /* Farm */);
+    // The four plank-priced buildings, spaced so each is fed rather than
+    // standing as a frame — the stone tier's lesson, applied to timber.
+    case 800:
+      return chainPlace(sim, 9 /* Dairy */);
+    case 1100:
+      return chainPlace(sim, 8 /* Pasture */);
+    case 1400:
+      return chainPlace(sim, 10 /* Weaver */);
+    case 1700:
+      return chainPlace(sim, 11 /* Tailor */);
+    // Cheese before the provisions run out, off the grain the farm has banked.
+    case 1900:
+      return staff(sim, 9 /* Dairy */);
+    // The planks are cut; the shepherd takes the sawyer's place.
+    case 2600:
+      return [...unstaff(sim, 1 /* Sawmill */), ...staff(sim, 8 /* Pasture */)];
+    case 3000:
+      return [...unstaff(sim, 4 /* Farm */), ...staff(sim, 10 /* Weaver */)];
+    case 3400:
+      return [...unstaff(sim, 10 /* Weaver */), ...staff(sim, 11 /* Tailor */)];
+    // And the weaver back on at the end, off the banked cheese, so the file is
+    // caught with the whole chain in flight rather than with its middle idle.
+    case 4000:
+      return [...unstaff(sim, 9 /* Dairy */), ...staff(sim, 10 /* Weaver */)];
+    default:
+      return [];
+  }
+}
+
+/**
  * Place a chain building at the nearest site that fits, keeping five tiles
  * clear of everything already standing.
  *
@@ -420,7 +492,7 @@ export function v9Script(sim: Sim): Command[] {
  * are frozen against: those files were written by whatever it returned then,
  * and a widened clearance would move where they put things.
  */
-function chainPlace(sim: Sim, kind: 0 | 2 | 4 | 5 | 6): Command[] {
+function chainPlace(sim: Sim, kind: 0 | 1 | 2 | 4 | 5 | 6 | 8 | 9 | 10 | 11): Command[] {
   const size = sim.world.size;
   const centre = Math.floor(size / 2);
   for (let r = 2; r < 30; r++) {
@@ -483,6 +555,13 @@ export function replay(
 function staff(sim: Sim, kind: number): Command[] {
   const b = sim.buildings.find((x) => x.kind === kind);
   return b ? [{ kind: "staff", building: b.id }] : [];
+}
+
+/** Its mirror. The v10 recipe hands one slot to the next as five pairs of hands
+ *  work seven buildings, so it unstaffs as often as it staffs. */
+function unstaff(sim: Sim, kind: number): Command[] {
+  const b = sim.buildings.find((x) => x.kind === kind);
+  return b ? [{ kind: "unstaff", building: b.id }] : [];
 }
 
 /** The first placeable site for a building kind, searched outward from the

@@ -18,6 +18,7 @@ import {
   spawnItem,
   storeItem,
 } from "../items";
+import { FOODS, isFood } from "../goods";
 import { canMine, erodesTo, keepsTerraforming, setHeight } from "../ground";
 import {
   ISLAND_WIDE,
@@ -54,6 +55,7 @@ import { clearGrave } from "../threats/graves";
 import {
   BUILD_TICKS,
   CHOP_TICKS,
+  CLOTHES_WEAR_TICKS,
   MINE_ROCK,
   MINE_TICKS,
   RAZE_TICKS,
@@ -78,7 +80,7 @@ import {
 import { markEnclosureStale } from "../walls/enclosure";
 import { markChunkDirty, tileIndex } from "../world/world";
 import { abandonTask, finishTask, nearestFreeItem, releaseTask, sourceForSite } from "./tasks";
-import { mealDue, walkBudget, worksThisTick } from "./hunger";
+import { mealDue, walkBudget, workTicks } from "./hunger";
 
 /**
  * Colonist behaviour: claim → reserve → walk → act → release.
@@ -97,6 +99,11 @@ export function stepColonists(sim: Sim): void {
     // neither eats nor hungers: their clock starts at settling, which is what
     // this one condition buys (docs/specs/2026-09-08-bread-economy.md).
     if (c.dest < 0) c.hunger++;
+    // Clothes wear out **whatever the colonist is doing** — working, walking,
+    // eating or running — so the clock is not gated the way hunger is. It needs
+    // no wanderer branch either: an arrival lands unclothed and cannot dress
+    // until they settle, so this is already 0 for every one of them.
+    if (c.clothes > 0) c.clothes--;
     // The flee check runs *before* task work and overrides everything, slot
     // workers included: a pair of hands is the game's only scarce currency and
     // no errand is worth one. `threatNear` answers null for anyone on inside
@@ -113,10 +120,14 @@ export function stepColonists(sim: Sim): void {
       stepWanderer(sim, occ, c);
       continue;
     }
-    // Priority is flee > meal > work. A meal is a self-errand rather than a
-    // task, so it sits here instead of in the queue: nobody else can claim
-    // somebody's lunch, and it outranks the whole priority order.
+    // Priority is **flee > meal > dress > work**. Both errands are self-errands
+    // rather than tasks, so they sit here instead of in the queue: nobody else
+    // can claim somebody's lunch or their fitting, and both outrank the whole
+    // priority order. The meal leads because hunger is the sharper clock —
+    // somebody due both eats first, and a meal coming due mid-fitting takes the
+    // errand over (docs/specs/2026-09-10-sheep-and-clothes.md).
     if (stepEater(sim, occ, c)) continue;
+    if (stepDresser(sim, occ, c)) continue;
     if (c.slot >= 0) stepSlotWorker(sim, occ, c);
     else stepPoolWorker(sim, occ, c);
   }
@@ -138,10 +149,12 @@ export function stepColonists(sim: Sim): void {
  */
 function flee(sim: Sim, occ: Occupancy, c: Colonist, from: Monster): void {
   abandonForFlight(sim, occ, c);
-  // The meal errand is dropped with everything else — safety first, and the
-  // meal re-seeks once they are safe. Their hunger is untouched: running from
-  // an orc is not eating.
+  // Both self-errands are dropped with everything else — safety first, and each
+  // re-seeks once they are safe. Named one at a time rather than inferred:
+  // hunger and wear are untouched, because running from an orc is neither
+  // eating nor getting dressed.
   c.eating = 0;
+  c.dressing = 0;
   // Re-plan unless they are *already* walking somewhere safe. Testing the route
   // rather than the task is what catches a slot worker or a step-aside walker:
   // those carry a live route with no task behind it, so dropping the task
@@ -165,11 +178,15 @@ function flee(sim: Sim, occ: Occupancy, c: Colonist, from: Monster): void {
  * belonged to the meal, which is the caller's cue to skip work entirely.
  *
  * **A meal is physical.** There is no abstract decrement: a colonist due one
- * walks to the nearest *free* loaf by the same sourcing rule a construction
+ * walks to the nearest *free* **food** by the same sourcing rule a construction
  * site uses — ground, stockpile, or a workshop's own output buffer — and takes
- * it off the map. "Free" means unreserved, and that quietly makes **stockpiles
+ * it off the map. Any of `FOODS` will do and **nearest wins**, with no
+ * preference between a loaf and a cheese: two roads into the larder, not a
+ * staple and a fallback (docs/specs/2026-09-10-sheep-and-clothes.md).
+ *
+ * "Free" means unreserved, and that quietly makes **stockpiles
  * the canteen**: `generateHaulToStore` reserves every loose loaf for tidying
- * before anybody gets hungry, so ground bread and the oven's buffer feed
+ * before anybody gets hungry, so ground food and the oven's buffer feed
  * people only while no stockpile wants them. An eater never bypasses a
  * reservation — an eaten reserved loaf would strand its haul task and a unit of
  * the destination's `reservedIncoming` for good.
@@ -203,11 +220,11 @@ function stepEater(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   // returned to the pool by `stepSlotWorker`; one mid-batch finishes it.
   if (c.slot >= 0 ? !b || b.millProgress >= 0 : c.task >= 0) return false;
 
-  const loaf = nearestFreeItem(sim, ItemType.Bread, Math.floor(c.x), Math.floor(c.y), sourceForSite);
+  const loaf = nearestFreeItem(sim, FOODS, Math.floor(c.x), Math.floor(c.y), sourceForSite);
   // Nothing free to eat anywhere: they work on, slowed once past
   // `HUNGRY_TICKS`, and look again next tick. A scan of the items array, with
-  // no route planned and no PRNG touched — which is what makes a breadless
-  // colony merely slow rather than expensive.
+  // no route planned and no PRNG touched — which is what makes an empty larder
+  // merely slow rather than expensive.
   if (!loaf) return false;
   if (eatHere(sim, c)) return true;
 
@@ -218,38 +235,50 @@ function stepEater(sim: Sim, occ: Occupancy, c: Colonist): boolean {
     // workshop never loses a moment — a slot worker must not pop out of the
     // building for a loaf they cannot get to.
     leaveBuilding(sim, c, b);
-    const route = mealRoute(sim, occ, c, loaf);
+    const route = errandRoute(sim, occ, c, loaf);
     if (!route) {
       enterBuilding(c, b);
       return false;
     }
     return startMeal(sim, occ, c, route);
   }
-  const route = mealRoute(sim, occ, c, loaf);
+  const route = errandRoute(sim, occ, c, loaf);
   if (!route) return false;
   return startMeal(sim, occ, c, route);
 }
 
-/** Take the errand and set off. */
+/**
+ * Take the errand and set off.
+ *
+ * **The dress errand is dropped here, by name.** A fitting is not a stint, so a
+ * meal coming due mid-walk-to-the-tailor simply takes the colonist over — and
+ * clearing the flag rather than leaving it set beside `eating` is what keeps
+ * "at most one errand in hand" true, so the panel's worker row and the ribbon's
+ * idle count never have to pick between two. The fitting self-heals: `clothes`
+ * is still 0 after lunch, so the seek runs again next tick
+ * (docs/specs/2026-09-10-sheep-and-clothes.md).
+ */
 function startMeal(sim: Sim, occ: Occupancy, c: Colonist, route: number[]): boolean {
   c.eating = 1;
+  c.dressing = 0;
   c.path = route;
   c.step = 0;
   if (route.length) walk(sim, occ, c);
   return true;
 }
 
-/** Where a loaf is walked to: onto its tile if it is lying on the ground,
- *  beside the footprint of whatever holds it if it is stored. */
-function mealRoute(sim: Sim, occ: Occupancy, c: Colonist, loaf: Item): number[] | null {
-  const goals = itemGoal(sim, occ, loaf);
+/** Where a self-errand's item is walked to: onto its tile if it is lying on the
+ *  ground, beside the footprint of whatever holds it if it is stored. Shared by
+ *  the meal and the fitting, which walk to their item by the same rule. */
+function errandRoute(sim: Sim, occ: Occupancy, c: Colonist, item: Item): number[] | null {
+  const goals = itemGoal(sim, occ, item);
   if (!goals) return null;
   return findPath(sim, occ, Math.floor(c.x), Math.floor(c.y), goals);
 }
 
 /**
  * The arrival rule, pinned because a save taken mid-meal resumes through it:
- * with the route exhausted, eat the **lowest-id free loaf** on the colonist's
+ * with the route exhausted, eat the **lowest-id free food** on the colonist's
  * own tile or one beside it, or stored in a building whose footprint they are
  * standing on or beside. Nothing there, and the errand is dropped and re-sought.
  *
@@ -257,7 +286,9 @@ function mealRoute(sim: Sim, occ: Occupancy, c: Colonist, loaf: Item): number[] 
  * thing here as it does everywhere else. The source rule is asked again on
  * arrival rather than trusted from the seek: several ticks have passed, and a
  * loaf that has since been reserved, eaten or shut inside a blueprint is not a
- * meal.
+ * meal. Whichever food is in reach is the meal — a colonist who set off for a
+ * loaf and finds a cheese beside them eats the cheese, which is the same
+ * no-preference rule the seek uses.
  */
 function eatHere(sim: Sim, c: Colonist): boolean {
   const cx = Math.floor(c.x);
@@ -265,12 +296,118 @@ function eatHere(sim: Sim, c: Colonist): boolean {
   for (const item of sim.items) {
     // In id order, which is array order: ids are minted upward and never
     // reused, so the first match *is* the lowest.
-    if (item.type !== ItemType.Bread || !isFree(item)) continue;
+    if (!isFood(item.type) || !isFree(item)) continue;
     if (!sourceForSite(sim, item)) continue;
     if (!withinReach(sim, item, cx, cy)) continue;
     removeItem(sim, item.id);
     c.hunger = 0;
     c.eating = 0;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The dressing errand: **the meal loop applied to a slower clock**, and the
+ * game's first piece of equipment (docs/specs/2026-09-10-sheep-and-clothes.md).
+ * Returns true when this tick belonged to the fitting, exactly as `stepEater`
+ * does.
+ *
+ * Everything about the shape is inherited rather than re-decided, because the
+ * bread step already pinned it: the nearest *free* garment by `sourceForSite`
+ * with ties by id, a per-tick re-seek with no route planned when nothing is
+ * free, no item reservation (so two colonists may set off for the same garment
+ * and the slower one re-seeks), the same arrival rule, a stint in hand finished
+ * first, and a flee that drops the errand. Where the meal loop's spec pinned a
+ * rule this one obeys it rather than restating it.
+ *
+ * Two things are its own:
+ *
+ * - **Donning consumes the item.** There is no worn-item entity — that would
+ *   double every item consumer's location model for a read the player never
+ *   does — so the garment comes off the map and `clothes` carries the rest.
+ * - **Unclothed is the default and permanent state**, which is a cost the meal
+ *   loop never paid: this scan runs for every settled colonist from tick 0 in a
+ *   colony that never builds a tailor. It is O(items) with no PRNG and no route
+ *   planned when nothing is free — the same price a breadless colony pays for
+ *   its meal scan, and accepted at this scale for the same reason.
+ */
+function stepDresser(sim: Sim, occ: Occupancy, c: Colonist): boolean {
+  if (c.dressing) {
+    if (c.path.length > c.step) {
+      walk(sim, occ, c);
+      return true;
+    }
+    if (dressHere(sim, c)) return true;
+    // Route exhausted with nothing to put on: the garment moved, somebody else
+    // took it, or a meal clobbered the route. Drop the errand and re-seek
+    // below — which is what makes every interruption path correct without
+    // anything else in the game having to clear this flag.
+    c.dressing = 0;
+  }
+  // Dressing-eligible: settled (guaranteed by the wanderer branch above),
+  // wearing nothing, and not already at it.
+  if (c.clothes > 0) return false;
+  const b = c.slot >= 0 ? findBuilding(sim, c.slot) : null;
+  // The meal loop's stint rule verbatim: a slot worker whose building has gone
+  // is being returned to the pool by `stepSlotWorker`, and one mid-batch
+  // finishes it.
+  if (c.slot >= 0 ? !b || b.millProgress >= 0 : c.task >= 0) return false;
+
+  const garment = nearestFreeItem(sim, ItemType.Clothes, Math.floor(c.x), Math.floor(c.y), sourceForSite);
+  // Nothing free anywhere, which is the common case and has to be the cheap
+  // one: no route, no draw, look again next tick.
+  if (!garment) return false;
+  if (dressHere(sim, c)) return true;
+
+  if (c.inside && b) {
+    // Out through the ordinary door, then plan from where they are actually
+    // standing — and straight back in on the same tick if the garment turns out
+    // to be unreachable, so the panel never blinks and the workshop never loses
+    // a moment. The meal loop's rule, for its reason.
+    leaveBuilding(sim, c, b);
+    const route = errandRoute(sim, occ, c, garment);
+    if (!route) {
+      enterBuilding(c, b);
+      return false;
+    }
+    return startDress(sim, occ, c, route);
+  }
+  const route = errandRoute(sim, occ, c, garment);
+  if (!route) return false;
+  return startDress(sim, occ, c, route);
+}
+
+/** Take the errand and set off. */
+function startDress(sim: Sim, occ: Occupancy, c: Colonist, route: number[]): boolean {
+  c.dressing = 1;
+  c.path = route;
+  c.step = 0;
+  if (route.length) walk(sim, occ, c);
+  return true;
+}
+
+/**
+ * The arrival rule, the meal's verbatim: with the route exhausted, put on the
+ * **lowest-id free garment** on the colonist's own tile or one beside it, or
+ * stored in a building whose footprint they are standing on or beside.
+ *
+ * The first garment out of a tailor draws every unclothed colonist at once, and
+ * this is where that resolves — id order wins and the losers re-seek, which is
+ * the provision pile's precedent applied to a queue at the fitting room.
+ */
+function dressHere(sim: Sim, c: Colonist): boolean {
+  const cx = Math.floor(c.x);
+  const cy = Math.floor(c.y);
+  for (const item of sim.items) {
+    if (item.type !== ItemType.Clothes || !isFree(item)) continue;
+    if (!sourceForSite(sim, item)) continue;
+    if (!withinReach(sim, item, cx, cy)) continue;
+    removeItem(sim, item.id);
+    // The garment leaves the map: no worn-item entity exists, and `clothes` is
+    // the whole of what is left behind.
+    c.clothes = CLOTHES_WEAR_TICKS;
+    c.dressing = 0;
     return true;
   }
   return false;
@@ -674,8 +811,10 @@ function actChop(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  if (!worksThisTick(sim, c)) return;
-  if (++c.work < CHOP_TICKS) return;
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  c.work += paid;
+  if (c.work < CHOP_TICKS) return;
 
   sim.world.treeMap[i] = 0;
   sim.chopMap[i] = 0;
@@ -712,8 +851,10 @@ function actMine(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  if (!worksThisTick(sim, c)) return;
-  if (++c.work < MINE_TICKS) return;
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  c.work += paid;
+  if (c.work < MINE_TICKS) return;
 
   const height = erodesTo(sim, task.x, task.y);
   if (height === null) {
@@ -763,8 +904,10 @@ function actTerraform(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  if (!worksThisTick(sim, c)) return;
-  if (++c.work < TERRAFORM_TICKS) return;
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  c.work += paid;
+  if (c.work < TERRAFORM_TICKS) return;
 
   // The ground waits for the tile to actually clear: the eviction hands out a
   // route, and a route is walked on the next tick, so moving the height now is
@@ -791,10 +934,11 @@ function actBuild(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, b.x + (b.w - 1) / 2, b.y + (b.h - 1) / 2);
-  // A hungry builder builds slower: the progress lives on the site, but the
-  // hours are the colonist's.
-  if (!worksThisTick(sim, c)) return;
-  b.progress++;
+  // A hungry builder builds slower and a clothed one faster: the progress lives
+  // on the site, but the hours are the colonist's.
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  b.progress += paid;
   if (b.progress < BUILD_TICKS) return;
 
   b.state = BuildingState.Active;
@@ -860,8 +1004,10 @@ function actBuildWall(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  if (!worksThisTick(sim, c)) return;
-  if (++c.work < wallBuildTicks(sim.wallMap[i])) return;
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  c.work += paid;
+  if (c.work < wallBuildTicks(sim.wallMap[i])) return;
 
   // The segment goes up *first*, so the sweep and the eviction below see the
   // tile as the obstacle it has just become.
@@ -894,8 +1040,10 @@ function actRaze(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  if (!worksThisTick(sim, c)) return;
-  if (++c.work < RAZE_TICKS) return;
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  c.work += paid;
+  if (c.work < RAZE_TICKS) return;
 
   const refund = wallItem(wallMaterial(sim.wallMap[i]));
   sim.wallMap[i] = WallState.None;
@@ -939,8 +1087,13 @@ function actRepair(sim: Sim, occ: Occupancy, c: Colonist, task: Task): void {
   }
   c.phase = Phase.Working;
   faceTile(c, task.x, task.y);
-  if (!worksThisTick(sim, c)) return;
-  c.work += REPAIR_HP_PER_SECOND;
+  // **The gate is per tick, never per point**: a clothed repairer's extra tick
+  // buys the whole second-of-work increment, exactly as it buys a whole work
+  // tick everywhere else. Scaling the points instead would make clothes worth
+  // more at this one site than at the other seven.
+  const paid = workTicks(sim, c);
+  if (paid === 0) return;
+  c.work += paid * REPAIR_HP_PER_SECOND;
   if (c.work < TICK_HZ) return;
   const points = Math.floor(c.work / TICK_HZ);
   c.work -= points * TICK_HZ;

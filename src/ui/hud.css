@@ -40,6 +40,18 @@
   --grain: #a89b3e;
   --flour: #eae3cd;
   --bread: #96552b;
+  /* The cloth chain's three goods, and the dairy's. Raw fleece is cream, warmer
+   * and darker than `--flour`'s sacking; the woven bolt is the only **blue** pip
+   * in the game, so a bolt is never mistaken for a plank; and the finished
+   * garment is that same blue deepened — the rock/block move, one chain over.
+   * Cheese is a pale yellow, deliberately clear of both `--grain`'s olive and
+   * `--gold`: gold means player intent and nothing in Stores may borrow it. All
+   * four match `src/render/palette.ts`, since the pip and the pile are one
+   * object seen twice. */
+  --wool: #ddd0b0;
+  --cloth: #7e93a3;
+  --clothes: #4d6d8e;
+  --cheese: #e0c765;
   --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
   --display: "Grenze Gotisch", "Grenze", Georgia, serif;
 }
@@ -200,9 +212,16 @@
  * The rail takes the height it wants and is the one that gives (`flex: 0 1
  * auto`, scrolling inside itself); Stores keeps its height and sits at the foot
  * of the column. The browser resolves the split at every window size — no
- * `calc()` against a stores height that the eighth good would invalidate. At
- * 768px and up nothing scrolls: the rail runs ~405px and Stores ~250px inside
- * the ~694px the column has.
+ * `calc()` against a stores height that the eighth good would invalidate.
+ *
+ * **The rail no longer fits at 768px**, and that is stated rather than
+ * discovered: the sheep chain's four Build tools take it to ~465px and its four
+ * Stores rows plus a group head take Stores to ~372px, so the scroll-free floor
+ * moved from ~750px of window height to ~900px. At 768 the rail scrolls by
+ * about four rows and the two panels still cannot overlap, which is the whole
+ * reason the split is flex (docs/specs/2026-09-10-sheep-and-clothes.md). The
+ * repair when it starts to hurt is a three-column rail or collapsible Stores
+ * groups; neither is built.
  */
 .leftcol {
   position: absolute;
@@ -223,10 +242,11 @@
 /* ---------- build rail ---------- */
 
 /*
- * Fifteen tools, icon-only, two to a row under each section head, with a
+ * Twenty tools, icon-only, two to a row under each section head, with a
  * caption strip at the foot naming whichever one the pointer, the keyboard or
- * the press is pointing at. Two columns rather than one is what puts all
- * fifteen on a 768px window at once; the strip is what gives the words back.
+ * the press is pointing at. Two columns rather than one is what put the first
+ * sixteen on a 768px window at once; past that the sections scroll (see the
+ * left column above), and the strip is what gives the words back.
  *
  * The tool sections scroll; the caption strip does not. It sits outside the
  * scrolled box, pinned to the foot of the rail, because it is the strip that

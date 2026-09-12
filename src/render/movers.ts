@@ -107,8 +107,16 @@ const INSIDE_LINE = 0.11;
  */
 const KEYLINE_GROWTH = 0.05;
 
-/** Folk wear the mockup's cloth colours — world colours, so they read against
- *  grass. Pool-vs-slot is the HUD's labour meter's job, not the model's. */
+/**
+ * Folk wear the mockup's cloth colours — world colours, so they read against
+ * grass. Pool-vs-slot is the HUD's labour meter's job, not the model's.
+ *
+ * **The rotation is what being clothed looks like.** An unclothed colonist
+ * wears `PROP.drab` instead: one undyed tone against these three, so dressing
+ * the colony literally brings colour to it and the difference reads at map
+ * distance with no HUD readout anywhere — no ribbon count and no per-colonist
+ * panel, per the calm doctrine (docs/specs/2026-09-10-sheep-and-clothes.md).
+ */
 const CLOTH = [PROP.tunic, PROP.wool, PROP.smock];
 
 const MAX_COLONISTS = 64;
@@ -424,7 +432,11 @@ export class MoverRenderer {
       const x = c.px + (c.x - c.px) * alpha;
       const y = c.py + (c.y - c.py) * alpha;
       const base = this.groundY(x, y);
-      put(this.solids, x, base + BODY.y, y, BODY.w, BODY.h, BODY.w, c.heading, CLOTH[c.id % CLOTH.length]);
+      // One tint decision, taken here in the per-frame mover draw: colonists
+      // have no bake and no dirty machinery, so a garment donned or worn out
+      // shows on the next frame with nothing to invalidate.
+      const cloth = c.clothes > 0 ? CLOTH[c.id % CLOTH.length] : PROP.drab;
+      put(this.solids, x, base + BODY.y, y, BODY.w, BODY.h, BODY.w, c.heading, cloth);
       put(this.solids, x, base + HEAD.y, y, HEAD.w, HEAD.h, HEAD.w, c.heading, PROP.linen);
       // The same box says "carrying something" and "walking in from the
       // coast": a wanderer has a pack, and a traveller with a bundle on their

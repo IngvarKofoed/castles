@@ -36,7 +36,7 @@ let cached: Store | null = null;
 const scripted = (): Store => (cached ??= scriptedRun(1500));
 
 /** The pinned hash of that run. Named so the move history above can cite it. */
-const GOLDEN_V8 = "04f53ac6";
+const GOLDEN_V10 = "cb721faa";
 
 /**
  * Designate a handful of trees, place a stockpile, place a sawmill, staff it.
@@ -345,7 +345,15 @@ describe("determinism", () => {
     // out. Every behavioural assertion in this file is unchanged and still
     // passes — the plank ceiling still holds the mill at exactly two — which is
     // what says the number moved for the meals and not for something quiet.
-    expect(hashSim(scripted())).toBe(GOLDEN_V8);
+    //
+    // ade08d30's successor → GOLDEN_V10 with the sheep chain (SAVE_VERSION 10,
+    // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape and nothing
+    // else**, and that was proved rather than argued: with the two new colonist
+    // fields and the four new `limits` slots stripped back out, this run hashes
+    // to the old `04f53ac6` exactly. Nothing behavioural could have moved —
+    // this script builds no Tailor, so no garment exists, so `workTicks`
+    // returns what the old boolean gate returned on every tick of the run.
+    expect(hashSim(scripted())).toBe(GOLDEN_V10);
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {

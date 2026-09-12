@@ -1,9 +1,9 @@
 import { defOf } from "./buildings";
+import { FOODS } from "./goods";
 import { countItems } from "./items";
 import { occupancy, passable, type Occupancy } from "./path";
 import {
   BuildingState,
-  ItemType,
   MonsterPhase,
   findBuilding,
   mintId,
@@ -85,19 +85,21 @@ export function settled(sim: Sim): number {
 }
 
 /**
- * Is the table set for one more? A loaf in the colony for **everybody plus the
- * one arriving** (docs/specs/2026-09-08-bread-economy.md).
+ * Is the table set for one more? A **food** in the colony for **everybody plus
+ * the one arriving** (docs/specs/2026-09-08-bread-economy.md).
  *
  * The second half of the arrival gate, beside the beds: growth now costs
- * placement *and* a working food chain, so a colony that has not built the
- * bread chain stops growing when its provisions run out. Counted the way every
- * other good is counted — every loaf anywhere, stored, loose or carried — so
- * the bar cannot flicker as haulers walk.
+ * placement *and* a working food chain, so a colony that has not built one
+ * stops growing when its provisions run out. Counted the way every
+ * other good is counted — every loaf and every cheese anywhere, stored, loose
+ * or carried — so the bar cannot flicker as haulers walk, and so a colony can
+ * satisfy it down either road (`FOODS` in `goods.ts`,
+ * docs/specs/2026-09-10-sheep-and-clothes.md).
  *
  * Exported because the House panel says so when this, rather than the cap, is
  * what holds arrivals: the gate can stand for game-days, it is player-caused,
- * and a bread ceiling set at or below `settled` holds it shut indefinitely —
- * legal, but never unexplained.
+ * and a ceiling set at or below `settled` on **every** food holds it shut
+ * indefinitely — legal, but never unexplained.
  */
 export function tableSet(sim: Sim): boolean {
   // **A colony with nobody left in it is exempt**, and that is not a softening
@@ -107,9 +109,11 @@ export function tableSet(sim: Sim): boolean {
   // frees room, so the colony can always recover",
   // docs/specs/2026-09-07-housing-wanderers.md). The one pair of hands that
   // comes back has to bootstrap the chain, and the *second* arrival is priced
-  // in bread again like everybody else's.
+  // in food again like everybody else's.
   if (settled(sim) === 0) return true;
-  return countItems(sim, ItemType.Bread) >= settled(sim) + 1;
+  let food = 0;
+  for (const type of FOODS) food += countItems(sim, type);
+  return food >= settled(sim) + 1;
 }
 
 /**
@@ -135,9 +139,9 @@ export function stepSettlers(sim: Sim): void {
     return;
   }
   if (settled(sim) >= populationCap(sim)) return;
-  // Beds *and* bread. Checked beside the cap check and before the countdown, so
+  // Beds *and* food. Checked beside the cap check and before the countdown, so
   // the clock **pauses** while the surplus is missing exactly as it pauses at
-  // cap — a colony that is short of loaves is not quietly banking arrivals it
+  // cap — a colony with a short table is not quietly banking arrivals it
   // will get all at once when the oven catches up.
   if (!tableSet(sim)) return;
   const home = destination(sim);
@@ -322,6 +326,11 @@ function arrive(sim: Sim, home: Building, tile: number): void {
     patience: 0,
     hunger: 0,
     eating: 0,
+    // A wanderer lands **unclothed**, and abstains from the errand until they
+    // settle exactly as they abstain from meals: `stepColonists` branches on
+    // `dest` before either check.
+    clothes: 0,
+    dressing: 0,
     path: [],
     step: 0,
   });

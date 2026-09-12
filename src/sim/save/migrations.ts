@@ -309,6 +309,59 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
    * object: an identity that copies is an identity that can drift.
    */
   8: (state) => state,
+
+  /**
+   * 9 → 10: the sheep chain and the game's first equipment
+   * (docs/specs/2026-09-10-sheep-and-clothes.md). Three append rituals, and no
+   * gift — unlike the bread rung, which owed a migrating colony its provisions.
+   *
+   * **The two colonist fields**, both 0: `clothes` counts wear ticks
+   * *remaining*, so 0 is "unclothed", which is what everybody in a v9 save has
+   * always been and what an undressed colony stays. `dressing` is 0 because
+   * nobody in a v9 save was ever at a fitting. Nothing is owed here: clothes
+   * are a buff and not a floor, so arriving without them costs a loaded colony
+   * exactly what it was already paying.
+   *
+   * **The four accept flags, stamped 1 on every saved building** — the v2
+   * rung's precedent, and the half that cannot be skipped: `stockpileAccepts`
+   * reads these by name for every kind, so a building that came through with
+   * them missing would refuse wool, cloth, clothes and cheese *forever* while
+   * the weaver jammed at output cap and nothing in the game could say why. A v9
+   * player never chose to exclude a good that did not exist.
+   *
+   * **Four `-1`s appended to `limits`**, per the production-control append
+   * ritual: exactly its own four, so a v6 save migrated after some later good
+   * exists still arrives at that good's rung with eleven slots.
+   */
+  9: (state) => {
+    const s = object(state);
+    return {
+      ...s,
+      colonists:
+        Array.isArray(s.colonists) ?
+          // Non-object entries pass through untouched so `assertSim` still
+          // refuses the save rather than this rung papering over it.
+          s.colonists.map((c) =>
+            c && typeof c === "object" ? { ...(c as Record<string, unknown>), clothes: 0, dressing: 0 } : c,
+          )
+        : s.colonists,
+      buildings:
+        Array.isArray(s.buildings) ?
+          s.buildings.map((b) =>
+            b && typeof b === "object" ?
+              {
+                ...(b as Record<string, unknown>),
+                acceptWool: 1,
+                acceptCloth: 1,
+                acceptClothes: 1,
+                acceptCheese: 1,
+              }
+            : b,
+          )
+        : s.buildings,
+      limits: Array.isArray(s.limits) ? [...s.limits, -1, -1, -1, -1] : s.limits,
+    };
+  },
 };
 
 /**

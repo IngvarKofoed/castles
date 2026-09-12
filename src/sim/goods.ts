@@ -32,7 +32,11 @@ export interface GoodDef {
     | "acceptBlock"
     | "acceptGrain"
     | "acceptFlour"
-    | "acceptBread";
+    | "acceptBread"
+    | "acceptWool"
+    | "acceptCloth"
+    | "acceptClothes"
+    | "acceptCheese";
 }
 
 export const GOODS: Record<ItemTypeValue, GoodDef> = {
@@ -43,7 +47,33 @@ export const GOODS: Record<ItemTypeValue, GoodDef> = {
   [ItemType.Grain]: { type: ItemType.Grain, name: "Grain", label: "grain", accept: "acceptGrain" },
   [ItemType.Flour]: { type: ItemType.Flour, name: "Flour", label: "flour", accept: "acceptFlour" },
   [ItemType.Bread]: { type: ItemType.Bread, name: "Bread", label: "bread", accept: "acceptBread" },
+  [ItemType.Wool]: { type: ItemType.Wool, name: "Wool", label: "wool", accept: "acceptWool" },
+  [ItemType.Cloth]: { type: ItemType.Cloth, name: "Cloth", label: "cloth", accept: "acceptCloth" },
+  [ItemType.Clothes]: {
+    type: ItemType.Clothes,
+    name: "Clothes",
+    label: "clothes",
+    accept: "acceptClothes",
+  },
+  [ItemType.Cheese]: { type: ItemType.Cheese, name: "Cheese", label: "cheese", accept: "acceptCheese" },
 };
+
+/**
+ * What a colonist will eat, and what the arrival gate counts as a set table.
+ *
+ * A list rather than a flag on `GoodDef`, and read by exactly two places — the
+ * meal errand (`labour/colonists`) and `tableSet` (`sim/settlers`). **No
+ * preference order**: the errand takes the nearest free food of any kind, so
+ * cheese is bread by another road rather than a fallback for it, and a larder
+ * with two roads into it is the whole of what this buys
+ * (docs/specs/2026-09-10-sheep-and-clothes.md).
+ */
+export const FOODS: readonly ItemTypeValue[] = [ItemType.Bread, ItemType.Cheese];
+
+/** Will a colonist eat this? */
+export function isFood(type: number): boolean {
+  return FOODS.includes(type as ItemTypeValue);
+}
 
 /** Every good, in `ItemType` order — which is the order every readout uses. */
 export const GOOD_LIST: readonly GoodDef[] = Object.values(ItemType).map((t) => GOODS[t]);

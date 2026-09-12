@@ -12,6 +12,7 @@ import {
 } from "./store";
 import {
   BEDS_PER_HOUSE,
+  DAIRY_TICKS,
   FARM_TICKS,
   MASON_TICKS,
   MILL_TICKS,
@@ -19,6 +20,9 @@ import {
   OVEN_TICKS,
   ROCK_PER_BLOCK,
   STOCKPILE_PER_TILE,
+  TAILOR_TICKS,
+  WEAVE_TICKS,
+  WOOL_TICKS,
   WORKSHOP_INPUT_CAP,
   WORKSHOP_OUTPUT_CAP,
 } from "./tuning";
@@ -67,9 +71,10 @@ export interface BuildingDef {
  * ratio is the chain's cost dial, and the only difference between milling a
  * plank (1 log) and cutting a block (2 rock).
  *
- * **`per: 0` with `inputCap: 0` is the no-input convention**, and the Farm is
- * its one user: a workshop that consumes nothing at all
- * (docs/specs/2026-09-08-bread-economy.md). The pair is pinned so two readers
+ * **`per: 0` with `inputCap: 0` is the no-input convention**, and the Farm and
+ * the Pasture are its users: a workshop that consumes nothing at all
+ * (docs/specs/2026-09-08-bread-economy.md,
+ * docs/specs/2026-09-10-sheep-and-clothes.md). The pair is pinned so two readers
  * cannot diverge, and `input` keeps its required type — set to the output good,
  * a dummy nobody reads — rather than becoming nullable, which would ripple a
  * type change through every consumer for the sake of one row.
@@ -170,9 +175,10 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     recipe: null,
   },
   /**
-   * The Farm: grain out of nothing but a farmer's hours, and **the biggest
+   * The Farm: grain out of nothing but a farmer's hours, and **the joint-biggest
    * footprint in the game** at 3×3 — a nudge toward land pressure, since
-   * feeding more mouths means enclosing more flat ground.
+   * feeding more mouths means enclosing more flat ground. The Pasture matches
+   * it, so a colony running both spends 18 tiles of level ground on raw goods.
    *
    * Its recipe is the `per: 0` convention (see `Recipe`): no input, no input
    * buffer, no haul ever ordered for it. Everything else about it is an
@@ -264,6 +270,108 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
     hasSlot: true,
     beds: 0,
     recipe: null,
+  },
+  /**
+   * The Pasture: wool out of nothing but a shepherd's hours, on the Farm's
+   * `per: 0` recipe (see `Recipe`) and its 3×3 footprint — the joint-biggest
+   * in the game, and 18 tiles of flat ground between the two of them once a
+   * colony runs both.
+   *
+   * Priced in **planks**, so the whole cloth chain is downstream of the
+   * sawmill rather than of the woods. Stated plainly because CONCEPT's third
+   * pillar is what it bears on: this is now the game's deepest chain and it
+   * pulls **nothing** from the deep map — the outward pull here is the Dairy's
+   * grain demand and the acreage, not a raw input that only exists further
+   * out. Stone-pricing a link (the Oven's move) is the tuning available if
+   * that dilution starts to matter
+   * (docs/specs/2026-09-10-sheep-and-clothes.md).
+   */
+  [BuildingKind.Pasture]: {
+    kind: BuildingKind.Pasture,
+    name: "Pasture",
+    w: 3,
+    h: 3,
+    cost: 4,
+    costType: ItemType.Plank,
+    hasSlot: true,
+    beds: 0,
+    recipe: {
+      input: ItemType.Wool,
+      per: 0,
+      output: ItemType.Wool,
+      ticks: WOOL_TICKS,
+      inputCap: 0,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
+  },
+  /**
+   * The Dairy: grain into cheese, and **grain-fed on purpose**. A butcher
+   * eating something killable was the obvious alternative and the game has no
+   * kill mechanic anywhere, by design; feeding the dairy from the fields the
+   * oven already wants makes the two chains one ambition instead of two
+   * neighbours, which is one more customer for grain and therefore one more
+   * turn of the labour trap.
+   */
+  [BuildingKind.Dairy]: {
+    kind: BuildingKind.Dairy,
+    name: "Dairy",
+    w: 2,
+    h: 2,
+    cost: 4,
+    costType: ItemType.Plank,
+    hasSlot: true,
+    beds: 0,
+    recipe: {
+      input: ItemType.Grain,
+      per: 1,
+      output: ItemType.Cheese,
+      ticks: DAIRY_TICKS,
+      inputCap: WORKSHOP_INPUT_CAP,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
+  },
+  /** The Weaver: wool into cloth. The Mason move, one row down. */
+  [BuildingKind.Weaver]: {
+    kind: BuildingKind.Weaver,
+    name: "Weaver",
+    w: 2,
+    h: 2,
+    cost: 4,
+    costType: ItemType.Plank,
+    hasSlot: true,
+    beds: 0,
+    recipe: {
+      input: ItemType.Wool,
+      per: 1,
+      output: ItemType.Cloth,
+      ticks: WEAVE_TICKS,
+      inputCap: WORKSHOP_INPUT_CAP,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
+  },
+  /**
+   * The Tailor: cloth into clothes — **the first workshop whose output nobody
+   * hauls to a site**. Garments leave through its door on somebody's back:
+   * an unclothed colonist sources one exactly as a hungry one sources a loaf
+   * (docs/specs/2026-09-10-sheep-and-clothes.md).
+   */
+  [BuildingKind.Tailor]: {
+    kind: BuildingKind.Tailor,
+    name: "Tailor",
+    w: 2,
+    h: 2,
+    cost: 4,
+    costType: ItemType.Plank,
+    hasSlot: true,
+    beds: 0,
+    recipe: {
+      input: ItemType.Cloth,
+      per: 1,
+      output: ItemType.Clothes,
+      ticks: TAILOR_TICKS,
+      inputCap: WORKSHOP_INPUT_CAP,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
   },
 };
 

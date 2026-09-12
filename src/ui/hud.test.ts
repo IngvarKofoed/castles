@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { GOOD_LIST, ItemType, type ItemTypeValue } from "../sim/know";
-import { GOOD_GROUP, GROUP_ORDER, railCaption, watchNote } from "./hud";
+import { GOOD_GROUP, GROUP_ORDER, millNote, railCaption, watchNote } from "./hud";
 
 /**
  * The pieces of the HUD that are logic rather than markup: which tool the
  * rail's caption strip names, which group each good's Stores row files itself
- * under, and what a Watchtower's panel says it is watching. Everything else is
- * verified in the browser, per `src/ui/CLAUDE.md`.
+ * under, and what a workshop's and a Watchtower's panel say about themselves.
+ * Everything else is verified in the browser, per `src/ui/CLAUDE.md`.
  */
 
 describe("the rail's caption strip", () => {
@@ -56,13 +56,19 @@ describe("the Stores panel's grouping", () => {
     expect([of(ItemType.Log), of(ItemType.Plank)]).toEqual(["wood", "wood"]);
     expect([of(ItemType.Rock), of(ItemType.Block)]).toEqual(["stone", "stone"]);
     expect([of(ItemType.Grain), of(ItemType.Flour), of(ItemType.Bread)]).toEqual(["food", "food", "food"]);
+    expect([of(ItemType.Wool), of(ItemType.Cloth), of(ItemType.Clothes)]).toEqual(["cloth", "cloth", "cloth"]);
+    // Cheese files with the food it *is*, not with the chain that made it —
+    // which is also the case the fixed emission order below exists for: it is
+    // the newest good in the enum and its row belongs between Bread and Wool.
+    expect(of(ItemType.Cheese)).toBe("food");
   });
 
   // Emission order is fixed rather than read off the enum: `ItemType` is
   // append-only, so a future wood good would land after Bread and an
-  // emit-on-change walk would file it under Food.
+  // emit-on-change walk would file it under Food. Cheese is that case having
+  // actually happened — appended last, emitted with Food.
   it("emits the groups in a fixed order, not in enum order", () => {
-    expect([...GROUP_ORDER]).toEqual(["wood", "stone", "food"]);
+    expect([...GROUP_ORDER]).toEqual(["wood", "stone", "food", "cloth"]);
   });
 });
 
@@ -100,5 +106,44 @@ describe("a Watchtower's note row", () => {
     for (const worker of ["inside", "walking", "eating", "none"] as const) {
       expect(watchNote({ watching: 0, worker })).toBe("the watcher sees no dens from here");
     }
+  });
+});
+
+/**
+ * A workshop's note row, and the one rule it exists for: **it may never claim
+ * work that is not happening, and never a stall that is not happening either.**
+ * Both self-errands take the slot worker out of the building, so both need a
+ * line of their own — with neither, a Pasture whose shepherd is at a fitting
+ * read "working" with nobody in it.
+ */
+describe("a workshop's note row", () => {
+  const shed = (patch: Partial<Parameters<typeof millNote>[0]> = {}): Parameters<typeof millNote>[0] => ({
+    staffed: true,
+    worker: "inside",
+    chain: { input: "Wool", output: "Cloth" },
+    stall: "none",
+    colonyCount: 0,
+    outputType: 8,
+    ...patch,
+  });
+
+  it("says who is missing before it says anything about the recipe", () => {
+    expect(millNote(shed({ staffed: false }))).toBe("no one is working here");
+    expect(millNote(shed({ worker: "eating" }))).toBe("gone to eat — back shortly");
+    expect(millNote(shed({ worker: "dressing" }))).toBe("gone for clothes — back shortly");
+  });
+
+  it("never reports a stall for a worker who is simply away", () => {
+    // `inspect` already gates `stall` on both errands, so this is belt to that
+    // braces — but the note is a second reader of the same fact, and the one a
+    // player actually reads.
+    for (const worker of ["eating", "dressing"] as const) {
+      expect(millNote(shed({ worker, stall: "no-input" }))).not.toContain("waiting");
+    }
+  });
+
+  it("says working only when somebody is actually in there", () => {
+    expect(millNote(shed())).toBe("working");
+    expect(millNote(shed({ stall: "no-input" }))).toBe("waiting for wool");
   });
 });

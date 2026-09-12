@@ -44,10 +44,34 @@ export const PROP = {
   grain: 0xa89b3e,
   flour: 0xeae3cd,
   bread: 0x96552b,
+  /**
+   * The cloth chain's three goods, and the dairy's. Named `fleece` / `bolt` /
+   * `garment` rather than after the goods themselves because `wool` below is
+   * already taken — by one of the *colonist* cloth colours, which predates the
+   * good by seven steps and is what a dressed colonist actually wears.
+   *
+   * Raw fleece is cream, warmer and darker than `flour`'s sacking; the woven
+   * bolt is the game's only blue *good*, so a bolt on the ground is never a
+   * plank; the garment is that blue deepened, which is the rock/block move one
+   * chain over. Cheese is a pale yellow kept clear of both `grain`'s olive and
+   * the overlay grammar's gold.
+   */
+  fleece: 0xddd0b0,
+  bolt: 0x7e93a3,
+  garment: 0x4d6d8e,
+  cheese: 0xe0c765,
   linen: 0xe3d8ba,
   tunic: 0x3f79ab,
   smock: 0x5f9438,
   wool: 0xc4763f,
+  /**
+   * What an **unclothed** colonist wears: one drab, undyed tone, against the
+   * three dyed cloths above. That is the whole visual of the equipment step —
+   * dressing the colony literally brings colour to it, and the difference reads
+   * at map distance without the HUD saying a word
+   * (docs/specs/2026-09-10-sheep-and-clothes.md).
+   */
+  drab: 0x8a8272,
   stake: 0x7a5a3c,
   /**
    * The Wilds. Orcs read green and lean, trolls grey and bulky — the split has
@@ -104,6 +128,10 @@ export const GOOD_HEX: Record<ItemTypeValue, number> = {
   [ItemType.Grain]: PROP.grain,
   [ItemType.Flour]: PROP.flour,
   [ItemType.Bread]: PROP.bread,
+  [ItemType.Wool]: PROP.fleece,
+  [ItemType.Cloth]: PROP.bolt,
+  [ItemType.Clothes]: PROP.garment,
+  [ItemType.Cheese]: PROP.cheese,
 };
 
 /**
