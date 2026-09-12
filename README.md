@@ -8,7 +8,7 @@ wall a reason to exist.
 
 ```sh
 npm install
-npm run dev        # a generated 256×256 island: drag to orbit, WASD to pan, scroll to zoom
+npm run dev        # http://localhost:8790 — a generated 256×256 island: drag to orbit, WASD to pan, scroll to zoom
 npm test           # sim + mesher tests
 npm run lint       # includes the src/sim purity boundary
 ```

@@ -1,6 +1,18 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  /**
+   * The dev and preview ports are pinned, and `strictPort` makes a collision
+   * fail loudly rather than sliding to the next free port — a silent slide
+   * serves the page you meant to test from an address nobody is looking at,
+   * behind whatever stale server already held the default.
+   *
+   * 8790 / 8791 / 8792 is the project's one contiguous block: 8791 is the
+   * mockups' static server (README), so preview takes 8792 rather than
+   * treading on it.
+   */
+  server: { port: 8790, strictPort: true },
+  preview: { port: 8792, strictPort: true },
   test: {
     environment: "node",
     /**
