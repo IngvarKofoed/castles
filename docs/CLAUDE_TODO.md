@@ -29,3 +29,12 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   at once is what makes it worth a line. The Pasture and the Farm have props of their
   own, so the pattern for fixing it exists. Surfaced by
   `2026-09-11-sheep-and-clothes`.
+
+- **Seven comments across five `sim/` files still call the area drag a "marquee"** —
+  the screen-space marquee was removed with `2026-09-13-map-space-selection-box`, but
+  `commands.ts`, `ground.ts` and three test files still name the gesture after the DOM
+  element that no longer exists, so a grep for how designation boxes work lands on a
+  word with nothing behind it. `src/render/` and `src/ui/` were truthed up with the
+  change; these sit across the sim boundary and were out of its scope, the same split
+  `2026-09-08-stores-panel-and-icon-rail` made for "the ribbon". Surfaced by
+  `2026-09-13-map-space-selection-box`.

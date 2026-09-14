@@ -5,12 +5,11 @@ import { MoverRenderer, type Ghost } from "../render/movers";
 import {
   Picker,
   levelTilesInRect,
-  rectFrom,
-  rectSpan,
   rockTilesInRect,
   treeTilesInRect,
   wallRun,
   wallTilesInRect,
+  type SelectionBox,
 } from "../render/pick";
 import { createStage } from "../render/scene";
 import {
@@ -40,7 +39,7 @@ import { SAVE_VERSION, decode, encode } from "../sim/save/codec";
 import { advanceTick } from "../sim/tick";
 import { DAY_TICKS, MAX_TICKS_PER_FRAME, TICK_HZ } from "../sim/tuning";
 import { WORLD_SIZE } from "../sim/world/world";
-import { Hud, isMarqueeTool, isRunTool, isWallTool } from "../ui/hud";
+import { Hud, isAreaTool, isRunTool, isWallTool } from "../ui/hud";
 import { Menu } from "../ui/menu";
 import { showBlockingNotice } from "../ui/notice";
 import { VERSION } from "../version";
@@ -137,6 +136,8 @@ interface Session {
   /** Hand the queued commands to the caller and start a fresh queue. */
   takeCommands(): Command[];
   ghost(): Ghost | null;
+  /** The area tools' drag box while one is held, or null. */
+  box(): SelectionBox | null;
   /** Which Watchtowers should draw their watch range this frame, ghost first. */
   watchRanges(): { x: number; y: number }[];
   dispose(): void;
@@ -194,14 +195,28 @@ function buildSession(sim: Sim): Session {
   );
 
   // A press that travels under a few pixels is a click, not a drag — the
-  // mockup's rule, ported. Above it, an area tool draws a marquee, the wall
-  // tool draws a run, and every other tool ignores the motion.
+  // mockup's rule, ported. Above it, an area tool draws a box on the ground,
+  // the wall tool draws a run, and every other tool ignores the motion.
   const CLICK_SLOP = 6;
   let down: { x: number; y: number; id: number } | null = null;
-  let marqueeing = false;
   /** The tile a wall drag started on, and the live far end of the run. */
   let runFrom: [number, number] | null = null;
   let runTo: [number, number] | null = null;
+  /**
+   * The area tools' drag box: two *picked tiles*, not two screen points, so
+   * the ground it covers is the ground it takes at any camera angle and a tree
+   * behind a ridge cannot escape a box drawn over it.
+   *
+   * `boxTo` doubles as the "has the drag started" latch, which is why there is
+   * no third flag here. It stays null until the pointer has travelled past
+   * `CLICK_SLOP` — a press under that is still the single-tile toggle — and
+   * once set it only ever moves, so a drag that wanders back inside the slop is
+   * still a drag. A box is live only with both corners set, and
+   * `boxFrom === boxTo` is a legal one-tile box for a drag that stayed inside
+   * its own tile.
+   */
+  let boxFrom: [number, number] | null = null;
+  let boxTo: [number, number] | null = null;
   /**
    * The height a levelling drag is aiming at: the press tile's own. Captured
    * at pointer-down because that is the gesture's whole statement of intent —
@@ -222,6 +237,13 @@ function buildSession(sim: Sim): Session {
       down = { x: e.clientX, y: e.clientY, id: e.pointerId };
       runFrom = isRunTool(hud.tool) ? tileFrom(e) : null;
       runTo = runFrom;
+      // A press off the terrain leaves `boxFrom` null and the gesture is
+      // dropped, matching `wallRun`'s "a drag starting off-map is empty".
+      boxFrom = isAreaTool(hud.tool) ? tileFrom(e) : null;
+      boxTo = null;
+      // The gesture starting is what takes the caption strip back off the last
+      // box's count.
+      hud.took(null);
       const pressed = hud.tool.kind === "terraform" ? tileFrom(e) : null;
       const height = pressed ? groundHeight(sim, pressed[0], pressed[1]) : -1;
       levelTarget = isTargetHeight(height) ? height : null;
@@ -243,11 +265,13 @@ function buildSession(sim: Sim): Session {
         runTo = tileFrom(e) ?? runTo;
         return;
       }
-      if (!isMarqueeTool(hud.tool)) return;
-      const rect = rectFrom(down, { x: e.clientX, y: e.clientY });
-      if (!marqueeing && rectSpan(rect) <= CLICK_SLOP) return;
-      marqueeing = true;
-      hud.showMarquee(rect);
+      if (!boxFrom) return;
+      if (!boxTo && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP) return;
+      // The wall run's rule: a cursor that slides off the terrain onto sky
+      // holds the last good corner rather than collapsing the box or clamping
+      // it to the map edge, so the box freezes at its last valid extent until
+      // the cursor comes back over ground.
+      boxTo = tileFrom(e) ?? boxTo;
     },
     { signal },
   );
@@ -257,40 +281,36 @@ function buildSession(sim: Sim): Session {
     (e) => {
       if (!down || e.button !== 0) return;
       const start = down;
-      const wasMarquee = marqueeing;
+      const boxA = boxFrom;
+      const boxB = boxTo;
       const from = runFrom;
       const to = runTo;
       const target = levelTarget;
       down = null;
-      marqueeing = false;
+      boxFrom = null;
+      boxTo = null;
       runFrom = null;
       runTo = null;
       levelTarget = null;
-      hud.hideMarquee();
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
 
-      if (wasMarquee) {
+      if (boxA && boxB) {
         // One command for the whole box, applied at the next tick boundary: a
         // gesture is one entry in the log, never several hundred.
-        const rect = rectFrom(start, { x: e.clientX, y: e.clientY });
-        if (hud.tool.kind === "raze") {
-          const tiles = wallTilesInRect(sim, rig.camera, canvas, rect);
-          if (tiles.length) queued.push({ kind: "designateRaze", tiles });
-          return;
-        }
-        if (hud.tool.kind === "mine") {
-          const tiles = rockTilesInRect(sim, rig.camera, canvas, rect);
-          if (tiles.length) queued.push({ kind: "designateMine", tiles });
-          return;
-        }
-        if (hud.tool.kind === "terraform") {
-          if (target === null) return;
-          const tiles = levelTilesInRect(sim, rig.camera, canvas, rect, target);
-          if (tiles.length) queued.push({ kind: "designateTerraform", tiles, target });
-          return;
-        }
-        const tiles = treeTilesInRect(sim, rig.camera, canvas, rect);
-        if (tiles.length) queued.push({ kind: "designateChop", tiles });
+        //
+        // The count goes to the rail's caption strip whatever it is, zero
+        // included. A box laid across a ridge designates the far slope too, and
+        // the gold marks that would show it are behind the crest — the number
+        // is the one piece of feedback that reaches the player regardless of
+        // what the camera can see.
+        const tiles = boxTiles(boxA, boxB, target);
+        hud.took(tiles.length);
+        if (!tiles.length) return;
+        if (hud.tool.kind === "raze") queued.push({ kind: "designateRaze", tiles });
+        else if (hud.tool.kind === "mine") queued.push({ kind: "designateMine", tiles });
+        else if (hud.tool.kind === "terraform" && target !== null) {
+          queued.push({ kind: "designateTerraform", tiles, target });
+        } else queued.push({ kind: "designateChop", tiles });
         return;
       }
       if (from && (hud.tool.kind === "wall" || hud.tool.kind === "gate")) {
@@ -311,14 +331,28 @@ function buildSession(sim: Sim): Session {
     { signal },
   );
 
+  /**
+   * Which tiles the released box takes, by the active area tool's own rule.
+   * The four predicates are lifted across from the screen-space box unchanged —
+   * what each tool considers eligible did not move, only how the region is
+   * chosen. A levelling drag whose press tile named a height labour may not
+   * leave a tile at takes nothing.
+   */
+  function boxTiles(a: [number, number], b: [number, number], target: number | null): number[] {
+    if (hud.tool.kind === "raze") return wallTilesInRect(sim, a, b);
+    if (hud.tool.kind === "mine") return rockTilesInRect(sim, a, b);
+    if (hud.tool.kind === "terraform") return target === null ? [] : levelTilesInRect(sim, a, b, target);
+    return treeTilesInRect(sim, a, b);
+  }
+
   const cancelDrag = (): void => {
     if (down && canvas.hasPointerCapture(down.id)) canvas.releasePointerCapture(down.id);
     down = null;
-    marqueeing = false;
+    boxFrom = null;
+    boxTo = null;
     runFrom = null;
     runTo = null;
     levelTarget = null;
-    hud.hideMarquee();
   };
   canvas.addEventListener("pointercancel", cancelDrag, { signal });
 
@@ -335,9 +369,10 @@ function buildSession(sim: Sim): Session {
   );
 
   // Escape has to abandon the gesture as well as walk the HUD's ladder. The
-  // HUD owns the ladder and hides its own marquee, but the drag state lives
-  // here — without this the box vanishes on Escape and the whole selection
-  // still lands on release.
+  // HUD owns the ladder, but the drag state lives here — without this the box
+  // vanishes on Escape and the whole selection still lands on release. Check a
+  // cancel on the *effect*, never on the overlay
+  // (docs/changelog/2026-09-01-drag-box-designation.md).
   window.addEventListener(
     "keydown",
     (e) => {
@@ -350,8 +385,8 @@ function buildSession(sim: Sim): Session {
     const tool = hud.tool;
     if (tool.kind === "chop") {
       if (!hasTree(sim, x, y)) return;
-      // Clicking a marked tree again unmarks it — the marquee only ever adds,
-      // so this stays the way to take one back.
+      // Clicking a marked tree again unmarks it — the box only ever adds, so
+      // this stays the way to take one back.
       queued.push(
         isDesignated(sim, x, y) ?
           { kind: "cancelChop", x, y }
@@ -361,8 +396,8 @@ function buildSession(sim: Sim): Session {
     }
     if (tool.kind === "mine") {
       if (!canMine(sim, x, y)) return;
-      // Clicking a marked outcrop again unmarks it — the marquee only ever
-      // adds, exactly as with chop.
+      // Clicking a marked outcrop again unmarks it — the box only ever adds,
+      // exactly as with chop.
       queued.push(
         isMineMarked(sim, x, y) ?
           { kind: "cancelMine", x, y }
@@ -400,8 +435,8 @@ function buildSession(sim: Sim): Session {
     }
     if (tool.kind === "raze") {
       if (!hasWall(sim, x, y)) return;
-      // Clicking a marked segment again unmarks it — the marquee only ever
-      // adds, exactly as with chop.
+      // Clicking a marked segment again unmarks it — the box only ever adds,
+      // exactly as with chop.
       queued.push(
         isRazeMarked(sim, x, y) ?
           { kind: "cancelRaze", x, y }
@@ -503,6 +538,7 @@ function buildSession(sim: Sim): Session {
       return out;
     },
     ghost,
+    box: () => (boxFrom && boxTo ? { from: boxFrom, to: boxTo } : null),
     watchRanges,
     dispose: () => {
       events.abort();
@@ -745,7 +781,7 @@ function frame(nowMs: number): void {
   s.chunks.sync();
   // At ×0 the world is frozen, so there is nothing between two ticks to
   // interpolate: pin the fraction rather than letting it drift.
-  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool), s.watchRanges());
+  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool), s.watchRanges(), s.box());
   s.hud.update();
   stage.renderer.render(stage.scene, rig.camera);
   requestAnimationFrame(frame);

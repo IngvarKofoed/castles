@@ -245,12 +245,41 @@ Drawn by `src/render/`, same vocabulary as the panels:
   `rgba(143,191,82,0.85)` border, footprint grid lines at `0.5` alpha.
 - **Invalid placement**: rust, same recipe — never alarm red.
 - **Designation (chop)**: gold outline, `rgba(220,162,60,0.13)` fill.
-- **Selection marquee** (drag-box for area tools; screen-space, not
-  world-space): 1px gold border over a 1px `ground` keyline,
-  `rgba(220,162,60,0.10)` fill — lighter than the designation fill, since
-  it can cover half the screen. Square corners, solid lines: never dashed,
-  never animated — marching ants are motion, and nothing here moves. It
-  exists only while the drag is held.
+- **Selection box** (the drag-box for area tools — chop, mine, raze,
+  level): a **keylined gold outline traced per tile on the ground**, at
+  `0.85` alpha and ~0.11 tiles wide, over a **faint gold fill** at `0.10`.
+  Square corners, solid lines: never dashed, never animated — marching ants
+  are motion, and nothing here moves. It exists only while the drag is held.
+
+  **World-space, not screen-space.** The box is two picked tiles and it is
+  drawn at each tile's own ground height, so it steps over a rise instead of
+  cutting through it — and the ground it covers is the ground the release
+  takes, from every camera angle. A DOM rectangle over the viewport was
+  tried and removed (`2026-09-13-map-space-selection-box`): it could not say
+  the same thing twice from two angles, and its selection let a tree behind
+  a ridge escape a box drawn over it.
+
+  **Gold, and heavier than a mark.** Gold because gold is player intent; the
+  ghost's sage and rust mean *valid* and *invalid*, and the box makes no
+  claim about whether the ground inside it can be worked. The outline is
+  ~0.11 tiles against a designation mark's ~0.08 for the same reason: the
+  box shares a hue and a shape with the marks it is drawn over, so weight is
+  what keeps "the region I am selecting" from reading as "more marks". The
+  fill stays lighter than the designation's `0.13`, since a box can cover
+  half the view.
+
+  **The fill degrades before the outline does.** Past the instance budget
+  the interior stops shading and the border stays complete — the enclosure
+  wash's treatment, and deliberately *not* the watch range's refuse-the-
+  square-whole rule: a boundary drawn short would claim less ground than the
+  release will take, while an unshaded interior is merely less pretty.
+
+  **Releasing a box says what it took** — `47 trees`, `no tiles` — in the
+  rail's caption strip, outranking the caption naming the held tool and
+  holding until a rail preview, a tool change or the next gesture claims the
+  strip. That count is the only feedback that survives occlusion: a box laid
+  across a ridge designates the far slope too, and those marks are behind
+  the crest.
 - **Enclosure** (which ground the wall has claimed): a **keylined sage
   boundary line traced along the inside edge of the enclosing wall**, at
   `0.85` alpha and ~0.11 tiles wide, over a **very faint sage interior

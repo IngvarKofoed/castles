@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GOOD_LIST, ItemType, type ItemTypeValue } from "../sim/know";
-import { GOOD_GROUP, GROUP_ORDER, millNote, railCaption, watchNote } from "./hud";
+import { GOOD_GROUP, GROUP_ORDER, millNote, railCaption, tookCaption, watchNote } from "./hud";
 
 /**
  * The pieces of the HUD that are logic rather than markup: which tool the
@@ -15,30 +15,72 @@ describe("the rail's caption strip", () => {
   });
 
   it("names the active tool in gold when nothing is being previewed", () => {
-    expect(railCaption(null, null, "wall")).toEqual({ tool: "wall", gold: true });
+    expect(railCaption(null, null, "wall")).toEqual({ kind: "tool", tool: "wall", gold: true });
   });
 
   it("lets a hover outrank the active tool, in plain ink", () => {
-    expect(railCaption("gate", null, "wall")).toEqual({ tool: "gate", gold: false });
+    expect(railCaption("gate", null, "wall")).toEqual({ kind: "tool", tool: "gate", gold: false });
   });
 
   it("lets keyboard focus name a tool when the pointer is elsewhere", () => {
-    expect(railCaption(null, "mine", "wall")).toEqual({ tool: "mine", gold: false });
+    expect(railCaption(null, "mine", "wall")).toEqual({ kind: "tool", tool: "mine", gold: false });
   });
 
   it("prefers the pointer to the keyboard when both have a claim", () => {
-    expect(railCaption("chop", "mine", null)).toEqual({ tool: "chop", gold: false });
+    expect(railCaption("chop", "mine", null)).toEqual({ kind: "tool", tool: "chop", gold: false });
   });
 
   // Hovering the tool you are already holding is still your intent, so the
   // strip keeps its gold rather than dropping to ink under the pointer.
   it("keeps the gold when the previewed tool is the active one", () => {
-    expect(railCaption("wall", null, "wall")).toEqual({ tool: "wall", gold: true });
-    expect(railCaption(null, "wall", "wall")).toEqual({ tool: "wall", gold: true });
+    expect(railCaption("wall", null, "wall")).toEqual({ kind: "tool", tool: "wall", gold: true });
+    expect(railCaption(null, "wall", "wall")).toEqual({ kind: "tool", tool: "wall", gold: true });
   });
 
   it("previews a tool even with no tool held", () => {
-    expect(railCaption("oven", null, null)).toEqual({ tool: "oven", gold: false });
+    expect(railCaption("oven", null, null)).toEqual({ kind: "tool", tool: "oven", gold: false });
+  });
+
+  // What a released box took is the feedback that survives occlusion — a box
+  // across a ridge marks the far slope and the marks are behind the crest — so
+  // it outranks the caption naming the tool that is still held.
+  it("lets a released box's count outrank the active tool, in gold", () => {
+    expect(railCaption(null, null, "chop", "47 trees")).toEqual({
+      kind: "report",
+      text: "47 trees",
+      gold: true,
+    });
+  });
+
+  it("still lets a rail preview outrank the count", () => {
+    expect(railCaption("mine", null, "chop", "47 trees")).toEqual({ kind: "tool", tool: "mine", gold: false });
+    expect(railCaption(null, "mine", "chop", "47 trees")).toEqual({ kind: "tool", tool: "mine", gold: false });
+  });
+
+  it("reports a count even with no tool held", () => {
+    expect(railCaption(null, null, null, "no trees")).toEqual({ kind: "report", text: "no trees", gold: true });
+  });
+});
+
+describe("what a released box says it took", () => {
+  it("names what each area tool counts, singular and plural", () => {
+    expect(tookCaption({ kind: "chop" }, 47)).toBe("47 trees");
+    expect(tookCaption({ kind: "chop" }, 1)).toBe("1 tree");
+    expect(tookCaption({ kind: "mine" }, 3)).toBe("3 outcrops");
+    expect(tookCaption({ kind: "raze" }, 1)).toBe("1 segment");
+    expect(tookCaption({ kind: "terraform" }, 12)).toBe("12 tiles");
+  });
+
+  // Zero is the case the line exists for: a box that caught nothing and a box
+  // whose marks are all behind a rise look identical on screen.
+  it("says so when the box took nothing", () => {
+    expect(tookCaption({ kind: "chop" }, 0)).toBe("no trees");
+    expect(tookCaption({ kind: "terraform" }, 0)).toBe("no tiles");
+  });
+
+  it("has nothing to say for a tool whose drag is not a box", () => {
+    expect(tookCaption({ kind: "wall", material: "timber" }, 4)).toBeNull();
+    expect(tookCaption({ kind: "none" }, 4)).toBeNull();
   });
 });
 

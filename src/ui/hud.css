@@ -708,28 +708,6 @@
   color: var(--ink);
 }
 
-/* ---------- selection marquee ---------- */
-
-/*
- * The drag-box for area tools, per docs/STYLEGUIDE.md's overlay grammar:
- * 1px gold border over a 1px `ground` keyline, a fill lighter than the
- * designation's because this can cover half the screen, square corners and
- * solid lines. Never dashed, never animated — marching ants are motion, and
- * nothing in this game moves that isn't physically moving.
- *
- * The keyline is a box-shadow on both sides of the border rather than a second
- * element, so the gold reads over bright grass and dark wood alike.
- */
-.marquee {
-  position: absolute;
-  border: 1px solid var(--gold);
-  background: rgba(220, 162, 60, 0.1);
-  box-shadow:
-    0 0 0 1px rgba(20, 23, 15, 0.55),
-    inset 0 0 0 1px rgba(20, 23, 15, 0.55);
-  pointer-events: none;
-}
-
 /* ---------- centre modal: the menu ---------- */
 
 /*

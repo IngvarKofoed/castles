@@ -59,7 +59,7 @@ export class CameraRig {
     /**
      * Asked before a drag starts whether the orbit may have it. While a build
      * or chop tool is active the left-drag belongs to that tool — a chop
-     * marquee and a camera orbit cannot share one gesture. Defaults to always
+     * drag box and a camera orbit cannot share one gesture. Defaults to always
      * yes, so with no tool selected the orbit behaves exactly as before.
      * Zoom and WASD pan are never suspended; only the drag is.
      */

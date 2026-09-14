@@ -55,8 +55,12 @@ export function isWallTool(tool: Tool): boolean {
   return tool.kind === "wall" || tool.kind === "gate" || tool.kind === "raze";
 }
 
-/** The tools whose left-drag is a selection marquee rather than a run. */
-export function isMarqueeTool(tool: Tool): boolean {
+/** The four tools whose left-drag is an area box on the ground rather than a
+ *  run. Named as a type so `TOOK_NOUN` cannot fall out of step with the set. */
+export type AreaKind = "chop" | "mine" | "raze" | "terraform";
+
+/** The tools whose left-drag is an area box on the ground rather than a run. */
+export function isAreaTool(tool: Tool): tool is Tool & { kind: AreaKind } {
   return tool.kind === "chop" || tool.kind === "raze" || tool.kind === "mine" || tool.kind === "terraform";
 }
 
@@ -165,29 +169,72 @@ const GROUP_LABEL: Record<GoodGroup, string> = {
   cloth: "Cloth",
 };
 
-/** What the rail's caption strip is naming, and whether it may be gold. */
-export interface RailCaption {
-  readonly tool: string;
-  /**
-   * The rail's one gold element. Gold only while the strip names the **active**
-   * tool — a hover or focus preview of some other tool reads in plain ink,
-   * because hover is not intent.
-   */
-  readonly gold: boolean;
-}
+/**
+ * What the rail's caption strip is naming, and whether it may be gold.
+ *
+ * Two shapes: a **tool**, named by its rail key so the caller can look its
+ * label and cost up, or a **report** of what a released area box just took,
+ * which is prose and belongs to no button.
+ *
+ * `gold` is the rail's one gold element. Gold while the strip names the
+ * **active** tool, or reports what that tool just did — a hover or focus
+ * preview of some *other* tool reads in plain ink, because hover is not intent.
+ */
+export type RailCaption =
+  | { readonly kind: "tool"; readonly tool: string; readonly gold: boolean }
+  | { readonly kind: "report"; readonly text: string; readonly gold: boolean };
 
 /**
- * What the caption strip shows, as a pure function of the three things that
- * can claim it: the tool under the pointer, the tool with keyboard focus, and
- * the tool actually held. A preview wins over the active tool — you are asking
- * what that button is — and with nothing to show the strip is empty rather
- * than absent, so the rail never changes height under the pointer.
+ * What the caption strip shows, as a pure function of the four things that can
+ * claim it: the tool under the pointer, the tool with keyboard focus, the tool
+ * actually held, and the report a released box left behind.
+ *
+ * A preview wins over both — you are asking what that button is — and the
+ * report outranks the plain active-tool caption, because the count is the one
+ * piece of feedback that survives a box drawn across a ridge: the marks it made
+ * on the far slope are behind the crest, and the number is not. No timer holds
+ * it; it stands until something else claims the strip, which keeps this a pure
+ * function of its inputs.
+ *
+ * With nothing to show the strip is empty rather than absent, so the rail never
+ * changes height under the pointer.
  */
-export function railCaption(hovered: string | null, focused: string | null, active: string | null): RailCaption | null {
+export function railCaption(
+  hovered: string | null,
+  focused: string | null,
+  active: string | null,
+  report: string | null = null,
+): RailCaption | null {
   const preview = hovered ?? focused;
-  if (preview !== null) return { tool: preview, gold: preview === active };
-  if (active !== null) return { tool: active, gold: true };
+  if (preview !== null) return { kind: "tool", tool: preview, gold: preview === active };
+  if (report !== null) return { kind: "report", text: report, gold: true };
+  if (active !== null) return { kind: "tool", tool: active, gold: true };
   return null;
+}
+
+/** What each area tool counts, singular and plural. */
+const TOOK_NOUN: Record<AreaKind, readonly [string, string]> = {
+  chop: ["tree", "trees"],
+  mine: ["outcrop", "outcrops"],
+  raze: ["segment", "segments"],
+  terraform: ["tile", "tiles"],
+};
+
+/**
+ * What a released area box says it took — `47 trees`, `1 outcrop`, `no tiles`.
+ *
+ * Zero is reported rather than swallowed, and that is the case the line exists
+ * for: a box that caught nothing and a box whose marks are all behind a rise
+ * look identical on screen, so silence would be the one answer the player
+ * cannot act on.
+ *
+ * Null for any tool whose drag is not a box, which is the caller's guard as
+ * well as this function's.
+ */
+export function tookCaption(tool: Tool, count: number): string | null {
+  if (!isAreaTool(tool)) return null;
+  const [one, many] = TOOK_NOUN[tool.kind];
+  return `${count === 0 ? "no" : count} ${count === 1 ? one : many}`;
 }
 
 /** What `millNote` needs off an `Inspection` — narrowed so a test can hand it
@@ -263,7 +310,12 @@ export class Hud {
   private readonly inspector: HTMLElement;
   private readonly labourMeter: HTMLElement;
   private readonly labourLegend: HTMLElement;
-  private readonly marquee: HTMLElement;
+  /**
+   * What the last released area box took, as the caption strip's prose — or
+   * null. Set on release, cleared by anything else that claims the strip: a
+   * rail preview, a tool change, or the next gesture starting.
+   */
+  private report: string | null = null;
   private readonly menuButton = el("button", {
     class: "speedbtn",
     type: "button",
@@ -315,10 +367,6 @@ export class Hud {
     labour.append(this.labourMeter, this.labourLegend);
     this.root.append(labour);
 
-    this.marquee = el("div", { class: "marquee" });
-    this.marquee.hidden = true;
-    this.root.append(this.marquee);
-
     document.body.append(this.root);
     this.onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === "Escape") this.escape();
@@ -368,7 +416,6 @@ export class Hud {
     }
     if (this.tool_.kind !== "none") {
       this.setTool({ kind: "none" });
-      this.hideMarquee();
       return;
     }
     if (this.selected) {
@@ -382,25 +429,16 @@ export class Hud {
   clear(): void {
     this.setTool({ kind: "none" });
     this.selected = null;
-    this.hideMarquee();
   }
 
   /**
-   * Show the drag-box at a screen rectangle. It exists only while the drag is
-   * held (docs/STYLEGUIDE.md), so there is no state to reconcile — the caller
-   * shows it on every move and hides it on release or cancel.
+   * Say in the caption strip what a released area box took. A press claims the
+   * strip with `null` before the gesture that will fill it, so the previous
+   * box's count can never be mistaken for this one's.
    */
-  showMarquee(rect: { left: number; top: number; right: number; bottom: number }): void {
-    const s = this.marquee.style;
-    s.left = `${rect.left}px`;
-    s.top = `${rect.top}px`;
-    s.width = `${rect.right - rect.left}px`;
-    s.height = `${rect.bottom - rect.top}px`;
-    this.marquee.hidden = false;
-  }
-
-  hideMarquee(): void {
-    this.marquee.hidden = true;
+  took(count: number | null): void {
+    this.report = count === null ? null : tookCaption(this.tool_, count);
+    this.renderCaption();
   }
 
   /** Show a building in the inspector, or nothing when the id is -1. */
@@ -748,6 +786,9 @@ export class Hud {
   private preview(slot: "hovered" | "focused", key: string | null, only?: string): void {
     if (only !== undefined && this[slot] !== only) return;
     this[slot] = key;
+    // A preview *claims* the strip rather than merely outranking it: the count
+    // must not reappear when the pointer leaves the button again.
+    if (key !== null) this.report = null;
     this.renderCaption();
   }
 
@@ -755,15 +796,16 @@ export class Hud {
    *  is allowed, spent on the active tool and on nothing else. */
   private renderCaption(): void {
     const active = this.tool_.kind === "none" ? null : toolKey(this.tool_);
-    const pick = railCaption(this.hovered, this.focused, active);
-    const named = pick ? this.toolCaptions.get(pick.tool) : undefined;
-    this.captionName.textContent = named?.name ?? "";
+    const pick = railCaption(this.hovered, this.focused, active, this.report);
+    const named = pick?.kind === "tool" ? this.toolCaptions.get(pick.tool) : undefined;
+    this.captionName.textContent = pick?.kind === "report" ? pick.text : (named?.name ?? "");
     this.captionCost.textContent = named?.cost ?? "";
     this.caption.classList.toggle("on", pick?.gold === true);
   }
 
   private setTool(tool: Tool): void {
     this.tool_ = tool;
+    this.report = null;
     if (tool.kind !== "none") this.selected = null;
     const active = tool.kind === "none" ? "" : toolKey(tool);
     for (const [key, b] of this.toolButtons) {

@@ -31,6 +31,7 @@ import {
   type Sim,
 } from "../sim/know";
 import { WORLD_SIZE, tileIndex } from "../sim/world/world";
+import { boxBounds, type SelectionBox } from "./pick";
 import { createMoverMaterial } from "./materials";
 import { GOOD_HEX, OVERLAY, PROP } from "./palette";
 import { BH, BUFFER_Y, DECK_Y } from "./props";
@@ -131,6 +132,18 @@ const MAX_OVERLAY = 8192;
  * the fill goes partial while the boundary line, which is what the player
  * actually reads, stays complete: the boundary gets its own layers for exactly
  * that reason.
+ *
+ * **The area tools' drag box reuses both**, because it is the same shape of
+ * overlay — a filled region under a traced boundary — and wants the same
+ * division of failure. Here that division is a *guarantee* rather than a hope:
+ * a `w × h` box costs `2w + 2h` bars (its corners are double-visited inside the
+ * four runs, exactly as `SQUARE_BARS` counts them), which peaks at 1,024 for a
+ * box covering the whole 256² map and so cannot reach `MAX_BOUNDARY`, while the
+ * fill costs `w × h` plates and goes partial above roughly 128×128 as the wash
+ * does. That is what makes the box safe to diverge from `drawWatchRange`'s
+ * refuse-the-square-whole rule: a watch square drawn short claims less reach
+ * than the tower has, which is a false statement, whereas a box whose interior
+ * stops shading is merely less pretty — its border still says what it covers.
  */
 const MAX_INSIDE = 16384;
 const MAX_BOUNDARY = 4096;
@@ -304,6 +317,9 @@ export class MoverRenderer {
   private readonly insideEdge: Layer;
   private readonly watchKeyline: Layer;
   private readonly watchEdge: Layer;
+  private readonly selFill: Layer;
+  private readonly selKeyline: Layer;
+  private readonly selEdge: Layer;
 
   constructor(
     private readonly scene: Scene,
@@ -339,6 +355,18 @@ export class MoverRenderer {
     // limit, and the world is the hero (docs/STYLEGUIDE.md, Tone).
     this.watchKeyline = overlayLayer(scene, MAX_WATCH, KEYLINE, 0.5);
     this.watchEdge = overlayLayer(scene, MAX_WATCH, SAGE, 0.85);
+    // The drag box is **gold**, because gold is player intent. Sage and rust
+    // are the ghost's validity colours and would be a lie here: the box makes
+    // no claim about whether anything inside it can actually be worked — the
+    // marks that appear on release are what say that.
+    //
+    // 0.10 against the designation marks' 0.13, the styleguide's own value for
+    // a selection that can cover half the view. Its own layers rather than the
+    // marks', because the box is drawn *over* marked ground and a box over a
+    // marked wood must not spend the marks' budget.
+    this.selFill = overlayLayer(scene, MAX_INSIDE, GOLD, 0.1);
+    this.selKeyline = overlayLayer(scene, MAX_BOUNDARY, KEYLINE, 0.5);
+    this.selEdge = overlayLayer(scene, MAX_BOUNDARY, GOLD, 0.85);
   }
 
   /**
@@ -365,6 +393,7 @@ export class MoverRenderer {
     ghost: Ghost | null,
     showEnclosure = false,
     watch: readonly { x: number; y: number }[] = [],
+    box: SelectionBox | null = null,
   ): void {
     for (const l of this.layers) l.used = 0;
     this.drawColonists(alpha);
@@ -372,6 +401,10 @@ export class MoverRenderer {
     this.drawGoods();
     this.drawDesignations();
     if (showEnclosure) this.drawEnclosure();
+    // After the enclosure, because Raze is both an area tool and a wall tool:
+    // the sage wash and a gold box genuinely do draw together, and the box is
+    // the one being aimed with.
+    if (box) this.drawSelection(box);
     // Before the ghost, and in the order the caller gave: the ghost's own
     // square leads the list, so a starved layer drops a distant tower's
     // boundary rather than the one being aimed with.
@@ -400,6 +433,9 @@ export class MoverRenderer {
       this.insideEdge,
       this.watchKeyline,
       this.watchEdge,
+      this.selFill,
+      this.selKeyline,
+      this.selEdge,
     ];
   }
 
@@ -681,6 +717,62 @@ export class MoverRenderer {
   private watchBar(x: number, y: number, dx: number, dy: number, size: number): void {
     if (x < 0 || y < 0 || x >= size || y >= size) return;
     this.edgeBar(this.watchKeyline, this.watchEdge, x, y, this.groundY(x, y) + 0.02, dx, dy);
+  }
+
+  /**
+   * The area tools' drag box: a keylined **gold** outline over a faint gold
+   * fill, traced per tile at each tile's own ground height, alive only while
+   * the drag is held.
+   *
+   * **Per tile is the whole point.** The box this replaced was a DOM rectangle
+   * over the viewport, which cut straight through a rise; laid on the ground
+   * one tile at a time it steps over the rise instead, and what it covers is
+   * what the release will take.
+   *
+   * **Gold, not sage or rust.** Gold is player intent; the ghost's validity
+   * colours would claim the box knows whether the ground inside it can be
+   * worked, and it does not — the marks appearing on release are what say that.
+   * The outline is heavier than a designation mark's (`INSIDE_LINE`'s 0.11
+   * against `MARK_LINE`'s 0.08) because the box now shares a hue and a
+   * primitive with the marks it is drawn over, and weight is what keeps
+   * "the region I am selecting" from reading as "more marks".
+   *
+   * `+0.025` clears every overlay this can share a frame with — the enclosure
+   * wash at `+0.015` and the designation marks' plates at `+0.02` — and
+   * `edgeBar`'s own `+0.01` puts the gold edge at `+0.035`. Over the sea the
+   * plates sit under the water surface (`WATER_SURFACE_OFFSET` is 0.13), so a
+   * box dragged out over water reads as submerged rather than floating, which
+   * is the honest picture of ground that will select nothing.
+   *
+   * The fill runs first and stops at its budget; the outline has its own layers
+   * and cannot truncate at this world size. See `MAX_INSIDE`.
+   */
+  private drawSelection(box: SelectionBox): void {
+    // `boxBounds`, not a local min/max: a pick can name a tile one past the
+    // east or south edge, and the selection clamps it there — so drawing has
+    // to clamp it identically or the box would shade ground the release will
+    // not take.
+    const { x0, x1, y0, y1 } = boxBounds(box.from, box.to, this.sim.world.size);
+    // Row granularity on the budget check: past the cap `put` drops silently,
+    // and a map-wide box would otherwise pay 65k dropped calls every frame.
+    for (let y = y0; y <= y1 && this.selFill.used < MAX_INSIDE; y++) {
+      for (let x = x0; x <= x1; x++) plate(this.selFill, x, y, this.groundY(x, y) + 0.025);
+    }
+    // Two horizontal runs then two vertical ones, `drawWatchRange`'s pattern:
+    // the four corner tiles are visited twice on purpose — each needs a bar on
+    // both of its outward faces, or the box has four notches in it.
+    for (let x = x0; x <= x1; x++) {
+      this.selBar(x, y0, 0, -1);
+      this.selBar(x, y1, 0, 1);
+    }
+    for (let y = y0; y <= y1; y++) {
+      this.selBar(x0, y, -1, 0);
+      this.selBar(x1, y, 1, 0);
+    }
+  }
+
+  private selBar(x: number, y: number, dx: number, dy: number): void {
+    this.edgeBar(this.selKeyline, this.selEdge, x, y, this.groundY(x, y) + 0.025, dx, dy);
   }
 
   /**
