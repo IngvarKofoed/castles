@@ -117,6 +117,7 @@ describe("the mason", () => {
     applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 3, y: 8 }]);
     const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile)!;
     pile.state = BuildingState.Active;
+    applyCommands(sim, [{ kind: "setAllFilters", building: pile.id, on: true }]);
 
     // Loose rock on the ground: the mason's input buffer outranks the
     // stockpile, so the rock goes to work rather than into storage.
@@ -135,18 +136,48 @@ describe("the mason", () => {
 });
 
 describe("a stockpile's filters", () => {
-  it("accept every good the game has by default", () => {
+  it("refuse every good the game has until the player turns one on", () => {
     const sim = peopledSim();
     applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 8, y: 8 }]);
     const pile = sim.buildings[0];
     pile.state = BuildingState.Active;
     // Walked from the goods table rather than written out: every appended
-    // `ItemType` has to arrive accepted, and a literal list here would quietly
+    // `ItemType` has to arrive *refused*, and a literal list here would quietly
     // stop covering the newest good.
     for (const good of GOOD_LIST) {
-      expect(freeCapacity(sim, pile, good.type)).toBeGreaterThan(0);
+      expect(freeCapacity(sim, pile, good.type)).toBe(0);
     }
+    expect(inspect(sim, pile.id)?.stored.map((s) => s.accepted)).toEqual(GOOD_LIST.map(() => false));
+
+    // Nothing comes in, either: a log on the ground beside an empty pile stays
+    // there, which is the whole shape of the default and the reason the panel
+    // has to say why.
+    spawnItem(sim, ItemType.Log, 12, 12);
+    for (let i = 0; i < 5; i++) generateTasks(sim);
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToStore)).toHaveLength(0);
+  });
+
+  it("all turns every good on in one command, and only a stockpile takes it", () => {
+    const sim = peopledSim();
+    applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 8, y: 8 }]);
+    const pile = sim.buildings[0];
+    pile.state = BuildingState.Active;
+    applyCommands(sim, [{ kind: "setAllFilters", building: pile.id, on: true }]);
     expect(inspect(sim, pile.id)?.stored.map((s) => s.accepted)).toEqual(GOOD_LIST.map(() => true));
+    for (const good of GOOD_LIST) expect(freeCapacity(sim, pile, good.type)).toBeGreaterThan(0);
+
+    // And back off again in one press.
+    applyCommands(sim, [{ kind: "setAllFilters", building: pile.id, on: false }]);
+    expect(inspect(sim, pile.id)?.stored.map((s) => s.accepted)).toEqual(GOOD_LIST.map(() => false));
+
+    // A workshop has no filters to set, so the command is refused for one —
+    // and only a stockpile is placed closed, so its (unused) flags are left
+    // exactly as `place` wrote them.
+    applyCommands(sim, [{ kind: "place", building: BuildingKind.Mason, x: 14, y: 14 }]);
+    const mason = sim.buildings[sim.buildings.length - 1];
+    expect(mason.kind).toBe(BuildingKind.Mason);
+    applyCommands(sim, [{ kind: "setAllFilters", building: mason.id, on: false }]);
+    for (const good of GOOD_LIST) expect(mason[good.accept]).toBe(1);
   });
 
   it("refuses a good whose filter is off, and keeps taking the rest", () => {
@@ -154,6 +185,7 @@ describe("a stockpile's filters", () => {
     applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 8, y: 8 }]);
     const pile = sim.buildings[0];
     pile.state = BuildingState.Active;
+    applyCommands(sim, [{ kind: "setAllFilters", building: pile.id, on: true }]);
     pile.acceptRock = 0;
     expect(freeCapacity(sim, pile, ItemType.Rock)).toBe(0);
     expect(freeCapacity(sim, pile, ItemType.Block)).toBeGreaterThan(0);

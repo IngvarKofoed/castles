@@ -1,7 +1,7 @@
 import { CameraRig } from "../render/camera";
 import { ChunkRenderer } from "../render/chunks";
 import { createTerrainMaterial, createWaterMaterial, waveTime } from "../render/materials";
-import { MoverRenderer, type Ghost } from "../render/movers";
+import { MoverRenderer, type Ghost, type ReachRect } from "../render/movers";
 import {
   Picker,
   levelTilesInRect,
@@ -13,6 +13,7 @@ import {
 } from "../render/pick";
 import { createStage } from "../render/scene";
 import {
+  BUILDING_DEFS,
   BuildingKind,
   canMine,
   canPlace,
@@ -29,7 +30,7 @@ import {
   isTerraformMarked,
   monsterAtTile,
   readout,
-  watchtowers,
+  reachBuildings,
   type BuildingKindValue,
 } from "../sim/know";
 import type { Command } from "../sim/commands";
@@ -37,7 +38,7 @@ import { hashSim } from "../sim/hash";
 import { createSim, type Sim } from "../sim/store";
 import { SAVE_VERSION, decode, encode } from "../sim/save/codec";
 import { advanceTick } from "../sim/tick";
-import { DAY_TICKS, MAX_TICKS_PER_FRAME, TICK_HZ } from "../sim/tuning";
+import { DAY_TICKS, HIVE_REACH, MAX_TICKS_PER_FRAME, TICK_HZ, WATCH_RANGE } from "../sim/tuning";
 import { WORLD_SIZE } from "../sim/world/world";
 import { Hud, isAreaTool, isRunTool, isWallTool } from "../ui/hud";
 import { Menu } from "../ui/menu";
@@ -138,8 +139,8 @@ interface Session {
   ghost(): Ghost | null;
   /** The area tools' drag box while one is held, or null. */
   box(): SelectionBox | null;
-  /** Which Watchtowers should draw their watch range this frame, ghost first. */
-  watchRanges(): { x: number; y: number }[];
+  /** Which reach rectangles to draw this frame, the ghost's first. */
+  reachRects(): ReachRect[];
   dispose(): void;
 }
 
@@ -486,43 +487,65 @@ function buildSession(sim: Sim): Session {
     return null;
   }
 
+  /** A footprint grown by `r` on every side — the rectangle both reach
+   *  predicates test and the one the overlay traces. */
+  function grown(b: { x: number; y: number; w: number; h: number }, r: number): ReachRect {
+    return { x0: b.x - r, y0: b.y - r, x1: b.x + b.w - 1 + r, y1: b.y + b.h - 1 + r };
+  }
+
   /**
-   * Whose watch range to draw, and when.
+   * Whose reach to draw, and when.
    *
-   * Two moments only, both pinned to the enclosure's precedent of showing a
-   * whole layer while its tool is held: with the **tower tool** active the
-   * ghost's square shows plus every tower already on the map, so siting a new
-   * one is done against the coverage there is; with a **tower selected** it
-   * shows its own. Any other tool, any other selection, nothing
-   * (docs/specs/2026-09-09-watchtowers.md).
+   * Three tools and one selection, all pinned to the enclosure's precedent of
+   * showing a whole layer while its tool is held: with the **tower tool** the
+   * ghost's square plus every tower already on the map, so siting a new one is
+   * done against the coverage there is; with the **hive tool** the same for
+   * hives, since siting a second hive is exactly where seeing the first one's
+   * reach matters; with the **flowers tool** every hive's reach, so a field is
+   * sited with a tile of its plot inside one; and with a tower or a hive
+   * **selected**, its own. Any other tool, any other selection, nothing
+   * (docs/specs/2026-09-09-watchtowers.md,
+   * docs/specs/2026-09-14-hives-and-mead.md).
    *
    * The ghost leads the list deliberately — if the layer's budget ever ran
-   * out it must not be the square being aimed with that goes missing. And
-   * every tower counts, blueprint or standing: the boundary must not vanish
+   * out it must not be the rectangle being aimed with that goes missing. And
+   * every building counts, blueprint or standing: the boundary must not vanish
    * at the instant the ghost is committed, which is exactly when the player
    * is placing the next one.
    */
-  function watchRanges(): { x: number; y: number }[] {
+  function reachRects(): ReachRect[] {
     const tool = hud.tool;
-    if (tool.kind === "build" && tool.building === BuildingKind.Watchtower) {
-      const out = hover ? [{ x: hover[0], y: hover[1] }] : [];
-      for (const t of watchtowers(sim)) {
-        // A tower already standing on the hovered tile would draw the ghost's
-        // square a second time, in the same place: two 0.85-alpha outlines
-        // blend to a near-opaque one, so the boundary reads *heavier* over the
-        // one tile the tool refuses to build on. One square per tile.
-        if (hover && t.x === hover[0] && t.y === hover[1]) continue;
-        out.push({ x: t.x, y: t.y });
+    if (tool.kind === "build") {
+      const kind = tool.building;
+      if (kind === BuildingKind.Watchtower || kind === BuildingKind.Hive) {
+        const r = kind === BuildingKind.Watchtower ? WATCH_RANGE : HIVE_REACH;
+        const def = BUILDING_DEFS[kind];
+        const out = hover ? [grown({ x: hover[0], y: hover[1], w: def.w, h: def.h }, r)] : [];
+        for (const b of reachBuildings(sim, kind)) {
+          // One already standing on the hovered tile would draw the ghost's
+          // rectangle a second time, in the same place: two 0.85-alpha outlines
+          // blend to a near-opaque one, so the boundary reads *heavier* over
+          // the one tile the tool refuses to build on. One rectangle per tile.
+          if (hover && b.x === hover[0] && b.y === hover[1]) continue;
+          out.push(grown(b, r));
+        }
+        return out;
       }
-      return out;
+      // Siting a field is aiming *into* somebody else's rectangle, so the
+      // flowers tool shows every hive's and no ghost of its own — a field has
+      // no reach to draw.
+      if (kind === BuildingKind.Flowers) {
+        return reachBuildings(sim, BuildingKind.Hive).map((b) => grown(b, HIVE_REACH));
+      }
     }
     const picked = hud.selection;
     if (picked?.kind === "building") {
-      // Straight off the live array rather than through `watchtowers`, which
+      // Straight off the live array rather than through `reachBuildings`, which
       // allocates: this branch runs every frame for *any* selected building,
       // and the filter would build a throwaway array on each of them.
-      const tower = buildings(sim).find((b) => b.id === picked.id && b.kind === BuildingKind.Watchtower);
-      if (tower) return [{ x: tower.x, y: tower.y }];
+      const b = buildings(sim).find((x) => x.id === picked.id);
+      if (b?.kind === BuildingKind.Watchtower) return [grown(b, WATCH_RANGE)];
+      if (b?.kind === BuildingKind.Hive) return [grown(b, HIVE_REACH)];
     }
     return [];
   }
@@ -539,7 +562,7 @@ function buildSession(sim: Sim): Session {
     },
     ghost,
     box: () => (boxFrom && boxTo ? { from: boxFrom, to: boxTo } : null),
-    watchRanges,
+    reachRects,
     dispose: () => {
       events.abort();
       hud.dispose();
@@ -781,7 +804,7 @@ function frame(nowMs: number): void {
   s.chunks.sync();
   // At ×0 the world is frozen, so there is nothing between two ticks to
   // interpolate: pin the fraction rather than letting it drift.
-  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool), s.watchRanges(), s.box());
+  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool), s.reachRects(), s.box());
   s.hud.update();
   stage.renderer.render(stage.scene, rig.camera);
   requestAnimationFrame(frame);

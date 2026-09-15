@@ -59,6 +59,15 @@ export const PROP = {
   fleece: 0xddd0b0,
   bolt: 0x7e93a3,
   garment: 0x4d6d8e,
+  /**
+   * The drink chain's two goods. **Honey must not read as `gold`** — gold is
+   * player intent and nothing else in the world may wear it — so it is a deep
+   * amber, darker and redder than the overlay's `0xdca23c`, the way `bread` is
+   * darker and redder than `timber`. Mead is a pale straw, lifted clear of
+   * `sand`'s grey-beige and of `cheese`'s yellow.
+   */
+  honey: 0xc07a1e,
+  mead: 0xe8d79a,
   cheese: 0xe0c765,
   linen: 0xe3d8ba,
   tunic: 0x3f79ab,
@@ -132,6 +141,8 @@ export const GOOD_HEX: Record<ItemTypeValue, number> = {
   [ItemType.Cloth]: PROP.bolt,
   [ItemType.Clothes]: PROP.garment,
   [ItemType.Cheese]: PROP.cheese,
+  [ItemType.Honey]: PROP.honey,
+  [ItemType.Mead]: PROP.mead,
 };
 
 /**

@@ -36,21 +36,22 @@ import { bury } from "./graves";
  */
 
 /**
- * The prowling monster this colonist should be running from, or null.
+ * The prowling monster within `FLEE_RANGE` of a **point**, or null — the
+ * boundary asked about a place rather than about a person.
  *
  * Resting and homeward monsters are ignored, which is what makes CONCEPT's
  * "hold until it leaves" trustworthy: a leaving monster is already harmless and
- * the colony can see it walking away. So is anyone standing on inside ground —
- * and anyone *inside a building*, who is physically indoors and cannot be
- * noticed or caught wherever the building happens to stand. That makes an
- * outside-the-walls workshop a bunker for its slot worker, which is quirky and
- * harmless: the haulers feeding it enjoy no such shelter.
+ * the colony can see it walking away. So is a point on inside ground.
+ *
+ * **Coordinates are tile-centre floats**, the same `x + 0.5` every other caller
+ * of `reach` passes (`threatNear` from `c.x, c.y`, `watched` for its beach).
+ * Integers would shift the range boundary by half a tile and leave two callers
+ * disagreeing about the same tile.
  */
-export function threatNear(sim: Sim, c: Colonist): Monster | null {
-  if (c.inside) return null;
+export function prowlerNear(sim: Sim, x: number, y: number): Monster | null {
   const size = sim.world.size;
-  const cx = Math.floor(c.x);
-  const cy = Math.floor(c.y);
+  const cx = Math.floor(x);
+  const cy = Math.floor(y);
   if (cx < 0 || cy < 0 || cx >= size || cy >= size) return null;
   if (sim.insideMap[tileIndex(cx, cy, size)]) return null;
 
@@ -58,7 +59,7 @@ export function threatNear(sim: Sim, c: Colonist): Monster | null {
   let bestD = Infinity;
   for (const m of sim.monsters) {
     if (m.phase !== MonsterPhase.Prowl) continue;
-    const d = reach(m, c.x, c.y);
+    const d = reach(m, x, y);
     if (d > FLEE_RANGE) continue;
     // Ties break by id, so two monsters equidistant never make the choice
     // depend on array order.
@@ -68,6 +69,22 @@ export function threatNear(sim: Sim, c: Colonist): Monster | null {
     }
   }
   return best;
+}
+
+/**
+ * The prowling monster this colonist should be running from, or null.
+ *
+ * Anyone *inside a building* is exempt: they are physically indoors and cannot
+ * be noticed or caught wherever the building happens to stand. That makes an
+ * outside-the-walls workshop a bunker for its slot worker — and the bunker is
+ * now sound at its one former hole, the self-errands, which ask `prowlerNear`
+ * about the doorstep before stepping out
+ * (docs/specs/2026-09-14-hives-and-mead.md). The haulers feeding such a
+ * building still enjoy no shelter at all.
+ */
+export function threatNear(sim: Sim, c: Colonist): Monster | null {
+  if (c.inside) return null;
+  return prowlerNear(sim, c.x, c.y);
 }
 
 /**

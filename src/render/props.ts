@@ -104,6 +104,14 @@ export const BUFFER_Y: Record<BuildingKindValue, number> = {
   [BuildingKind.Dairy]: 2.38 * BH,
   [BuildingKind.Weaver]: 2.38 * BH,
   [BuildingKind.Tailor]: 2.38 * BH,
+  // On the stand between the skeps, not on a roof the hive does not have —
+  // the Farm's case, where the goods sit on the worked ground inside the fence.
+  [BuildingKind.Hive]: 0.28 * BH,
+  // Flowers hold nothing at all — a passive plot with no buffer — so they take
+  // the deck like a House and the table stays total.
+  [BuildingKind.Flowers]: 0.16 * BH,
+  // The Meadery shares the timber-workshop model, so it shares its roofline.
+  [BuildingKind.Meadery]: 2.38 * BH,
 };
 
 /** The deck a stockpile's pile and a blueprint's materials stack on. */
@@ -204,12 +212,22 @@ export function buildingBoxes(b: Building, h: number, out: Box[]): void {
     pasture(cx, g, cz, b, out);
     return;
   }
-  // The Dairy, the Weaver and the Tailor fall through to the timber workshop,
+  if (b.kind === BuildingKind.Hive) {
+    hive(cx, g, cz, b, out);
+    return;
+  }
+  if (b.kind === BuildingKind.Flowers) {
+    flowers(g, b, out);
+    return;
+  }
+  // The Dairy, the Weaver, the Tailor and the Meadery fall through to the
+  // timber workshop,
   // exactly as the Mill shares it with the Mason and the Sawmill: three 2×2
   // sheds with the same carpentry and the same plank cost, and a distinct prop
   // per workshop is polish this step did not buy
   // (docs/changelog/2026-09-08-bread-economy.md records the same trade for the
-  // Mill). What tells them apart is the panel and the goods on the roof.
+  // Mill). What tells them apart is the panel and the goods on the roof. The
+  // Meadery is the seventh sharer, and `docs/CLAUDE_TODO.md` carries that.
   sawmill(cx, g, cz, b, out);
 }
 
@@ -308,6 +326,68 @@ function farm(cx: number, g: number, cz: number, b: Building, out: Box[]): void 
   out.push(box(hx, g, hz, 1.0, 1.0 * BH, 1.0, PROP.timber));
   out.push(box(hx, g + 1.0 * BH, hz, 1.16, 0.26 * BH, 1.16, PROP.clay, 0, 0.94));
   out.push(box(hx, g, hz + 0.46, 0.34, 0.7 * BH, 0.08, PROP.door));
+}
+
+/**
+ * The Hive: two straw skeps on a low timber stand, with a landing board.
+ *
+ * A prop of its own rather than a seventh shed, and deliberately: a hive is one
+ * of the two buildings this game *invites* the player to put outside the wall,
+ * so whether it is safe is something read off the map at distance. A silhouette
+ * shared with the sawmill would have made that read impossible
+ * (docs/specs/2026-09-14-hives-and-mead.md).
+ */
+function hive(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
+  // The stand: a plank table on four short legs, the deck grammar at half size.
+  out.push(box(cx, g, cz, b.w - 0.5, 0.22 * BH, b.h - 0.5, PROP.timber));
+  for (const [ox, oz] of corners(b)) {
+    out.push(box(ox, g, oz, 0.12, 0.22 * BH, 0.12, PROP.stake));
+  }
+  // Two skeps **side by side across the stand**, not on the diagonal: at 2×2
+  // the diagonal puts them 0.6 apart and they merge into one stepped pile.
+  // Each is three tapering courses of coiled straw — the game's only stepped
+  // cone, so the shape alone tells a hive from a shed at map distance.
+  for (const ox of [b.x + 0.55, b.x + b.w - 0.55]) {
+    const oz = cz;
+    out.push(box(ox, g + 0.22 * BH, oz, 0.5, 0.26 * BH, 0.5, PROP.grain));
+    out.push(box(ox, g + 0.48 * BH, oz, 0.38, 0.26 * BH, 0.38, PROP.grain, 0, 0.94));
+    out.push(box(ox, g + 0.74 * BH, oz, 0.24, 0.22 * BH, 0.24, PROP.grain, 0, 0.88));
+    // The landing board: a dark slot on the south face, which is what reads as
+    // a *door* and keeps the cone from looking like a haystack.
+    out.push(box(ox, g + 0.3 * BH, oz + 0.26, 0.22, 0.1 * BH, 0.06, PROP.door, 0, 0.9));
+  }
+}
+
+/**
+ * Flowers: a fenced 3×3 plot of bloom, the Pasture's rail grammar over a
+ * blossom-speckled bed.
+ *
+ * Its own prop for the Hive's reason — fields are the other thing a player is
+ * invited to put outside — and it is the one building in the game with no
+ * worker and no door, so there is nothing else about it to read.
+ */
+function flowers(g: number, b: Building, out: Box[]): void {
+  const cx = b.x + b.w / 2;
+  const cz = b.y + b.h / 2;
+  out.push(box(cx, g, cz, b.w - 0.1, 0.1 * BH, b.h - 0.1, PROP.crop, 0, 0.82));
+  for (const [ox, oz] of corners(b)) {
+    out.push(box(ox, g, oz, 0.11, 0.5 * BH, 0.11, PROP.stake));
+  }
+  // One rail, low: a field is fenced against nothing, so it reads as a border
+  // rather than as a pen.
+  out.push(box(cx, g + 0.32 * BH, b.y + 0.18, b.w - 0.36, 0.07 * BH, 0.07, PROP.timber, 0, 0.92));
+  out.push(box(cx, g + 0.32 * BH, b.y + b.h - 0.18, b.w - 0.36, 0.07 * BH, 0.07, PROP.timber, 0, 0.92));
+  out.push(box(b.x + 0.18, g + 0.32 * BH, cz, 0.07, 0.07 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
+  out.push(box(b.x + b.w - 0.18, g + 0.32 * BH, cz, 0.07, 0.07 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
+  // Nine blooms on a fixed lattice — static, like the Pasture's sheep, because
+  // renderer-owned animation state is a door no step has opened.
+  const bloom = [PROP.honey, PROP.mead, PROP.bolt] as const;
+  for (let i = 0; i < 9; i++) {
+    const ox = b.x + 0.55 + (i % 3) * 0.95;
+    const oz = b.y + 0.55 + Math.floor(i / 3) * 0.95;
+    out.push(box(ox, g + 0.1 * BH, oz, 0.08, 0.3 * BH, 0.08, PROP.crop, 0, 0.7));
+    out.push(box(ox, g + 0.4 * BH, oz, 0.26, 0.14 * BH, 0.26, bloom[i % 3]));
+  }
 }
 
 /**

@@ -1,8 +1,9 @@
-import { outputFull, recipeOf, type Recipe } from "../buildings";
+import { footprintGap, outputFull, recipeOf, type Recipe } from "../buildings";
 import { removeItem } from "../items";
 import { workTicks } from "../labour/hunger";
 import { atLimit } from "./limits";
 import {
+  BuildingKind,
   BuildingState,
   Loc,
   mintId,
@@ -11,6 +12,7 @@ import {
   type Item,
   type Sim,
 } from "../store";
+import { HIVE_FIELDS_MAX, HIVE_REACH, HIVE_TICKS_BY_FIELDS } from "../tuning";
 
 /**
  * Workshop processing: one recipe, whatever the workshop. The sawmill turns a
@@ -69,7 +71,11 @@ function stepWorkshop(sim: Sim, b: Building, recipe: Recipe): void {
   const paid = workTicks(sim, worker);
   if (paid === 0) return;
   b.millProgress += paid;
-  if (b.millProgress < recipe.ticks) return;
+  // Read **every tick**, not fixed when the batch started: a field that
+  // finishes mid-batch speeds the batch under way. Safe in that direction only,
+  // and it is the only direction available — buildings are never razed, so the
+  // count can only rise and no batch is ever lengthened after it starts.
+  if (b.millProgress < batchTicks(sim, b, recipe)) return;
   const made: Item = {
     id: mintId(sim),
     type: recipe.output,
@@ -81,4 +87,41 @@ function stepWorkshop(sim: Sim, b: Building, recipe: Recipe): void {
   };
   sim.items.push(made);
   b.millProgress = -1;
+}
+
+/**
+ * How long one batch of this recipe takes, here.
+ *
+ * `recipe.ticks` for every kind but the Hive, whose rate is **a fact about
+ * where it stands**: the table in `tuning.ts` indexed by the flower fields in
+ * its reach (docs/specs/2026-09-14-hives-and-mead.md). Nothing is stored on the
+ * hive and nothing is scaled at runtime — a count and a lookup.
+ */
+export function batchTicks(sim: Sim, b: Building, recipe: Recipe): number {
+  if (b.kind !== BuildingKind.Hive) return recipe.ticks;
+  return HIVE_TICKS_BY_FIELDS[fieldsInReach(sim, b)];
+}
+
+/**
+ * Active Flowers whose plot lies within `HIVE_REACH` of this hive's plot,
+ * capped at `HIVE_FIELDS_MAX`.
+ *
+ * Derived per read, exactly as `populationCap` sums beds: nothing on the hive
+ * records its fields, so a field built later needs no notification and a field
+ * is never double-counted. **Footprint to footprint** — the gap between two
+ * rectangles, which is the same rectangle the placement overlay draws, rather
+ * than origin to origin, which is exact only for 1×1 plots.
+ *
+ * Exported for the Hive panel's `Fields in reach` row, which must read the very
+ * number the batch length reads.
+ */
+export function fieldsInReach(sim: Sim, hive: Building): number {
+  let n = 0;
+  for (const b of sim.buildings) {
+    if (b.kind !== BuildingKind.Flowers || b.state !== BuildingState.Active) continue;
+    if (footprintGap(hive, b) > HIVE_REACH) continue;
+    n++;
+    if (n === HIVE_FIELDS_MAX) break;
+  }
+  return n;
 }

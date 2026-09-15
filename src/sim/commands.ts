@@ -1,6 +1,6 @@
 import { BUILDING_DEFS, canPlace, defOf, footprint } from "./buildings";
 import { clampLimit, limitOf, stepLimit } from "./economy/limits";
-import { goodOf } from "./goods";
+import { FILTER_CLEARING, GOOD_LIST, goodOf } from "./goods";
 import { canMine, canTerraform, isTargetHeight } from "./ground";
 import { countItems, groundItem } from "./items";
 import { evictFromFootprint, leaveBuilding } from "./labour/colonists";
@@ -104,12 +104,42 @@ export type Command =
    */
   | { kind: "stepLimit"; type: number; dir: -1 | 1 }
   /**
-   * Flip one of a stockpile's accept filters. A filter is **routing, not a
-   * brake** — it gates what the pile takes in and never what leaves it, and
-   * what it already holds stays put. A workshop or a House has no filters to
-   * flip, so the command is refused for anything but a stockpile.
+   * Flip one of a stockpile's accept filters between on (`1`) and off (`0`). A
+   * filter is **routing, not a brake** — it gates what the pile takes in and
+   * never what leaves it, and at `0` what it already holds stays put. A
+   * workshop or a House has no filters to flip, so the command is refused for
+   * anything but a stockpile — in **any state**, so a pile is configured from
+   * its blueprint panel before it is ever built.
+   *
+   * From the clearing state (`2`) this writes `1`: the good is accepted again
+   * and the tidy-up hauls stop being generated. So the toggle never *produces*
+   * a `2`; only `clearFilter` does, and a player who wants plain `off` after a
+   * clear goes through `on`.
    */
-  | { kind: "toggleFilter"; building: number; type: number };
+  | { kind: "toggleFilter"; building: number; type: number }
+  /**
+   * Start clearing a good out of a stockpile — the flag's third value. The pile
+   * refuses the good from now on *and* the colony's ordinary tidy-up hauls
+   * carry out what it holds, and anything that lands there later, to the
+   * nearest other pile with room. Standing, not one-shot: nothing reverts it
+   * but the player toggling the good back on, so a haul that lands after the
+   * press is pushed straight back out.
+   *
+   * Refused for anything but an **active** stockpile: a blueprint's delivered
+   * materials are stored in it too, and a `2` on a half-built pile would have
+   * the hauls strip the site of its own logs
+   * (docs/specs/2026-09-14-stockpiles-default-off-and-clear.md).
+   */
+  | { kind: "clearFilter"; building: number; type: number }
+  /**
+   * Set every one of a stockpile's filters in one press. `on: true` accepts
+   * everything; `on: false` refuses everything — but writes `0` only over `1`s
+   * and **leaves a `2` alone**, because "refuse everything" must not silently
+   * cancel a clear the player is watching. Accepted in any state, as
+   * `toggleFilter` is: eleven goods make a general-purpose pile eleven presses
+   * under the accept-nothing default, and this is the antidote.
+   */
+  | { kind: "setAllFilters"; building: number; on: boolean };
 
 export function applyCommands(sim: Sim, commands: readonly Command[]): void {
   for (const command of commands) applyCommand(sim, command);
@@ -151,6 +181,10 @@ function applyCommand(sim: Sim, command: Command): void {
       return nudgeLimit(sim, command.type, command.dir);
     case "toggleFilter":
       return toggleFilter(sim, command.building, command.type);
+    case "clearFilter":
+      return clearFilter(sim, command.building, command.type);
+    case "setAllFilters":
+      return setAllFilters(sim, command.building, command.on);
   }
 }
 
@@ -180,12 +214,15 @@ function nudgeLimit(sim: Sim, type: number, dir: number): void {
 }
 
 /**
- * Flip a stockpile's filter for one good. Nothing else moves: items already
- * in the pile stay (stored items are not loose, so nothing re-homes them; sites
- * and workshops drain them as they always did), and a haul already on its way
- * delivers — `freeCapacity` is asked at generation, not at arrival, and a
- * cancelled haul would drop the good on the ground for the sake of a rule the
- * player just changed.
+ * Flip a stockpile's filter for one good. Nothing else moves: at `0` the items
+ * already in the pile stay (a stored good is not loose unless the pile is
+ * *clearing* it, so nothing re-homes them; sites and workshops drain them as
+ * they always did), and a haul already on its way delivers — `freeCapacity` is
+ * asked at generation, not at arrival, and a cancelled haul would drop the good
+ * on the ground for the sake of a rule the player just changed.
+ *
+ * Anything that is not `1` lands on `1`, which is what makes this the way out
+ * of a clear as well as the way out of an `off`.
  */
 function toggleFilter(sim: Sim, id: number, type: number): void {
   const b = findBuilding(sim, id);
@@ -193,6 +230,30 @@ function toggleFilter(sim: Sim, id: number, type: number): void {
   const good = goodOf(type);
   if (!good) return;
   b[good.accept] = b[good.accept] === 1 ? 0 : 1;
+}
+
+/**
+ * Put a stockpile into the standing clear state for one good. The state gate is
+ * the door's first lock — `isLoose` carries the second — because a blueprint
+ * holds its delivered construction materials in exactly the same place a
+ * finished pile holds its stock.
+ */
+function clearFilter(sim: Sim, id: number, type: number): void {
+  const b = findBuilding(sim, id);
+  if (!b || b.kind !== BuildingKind.Stockpile || b.state !== BuildingState.Active) return;
+  const good = goodOf(type);
+  if (!good) return;
+  b[good.accept] = FILTER_CLEARING;
+}
+
+/** Accept everything, or refuse everything a clear is not already emptying. */
+function setAllFilters(sim: Sim, id: number, on: boolean): void {
+  const b = findBuilding(sim, id);
+  if (!b || b.kind !== BuildingKind.Stockpile) return;
+  for (const good of GOOD_LIST) {
+    if (on) b[good.accept] = 1;
+    else if (b[good.accept] === 1) b[good.accept] = 0;
+  }
 }
 
 function inBounds(world: World, x: number, y: number): boolean {
@@ -353,6 +414,14 @@ function designateRaze(sim: Sim, x: number, y: number, on: number): void {
 function place(sim: Sim, kind: BuildingKindValue, x: number, y: number): void {
   if (!canPlace(sim, kind, x, y)) return;
   const def = BUILDING_DEFS[kind];
+  // **A new stockpile accepts nothing** until the player turns goods on, which
+  // they can do from the moment it is placed — `toggleFilter` and
+  // `setAllFilters` take a blueprint. A pile that takes everything is the one
+  // configuration a player who curates piles never wants, so the accept-all
+  // default step 2 shipped is reversed here
+  // (docs/specs/2026-09-14-stockpiles-default-off-and-clear.md). Every other
+  // kind keeps its (unused) `1`s, which is what confines the change.
+  const open = kind === BuildingKind.Stockpile ? 0 : 1;
   const b: Building = {
     id: mintId(sim),
     kind,
@@ -363,17 +432,19 @@ function place(sim: Sim, kind: BuildingKindValue, x: number, y: number): void {
     state: BuildingState.Blueprint,
     progress: 0,
     reservedIncoming: 0,
-    acceptLog: 1,
-    acceptPlank: 1,
-    acceptRock: 1,
-    acceptBlock: 1,
-    acceptGrain: 1,
-    acceptFlour: 1,
-    acceptBread: 1,
-    acceptWool: 1,
-    acceptCloth: 1,
-    acceptClothes: 1,
-    acceptCheese: 1,
+    acceptLog: open,
+    acceptPlank: open,
+    acceptRock: open,
+    acceptBlock: open,
+    acceptGrain: open,
+    acceptFlour: open,
+    acceptBread: open,
+    acceptWool: open,
+    acceptCloth: open,
+    acceptClothes: open,
+    acceptCheese: open,
+    acceptHoney: open,
+    acceptMead: open,
     worker: -1,
     millProgress: -1,
   };

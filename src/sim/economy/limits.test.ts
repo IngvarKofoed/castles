@@ -40,11 +40,14 @@ function workshop(sim: Sim, kind: 1 | 2, x = 8, y = 8): Building {
   return b;
 }
 
-/** A finished stockpile. */
+/** A finished stockpile, accepting everything — a new pile accepts nothing
+ *  (2026-09-14-stockpile-default-and-clearing), and these tests are about the toggle
+ *  rather than about the default. */
 function stockpile(sim: Sim, x = 3, y = 8): Building {
   applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x, y }]);
   const b = sim.buildings[sim.buildings.length - 1];
   b.state = BuildingState.Active;
+  applyCommands(sim, [{ kind: "setAllFilters", building: b.id, on: true }]);
   return b;
 }
 
@@ -284,6 +287,82 @@ describe("the toggleFilter command", () => {
       count: 3,
       accepted: false,
     });
+  });
+});
+
+describe("the clearFilter and setAllFilters commands", () => {
+  it("writes the flag's third value, and only on an active stockpile", () => {
+    const sim = peopledSim();
+    const pile = stockpile(sim);
+    applyCommands(sim, [{ kind: "clearFilter", building: pile.id, type: ItemType.Plank }]);
+    expect(pile.acceptPlank).toBe(2);
+    // Which the panel reads as refusing — the toggle stays binary — with
+    // `clearing` carrying the third state on its own.
+    expect(inspect(sim, pile.id)?.stored.find((g) => g.type === ItemType.Plank)).toMatchObject({
+      accepted: false,
+      clearing: true,
+    });
+
+    // Unknown goods, workshops and missing buildings are all refused, exactly
+    // as `toggleFilter` refuses them.
+    const mill = workshop(sim, 1);
+    applyCommands(sim, [
+      { kind: "clearFilter", building: mill.id, type: ItemType.Log },
+      { kind: "clearFilter", building: pile.id, type: 99 },
+      { kind: "clearFilter", building: 999, type: ItemType.Log },
+    ]);
+    expect(mill.acceptLog).toBe(1);
+    expect([pile.acceptLog, pile.acceptRock, pile.acceptBlock]).toEqual([1, 1, 1]);
+  });
+
+  it("is refused for a pile that is not built yet — a site's materials are stored in it too", () => {
+    const sim = peopledSim();
+    applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 3, y: 8 }]);
+    const site = sim.buildings[sim.buildings.length - 1];
+    expect(site.state).toBe(BuildingState.Blueprint);
+    applyCommands(sim, [{ kind: "clearFilter", building: site.id, type: ItemType.Log }]);
+    expect(site.acceptLog).toBe(0);
+  });
+
+  it("turns a clear off through on, never through off", () => {
+    const sim = peopledSim();
+    const pile = stockpile(sim);
+    applyCommands(sim, [{ kind: "clearFilter", building: pile.id, type: ItemType.Plank }]);
+    // One press of the toggle accepts the good again — anything that is not
+    // `1` lands on `1` — and a second press is the ordinary way to `off`.
+    applyCommands(sim, [{ kind: "toggleFilter", building: pile.id, type: ItemType.Plank }]);
+    expect(pile.acceptPlank).toBe(1);
+    applyCommands(sim, [{ kind: "toggleFilter", building: pile.id, type: ItemType.Plank }]);
+    expect(pile.acceptPlank).toBe(0);
+  });
+
+  it("sets every filter at once, and none never cancels a clear", () => {
+    const sim = peopledSim();
+    const pile = stockpile(sim);
+    applyCommands(sim, [
+      { kind: "clearFilter", building: pile.id, type: ItemType.Plank },
+      { kind: "setAllFilters", building: pile.id, on: false },
+    ]);
+    // `none` writes 0 over the 1s and steps around the 2: "refuse everything"
+    // must not silently stop a clear the player is watching.
+    expect(pile.acceptPlank).toBe(2);
+    expect(GOOD_LIST.filter((g) => g.type !== ItemType.Plank).map((g) => pile[g.accept])).toEqual(
+      GOOD_LIST.slice(1).map(() => 0),
+    );
+
+    // `all` is unconditional, so it is also the one-press way out of a clear.
+    applyCommands(sim, [{ kind: "setAllFilters", building: pile.id, on: true }]);
+    expect(GOOD_LIST.map((g) => pile[g.accept])).toEqual(GOOD_LIST.map(() => 1));
+  });
+
+  it("is accepted by a stockpile in any state, which is what makes a blueprint configurable", () => {
+    const sim = peopledSim();
+    applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 3, y: 8 }]);
+    const site = sim.buildings[sim.buildings.length - 1];
+    applyCommands(sim, [{ kind: "setAllFilters", building: site.id, on: true }]);
+    expect(GOOD_LIST.map((g) => site[g.accept])).toEqual(GOOD_LIST.map(() => 1));
+    applyCommands(sim, [{ kind: "toggleFilter", building: site.id, type: ItemType.Log }]);
+    expect(site.acceptLog).toBe(0);
   });
 });
 

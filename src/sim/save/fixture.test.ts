@@ -2,12 +2,22 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { applyCommands } from "../commands";
 import { hashSim } from "../hash";
+import { batchTicks, fieldsInReach } from "../economy/workshop";
+import { countItems } from "../items";
 import { inspect, rhythm } from "../know";
-import { populationCap, settled } from "../settlers";
+import { cellarSet, populationCap, settled } from "../settlers";
 import { testBuilding } from "../test-sim";
-import { BUILDING_DEFS } from "../buildings";
+import { BUILDING_DEFS, recipeOf } from "../buildings";
 import { BuildingKind, BuildingState, ItemType, TaskKind, type Sim } from "../store";
-import { CLOTHES_WEAR_TICKS, PROVISION_BREAD, THREAT_BUCKETS, WATCH_BUCKETS, WATCH_RANGE } from "../tuning";
+import {
+  CLOTHES_WEAR_TICKS,
+  HIVE_FIELDS_MAX,
+  HIVE_TICKS_BY_FIELDS,
+  PROVISION_BREAD,
+  THREAT_BUCKETS,
+  WATCH_BUCKETS,
+  WATCH_RANGE,
+} from "../tuning";
 import { advanceTick } from "../tick";
 import { WallState, canPlaceWall, isStoneWall } from "../walls";
 import { tileIndex } from "../world/world";
@@ -31,6 +41,7 @@ import {
   V8_TICKS,
   V9_TICKS,
   V10_TICKS,
+  V11_TICKS,
   replay,
   v1Script,
   v2Script,
@@ -42,6 +53,7 @@ import {
   v8Script,
   v9Script,
   v10Script,
+  v11Script,
 } from "./fixtures/recipe";
 
 /**
@@ -95,6 +107,15 @@ import {
  *   building with no recipe at all, and its first colonist bound to a slot
  *   that produces nothing. On its own seed, because the tower needs both a
  *   near wood and a den inside `WATCH_RANGE` (`fixtures/recipe.ts`).
+ * - **v10**, written 2026-09-11 for the sheep chain: seven buildings standing,
+ *   all four of its goods in the colony at once, three wear clocks running and
+ *   two colonists caught mid-fitting.
+ * - **v11**, written 2026-09-14 for the drink chain: a **manned Hive with three
+ *   Flowers inside its reach**, so the file freezes a batch length that is a
+ *   fact about *where a building stands* rather than a number off a def; a
+ *   Meadery turning honey into mead; and a **cellar that is set** — mead for
+ *   every settled colonist plus one, which is the number the arrival clock
+ *   reads and a state no save had ever held.
  *
  * None is an empty world: an empty store would round-trip past almost every
  * mistake this file exists to catch.
@@ -118,6 +139,7 @@ const V7 = new URL("./fixtures/v7.castles", import.meta.url);
 const V8 = new URL("./fixtures/v8.castles", import.meta.url);
 const V9 = new URL("./fixtures/v9.castles", import.meta.url);
 const V10 = new URL("./fixtures/v10.castles", import.meta.url);
+const V11 = new URL("./fixtures/v11.castles", import.meta.url);
 
 type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
 
@@ -126,7 +148,7 @@ type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
  * it walks the bread rung like every other old file, which is what moved this
  * number off `0ca62ff1`, and from 10 the sheep rung as well.
  */
-const V7_HASH = "1783d54e";
+const V7_HASH = "a1539258";
 
 /** The entity kinds a pre-threat recipe can still be asked about. Monsters are
  *  excluded because those three recipes replay in an empty wilderness — see
@@ -210,8 +232,8 @@ describe("the committed v1 save", () => {
     // loaves per settled colonist** so a loaded colony has the same three-day
     // runway a fresh one does (docs/changelog/2026-09-08-bread-economy.md).
     const sim = await decode(readFileSync(V1));
-    expect(hashSim(sim)).toBe("a6bb93fd");
-    expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
+    expect(hashSim(sim)).toBe("fd6e06a5");
+    expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
     // The grant, and the flags that would otherwise refuse it a home forever.
     expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 5);
     for (const c of sim.colonists) {
@@ -312,7 +334,7 @@ describe("the committed v2 save", () => {
     // `limits` slots and fifteen granted loaves
     // (docs/changelog/2026-09-08-bread-economy.md).
     const sim = await decode(readFileSync(V2));
-    expect(hashSim(sim)).toBe("b8453d4a");
+    expect(hashSim(sim)).toBe("d6358846");
     for (const b of sim.buildings) {
       expect(b.acceptRock).toBe(1);
       expect(b.acceptBlock).toBe(1);
@@ -363,7 +385,7 @@ describe("the committed v3 save", () => {
     // 9935f38b → 8c8cb6fc at 6 for the `patience` one, 8c8cb6fc → 30f9a9a0
     // at 7 for the `limits` one, and 30f9a9a0 → e8452d51 at 8 for the bread one.
     const sim = await decode(readFileSync(V3));
-    expect(hashSim(sim)).toBe("884c1dad");
+    expect(hashSim(sim)).toBe("85e11905");
     // The half of that rung nothing else would catch: a migrated colony that
     // came through with an empty `monsters` array would be a save of a game
     // that has no threats in it at all, and nothing would ever say so.
@@ -423,7 +445,7 @@ describe("the committed v4 save", () => {
     // give-up clock its own field, aee29fc7 → 65b5106b at 7 for `limits`, and
     // 65b5106b → 87af28e4 at 8 for the bread rung.
     const sim = await decode(readFileSync(V4));
-    expect(hashSim(sim)).toBe("a184703c");
+    expect(hashSim(sim)).toBe("b6afcd30");
     // The half of that rung nothing else would catch: a colonist that came
     // through without `dest` would be a store carrying `undefined`, which the
     // plain-data rule forbids and no other test looks for.
@@ -504,7 +526,7 @@ describe("the committed v5 save", () => {
     // **settled** five and not the wanderer this file was caught carrying,
     // because a colonist still walking in neither eats nor hungers.
     const sim = await decode(readFileSync(V5));
-    expect(hashSim(sim)).toBe("b1027097");
+    expect(hashSim(sim)).toBe("b3c15c23");
     expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 5);
     for (const c of sim.colonists) expect(c.patience).toBe(0);
     // The wanderer it was caught carrying is still walking, clock and all.
@@ -556,10 +578,10 @@ describe("the committed v6 save", () => {
     // four slots of `-1`. The file is untouched and stays so. Then
     // e0d58baa → 251bfc06 at 8 for the bread rung, whose `limits` grows those
     // four slots to seven, and → a71f09d4 at 10 for the sheep rung, which grows
-    // them to eleven — the append ritual, one rung at a time.
+    // them to thirteen — the append ritual, one rung at a time.
     const sim = await decode(readFileSync(V6));
-    expect(hashSim(sim)).toBe("a71f09d4");
-    expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
+    expect(hashSim(sim)).toBe("fe2019bc");
+    expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
     // Six settled folk by now, so six heads' worth of provisions.
     expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 6);
   });
@@ -586,9 +608,9 @@ describe("the committed v7 save", () => {
     // The two states no earlier file could carry: a ceiling that is not
     // unlimited, and an accept flag that is not on.
     // The ceiling the file was written with, plus the three slots the bread
-    // rung appended and the four the sheep rung appended, for goods it had
-    // never heard of.
-    expect(sim.limits).toEqual([-1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
+    // rung appended, the four the sheep rung appended and the two the drink
+    // rung appended, for goods it had never heard of.
+    expect(sim.limits).toEqual([-1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
     const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile)!;
     expect([pile.acceptLog, pile.acceptPlank, pile.acceptRock, pile.acceptBlock]).toEqual([1, 1, 0, 1]);
 
@@ -671,12 +693,12 @@ describe("the committed v8 save", () => {
     expect(eaters).toHaveLength(1);
     expect(eaters[0].path.length - eaters[0].step).toBeGreaterThan(0);
     expect(new Set(sim.colonists.map((c) => c.hunger)).size).toBe(sim.colonists.length);
-    expect(sim.limits).toHaveLength(11);
+    expect(sim.limits).toHaveLength(13);
   });
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V8));
-    expect(hashSim(sim)).toBe("74af149c");
+    expect(hashSim(sim)).toBe("a4634c50");
   });
 
   it("keeps running from where it was saved, and the meal finishes", async () => {
@@ -730,7 +752,7 @@ describe("the committed v9 save", () => {
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V9));
-    expect(hashSim(sim)).toBe("8467d2f9");
+    expect(hashSim(sim)).toBe("56c5e989");
   });
 
   it("keeps watching from where it was saved, and blurs the frame it is unstaffed", async () => {
@@ -776,7 +798,7 @@ describe("the committed v10 save", () => {
     for (const type of [ItemType.Wool, ItemType.Cloth, ItemType.Clothes, ItemType.Cheese]) {
       expect(sim.items.some((it) => it.type === type)).toBe(true);
     }
-    expect(sim.limits).toHaveLength(11);
+    expect(sim.limits).toHaveLength(13);
 
     // And the states no earlier file could carry. Three colonists wearing
     // clothes on **three different wear clocks** — so the field is a live
@@ -801,7 +823,7 @@ describe("the committed v10 save", () => {
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V10));
-    expect(hashSim(sim)).toBe("e61faaff");
+    expect(hashSim(sim)).toBe("2b8186a7");
   });
 
   it("keeps running from where it was saved, and both fittings finish", async () => {
@@ -824,6 +846,61 @@ describe("the committed v10 save", () => {
       const before = worn.get(c.id) ?? 0;
       if (before > 600) expect(c.clothes).toBe(before - 600);
     }
+  });
+});
+
+describe("the committed v11 save", () => {
+  it("still loads, with a boosted hive and a cellar that is set", async () => {
+    const sim = await decode(readFileSync(V11));
+    expect(sim.tick).toBe(V11_TICKS);
+    expect(sim.world.seed).toBe(FIXTURE_SEED);
+
+    // The three kinds no earlier file could hold, all standing — and the two
+    // accept flags a v11-native file was written with, on every one of them.
+    const hive = sim.buildings.find((b) => b.kind === BuildingKind.Hive)!;
+    const meadery = sim.buildings.find((b) => b.kind === BuildingKind.Meadery)!;
+    for (const b of [hive, meadery]) {
+      expect(b.state).toBe(BuildingState.Active);
+      expect(b.worker).toBeGreaterThanOrEqual(0);
+      expect([b.acceptHoney, b.acceptMead]).toEqual([1, 1]);
+    }
+    expect(sim.limits).toHaveLength(13);
+
+    // **The state no save has ever held**: a batch length that is a fact about
+    // where a building stands. Three fields are up, all of them inside the
+    // hive's reach, so the file freezes the boost rather than the def's number.
+    const fields = sim.buildings.filter((b) => b.kind === BuildingKind.Flowers);
+    expect(fields).toHaveLength(3);
+    for (const f of fields) expect(f.state).toBe(BuildingState.Active);
+    expect(fieldsInReach(sim, hive)).toBe(HIVE_FIELDS_MAX);
+    expect(batchTicks(sim, hive, recipeOf(hive)!)).toBe(HIVE_TICKS_BY_FIELDS[HIVE_FIELDS_MAX]);
+
+    // Both new goods in the colony at once, which can only have happened in
+    // chain order: no honey, no mead.
+    expect(countItems(sim, ItemType.Honey)).toBeGreaterThan(0);
+    // And the cellar **set** — a cup a head and one for the newcomer — which is
+    // the number the arrival clock reads and the reason this file exists.
+    expect(countItems(sim, ItemType.Mead)).toBeGreaterThanOrEqual(settled(sim) + 1);
+    expect(cellarSet(sim)).toBe(true);
+  });
+
+  it("decodes to the exact store it was written from", async () => {
+    const sim = await decode(readFileSync(V11));
+    expect(hashSim(sim)).toBe("0e5c80e2");
+  });
+
+  it("keeps running from where it was saved, and the hive keeps its boosted rate", async () => {
+    const sim = await decode(readFileSync(V11));
+    const hive = sim.buildings.find((b) => b.kind === BuildingKind.Hive)!;
+    const cups = countItems(sim, ItemType.Mead);
+    // Four batches at the three-field rate. The reloaded hive counts its fields
+    // off the buildings in the file rather than off anything stored on it,
+    // which is the whole of "derived per read" surviving a round trip — and the
+    // meadery turns what it makes into more cups.
+    for (let t = 0; t < HIVE_TICKS_BY_FIELDS[HIVE_FIELDS_MAX] * 4; t++) advanceTick(sim);
+    expect(fieldsInReach(sim, hive)).toBe(HIVE_FIELDS_MAX);
+    expect(batchTicks(sim, hive, recipeOf(hive)!)).toBe(HIVE_TICKS_BY_FIELDS[HIVE_FIELDS_MAX]);
+    expect(countItems(sim, ItemType.Mead)).toBeGreaterThan(cups);
   });
 });
 
@@ -887,6 +964,13 @@ describe("the fixtures still have the store shape this build produces", () => {
     const kinds = [...OLD_KINDS, "monsters"] as const;
     expect(shapeOf(await decode(readFileSync(V10)), kinds)).toEqual(
       shapeOf(replay(v10Script, V10_TICKS, FIXTURE_SEED_V10), kinds),
+    );
+  });
+
+  it("v11, natively — the boosted hive and the cellar", async () => {
+    const kinds = [...OLD_KINDS, "monsters"] as const;
+    expect(shapeOf(await decode(readFileSync(V11)), kinds)).toEqual(
+      shapeOf(replay(v11Script, V11_TICKS, FIXTURE_SEED), kinds),
     );
   });
 

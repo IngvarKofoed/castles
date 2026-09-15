@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { GOOD_LIST, ItemType, type ItemTypeValue } from "../sim/know";
-import { GOOD_GROUP, GROUP_ORDER, millNote, railCaption, tookCaption, watchNote } from "./hud";
+import { GOOD_LIST, ItemType, type ItemTypeValue, type StoredGood } from "../sim/know";
+import { GOOD_GROUP, GROUP_ORDER, millNote, railCaption, stockNote, tookCaption, watchNote } from "./hud";
 
 /**
  * The pieces of the HUD that are logic rather than markup: which tool the
@@ -110,7 +110,55 @@ describe("the Stores panel's grouping", () => {
   // emit-on-change walk would file it under Food. Cheese is that case having
   // actually happened — appended last, emitted with Food.
   it("emits the groups in a fixed order, not in enum order", () => {
-    expect([...GROUP_ORDER]).toEqual(["wood", "stone", "food", "cloth"]);
+    expect([...GROUP_ORDER]).toEqual(["wood", "stone", "food", "cloth", "drink"]);
+  });
+});
+
+describe("a stockpile's second note row", () => {
+  /** A pile's `stored` list, built from the goods table so a new good cannot
+   *  quietly fall out of the note's reach. */
+  const pile = (patch: Partial<Record<number, Partial<StoredGood>>> = {}): { stored: StoredGood[] } => ({
+    stored: GOOD_LIST.map((good) => ({
+      type: good.type,
+      name: good.name,
+      count: 0,
+      accepted: false,
+      clearing: false,
+      stuck: false,
+      ...patch[good.type],
+    })),
+  });
+
+  it("says what an accept-nothing pile is waiting for", () => {
+    expect(stockNote(pile())).toBe("accepts nothing yet — turn on what this pile should take");
+  });
+
+  it("falls silent the moment one good is turned on", () => {
+    expect(stockNote(pile({ [ItemType.Log]: { accepted: true } }))).toBeNull();
+  });
+
+  it("names a stuck clear, and the good it is stuck on", () => {
+    expect(stockNote(pile({ [ItemType.Plank]: { count: 3, clearing: true, stuck: true } }))).toBe(
+      "clearing planks — no other pile will take them",
+    );
+  });
+
+  it("names the first stuck good in goods order when more than one is", () => {
+    const both = pile({
+      [ItemType.Log]: { count: 1, clearing: true, stuck: true },
+      [ItemType.Plank]: { count: 3, clearing: true, stuck: true },
+    });
+    expect(stockNote(both)).toBe("clearing logs — no other pile will take them");
+  });
+
+  it("lets a pile that is clearing something keep its silence, accepting nothing or not", () => {
+    // A pile emptying itself is not a pile waiting to be configured, so the
+    // accept-nothing note would be the wrong sentence — but only while it still
+    // holds some, since a finished clear reads as `off` everywhere else.
+    expect(stockNote(pile({ [ItemType.Plank]: { count: 3, clearing: true } }))).toBeNull();
+    expect(stockNote(pile({ [ItemType.Plank]: { count: 0, clearing: true } }))).toBe(
+      "accepts nothing yet — turn on what this pile should take",
+    );
   });
 });
 

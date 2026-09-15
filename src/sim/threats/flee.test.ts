@@ -1,16 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { applyCommands } from "../commands";
+import { workTile } from "../buildings";
 import { spawnItem } from "../items";
 import { stepColonists } from "../labour/colonists";
+import { mealDue } from "../labour/hunger";
+import { inspect } from "../know";
 import { generateTasks } from "../labour/tasks";
 import { occupancy } from "../path";
-import { ItemType, MonsterPhase, TaskKind, type Colonist, type Sim } from "../store";
+import {
+  BuildingKind,
+  BuildingState,
+  ItemType,
+  MonsterPhase,
+  TaskKind,
+  type Building,
+  type Colonist,
+  type Sim,
+} from "../store";
 import { flatSim, testBuilding, testColonist, testMonster } from "../test-sim";
 import { advanceTick } from "../tick";
-import { PALISADE_HP, REPAIR_HP_PER_SECOND, TICK_HZ } from "../tuning";
+import { MEAL_TICKS, PALISADE_HP, REPAIR_HP_PER_SECOND, TICK_HZ } from "../tuning";
 import { WallState } from "../walls";
 import { recomputeEnclosure } from "../walls/enclosure";
 import { tileIndex } from "../world/world";
+import { prowlerNear } from "./flee";
 import { stepMonsters } from "./monsters";
 
 /**
@@ -120,6 +133,106 @@ describe("fleeing", () => {
     sim.monsters.push(testMonster({ lairX: 6, lairY: 9, x: 8.5, y: 9.5 }));
     for (let t = 0; t < 20; t++) stepColonists(sim);
     expect(c.x).not.toBe(12.5);
+  });
+});
+
+describe("the door guard", () => {
+  /**
+   * A staffed workshop with its slot worker inside and a loaf far away, so the
+   * only thing that can take them out of the building is the meal errand.
+   * `flatSim` has no walls, so the doorstep is outside ground and the guard is
+   * live — which is the case the guard exists for: a hive or a tower standing
+   * beyond the wall.
+   */
+  function staffedMill(sim: Sim): { mill: Building; keeper: Colonist } {
+    const keeper = walker(sim, 10, 14);
+    applyCommands(sim, [{ kind: "place", building: BuildingKind.Mill, x: 10, y: 10 }]);
+    const mill = sim.buildings[sim.buildings.length - 1];
+    mill.state = BuildingState.Active;
+    applyCommands(sim, [{ kind: "staff", building: mill.id }]);
+    for (let t = 0; t < 200 && keeper.inside !== 1; t++) advanceTick(sim);
+    expect(keeper.inside).toBe(1);
+    return { mill, keeper };
+  }
+
+  it("keeps an indoor worker in while a prowler watches the doorstep", () => {
+    const sim = flatSim(20);
+    recomputeEnclosure(sim);
+    const { mill, keeper } = staffedMill(sim);
+    // The work tile is where `leaveBuilding` puts them; the orc stands beside
+    // exactly that tile, and nowhere near the building's own footprint.
+    const [wx, wy] = workTile(mill);
+    sim.monsters.push(testMonster({ lairX: wx, lairY: wy + 1, id: 901 }));
+    spawnItem(sim, ItemType.Bread, 3, 3);
+    keeper.hunger = MEAL_TICKS;
+
+    for (let t = 0; t < 60; t++) {
+      advanceTick(sim);
+      // Never out, never on the errand, and above all never dead: the flee
+      // check passes them over *because* they are inside, so stepping out was
+      // the one move nothing else in the game would have saved them from.
+      expect(keeper.inside).toBe(1);
+      expect(keeper.eating).toBe(0);
+      expect(sim.colonists).toContain(keeper);
+    }
+    expect(mealDue(keeper)).toBe(true);
+    expect(inspect(sim, mill.id)?.worker).toBe("inside");
+    // Stated so the test cannot pass vacuously if monster movement ever
+    // changes: the doorstep really was watched for the whole sixty ticks.
+    expect(prowlerNear(sim, wx + 0.5, wy + 0.5)).not.toBeNull();
+  });
+
+  it("lets them out the moment the prowler stops prowling", () => {
+    const sim = flatSim(20);
+    recomputeEnclosure(sim);
+    const { mill, keeper } = staffedMill(sim);
+    const [wx, wy] = workTile(mill);
+    const orc = testMonster({ lairX: wx, lairY: wy + 1, id: 901 });
+    sim.monsters.push(orc);
+    spawnItem(sim, ItemType.Bread, 3, 3);
+    keeper.hunger = MEAL_TICKS;
+    for (let t = 0; t < 20; t++) advanceTick(sim);
+    expect(keeper.inside).toBe(1);
+
+    // Resting and homeward monsters are not threats — the same rule the flee
+    // check has always used — so the errand resumes with nothing else changing.
+    orc.phase = MonsterPhase.Rest;
+    for (let t = 0; t < 40 && keeper.eating !== 1; t++) advanceTick(sim);
+    expect(keeper.eating).toBe(1);
+    expect(keeper.inside).toBe(0);
+  });
+
+  it("holds the fitting at the door too", () => {
+    const sim = flatSim(20);
+    recomputeEnclosure(sim);
+    const { keeper } = staffedMill(sim);
+    const [wx, wy] = workTile(sim.buildings[sim.buildings.length - 1]);
+    const orc = testMonster({ lairX: wx, lairY: wy + 1, id: 901 });
+    sim.monsters.push(orc);
+    // Unclothed, with a garment on the ground: the dress errand's whole trigger.
+    keeper.clothes = 0;
+    spawnItem(sim, ItemType.Clothes, 3, 3);
+    for (let t = 0; t < 40; t++) {
+      advanceTick(sim);
+      expect(keeper.inside).toBe(1);
+      expect(keeper.dressing).toBe(0);
+    }
+    orc.phase = MonsterPhase.Rest;
+    for (let t = 0; t < 40 && keeper.dressing !== 1; t++) advanceTick(sim);
+    expect(keeper.dressing).toBe(1);
+  });
+
+  it("asks about a place, not a person, and still exempts inside ground", () => {
+    const sim = flatSim(20);
+    ring(sim);
+    sim.monsters.push(testMonster({ lairX: 9, lairY: 13, id: 901 }));
+    // Outside ground within range: answered.
+    expect(prowlerNear(sim, 9.5, 12.5)?.id).toBe(901);
+    // The ring's interior: exempt, whatever stands beside it.
+    expect(prowlerNear(sim, 9.5, 9.5)).toBeNull();
+    // Off the map, and out of range.
+    expect(prowlerNear(sim, -1.5, 9.5)).toBeNull();
+    expect(prowlerNear(sim, 9.5, 2.5)).toBeNull();
   });
 });
 

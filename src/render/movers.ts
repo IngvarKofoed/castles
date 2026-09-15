@@ -24,7 +24,6 @@ import {
   monsters,
   BUILDING_DEFS,
   MonsterKind,
-  WATCH_RANGE,
   type BuildingKindValue,
   type ItemTypeValue,
   type MonsterKindValue,
@@ -148,21 +147,27 @@ const MAX_OVERLAY = 8192;
 const MAX_INSIDE = 16384;
 const MAX_BOUNDARY = 4096;
 /**
- * The watch-range boundaries: `SQUARE_BARS` per tower, and the tool shows every
- * tower on the map at once. Sized for a few dozen towers — well past what a
- * colony builds — and past the cap a square is refused **whole** rather than
- * truncated, because a half-drawn square is worse than a missing one: it claims
- * a smaller reach than the tower actually has.
+ * The reach boundaries — a Watchtower's watch square and a Hive's flower reach,
+ * one layer pair for both — and the tool shows every tower, or every hive, on
+ * the map at once. Sized for a few dozen of either, well past what a colony
+ * builds, and past the cap a rectangle is refused **whole** rather than
+ * truncated, because a half-drawn boundary is worse than a missing one: it
+ * claims a smaller reach than the building actually has.
  *
- * The ghost's own square is queued **first** by the caller for exactly that
+ * The ghost's own rectangle is queued **first** by the caller for exactly that
  * reason: if a budget ever runs out it must not be the overlay the player is
  * actively aiming with that goes missing (the `ghostKeyline` lesson).
  */
-const MAX_WATCH = 8192;
-/** Bars one watch square costs, in each of its two layers: four runs of
- *  `2·WATCH_RANGE + 1`, which is one per ring tile plus a second on each of the
- *  four corners — a corner needs a bar on both of its outward faces. */
-const SQUARE_BARS = 4 * (2 * WATCH_RANGE + 1);
+const MAX_REACH = 8192;
+/**
+ * Bars one reach rectangle costs, in each of its two layers: a run along each
+ * of the four sides, with the four corner tiles visited twice — a corner needs
+ * a bar on both of its outward faces. A tower's 49×49 square is 196; a 2×2
+ * hive at `HIVE_REACH` 6 is a 14×14 rectangle, so 56.
+ */
+function reachBars(r: ReachRect): number {
+  return 2 * (r.x1 - r.x0 + 1) + 2 * (r.y1 - r.y0 + 1);
+}
 /**
  * A wall drag is an L, so its two legs together reach at most twice a map edge
  * — and each tile draws four bars. Sized for the whole L: a cap that only
@@ -285,6 +290,18 @@ const DORMANT_SPREAD = 1.25;
 const DORMANT_FRONT = 0.45;
 
 /** One tile of a placement preview, and whether it may actually be placed. */
+/**
+ * A reach boundary in tile coordinates, inclusive at both ends — the caller
+ * grows the footprint, because the radius is the caller's business (a tower's
+ * `WATCH_RANGE`, a hive's `HIVE_REACH`) and the overlay's is drawing a box.
+ */
+export interface ReachRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface GhostTile {
   x: number;
   y: number;
@@ -353,8 +370,8 @@ export class MoverRenderer {
     // A watch range is the enclosure boundary's recipe with **no wash under
     // it**: 49 tiles across, a fill would tint the world rather than mark a
     // limit, and the world is the hero (docs/STYLEGUIDE.md, Tone).
-    this.watchKeyline = overlayLayer(scene, MAX_WATCH, KEYLINE, 0.5);
-    this.watchEdge = overlayLayer(scene, MAX_WATCH, SAGE, 0.85);
+    this.watchKeyline = overlayLayer(scene, MAX_REACH, KEYLINE, 0.5);
+    this.watchEdge = overlayLayer(scene, MAX_REACH, SAGE, 0.85);
     // The drag box is **gold**, because gold is player intent. Sage and rust
     // are the ghost's validity colours and would be a lie here: the box makes
     // no claim about whether anything inside it can actually be worked — the
@@ -392,7 +409,7 @@ export class MoverRenderer {
     alpha: number,
     ghost: Ghost | null,
     showEnclosure = false,
-    watch: readonly { x: number; y: number }[] = [],
+    reach: readonly ReachRect[] = [],
     box: SelectionBox | null = null,
   ): void {
     for (const l of this.layers) l.used = 0;
@@ -408,7 +425,7 @@ export class MoverRenderer {
     // Before the ghost, and in the order the caller gave: the ghost's own
     // square leads the list, so a starved layer drops a distant tower's
     // boundary rather than the one being aimed with.
-    for (const tower of watch) this.drawWatchRange(tower.x, tower.y);
+    for (const rect of reach) this.drawReach(rect);
     if (ghost) this.drawGhost(ghost);
     for (const l of this.layers) {
       l.mesh.count = l.used;
@@ -675,14 +692,18 @@ export class MoverRenderer {
   }
 
   /**
-   * One Watchtower's reach: a keylined sage **square outline** at Chebyshev
-   * `WATCH_RANGE` around its tile, shown only while the tower tool is held or
-   * a tower is selected — never permanently.
+   * One building's reach: a keylined sage **rectangle outline** in tile
+   * coordinates, shown only while its tool is held or one is selected — never
+   * permanently. Two callers, one shape: a Watchtower's square is its footprint
+   * (1×1) grown by `WATCH_RANGE`, a Hive's is its 2×2 plot grown by
+   * `HIVE_REACH`, and a rectangle is what covers both
+   * (docs/specs/2026-09-14-hives-and-mead.md).
    *
-   * **A square, because a square is what the predicate tests.** Coverage is
-   * Chebyshev distance from the tower to a den, so a circle of radius 24 would
-   * draw a picture that excluded covered diagonal dens — the overlay denying
-   * knowledge the player has already paid a pair of hands for.
+   * **A rectangle, because a rectangle is what the predicates test.** Both are
+   * Chebyshev gaps — tower-tile to den for one, footprint to footprint for the
+   * other — so a circle would draw a picture that excluded covered diagonal
+   * dens and counted fields the hive cannot reach. The overlay may never deny
+   * knowledge the player has paid for, nor promise a rate they will not get.
    *
    * **Outline only, no interior wash.** The enclosure's faint fill works
    * because it says which side of a line the colony's ground is on; 49 tiles
@@ -693,24 +714,26 @@ export class MoverRenderer {
    * rise. Tiles off the map are skipped: a tower near the coast really does
    * reach past the edge, and an open line is the honest picture of that.
    */
-  private drawWatchRange(cx: number, cy: number): void {
+  private drawReach(rect: ReachRect): void {
     const size = this.sim.world.size;
-    const r = WATCH_RANGE;
-    // Refuse a square that will not fit **whole**. `put` drops instances one at
-    // a time, and the four runs are laid interleaved per `d`, so a square that
+    // Refuse a rectangle that will not fit **whole**. `put` drops instances one
+    // at a time, and the four runs are laid interleaved, so a rectangle that
     // merely ran out of budget would render as an open box stopping short on
     // all four sides — a boundary claiming *less* ground than the predicate
     // covers, which is the one thing this overlay may never do. The ghost is
-    // queued first, so what a full layer refuses is always a distant tower.
-    if (this.watchKeyline.used + SQUARE_BARS > MAX_WATCH) return;
-    for (let d = -r; d <= r; d++) {
-      // The two horizontal runs then the two vertical ones. The four corner
-      // tiles are visited twice on purpose — each needs a bar on both of its
-      // outward faces, or the square has four notches in it.
-      this.watchBar(cx + d, cy - r, 0, -1, size);
-      this.watchBar(cx + d, cy + r, 0, 1, size);
-      this.watchBar(cx - r, cy + d, -1, 0, size);
-      this.watchBar(cx + r, cy + d, 1, 0, size);
+    // queued first, so what a full layer refuses is always a distant building.
+    if (this.watchKeyline.used + reachBars(rect) > MAX_REACH) return;
+    const { x0, y0, x1, y1 } = rect;
+    // The two horizontal runs then the two vertical ones. The four corner
+    // tiles are visited twice on purpose — each needs a bar on both of its
+    // outward faces, or the rectangle has four notches in it.
+    for (let x = x0; x <= x1; x++) {
+      this.watchBar(x, y0, 0, -1, size);
+      this.watchBar(x, y1, 0, 1, size);
+    }
+    for (let y = y0; y <= y1; y++) {
+      this.watchBar(x0, y, -1, 0, size);
+      this.watchBar(x1, y, 1, 0, size);
     }
   }
 

@@ -60,6 +60,9 @@ function workshop(sim: Sim, kind: BuildingKindValue, x: number, y: number): Buil
   applyCommands(sim, [{ kind: "place", building: kind, x, y }]);
   const b = sim.buildings[sim.buildings.length - 1];
   b.state = BuildingState.Active;
+  // A new pile accepts nothing (2026-09-14-stockpile-default-and-clearing); these
+  // tests are about what a *configured* pile does, so open it here.
+  if (kind === BuildingKind.Stockpile) applyCommands(sim, [{ kind: "setAllFilters", building: b.id, on: true }]);
   return b;
 }
 
@@ -80,8 +83,11 @@ describe("the four new goods and the four new buildings", () => {
     }
     // The store's ceiling array is sized off the enum, so a missed slot is a
     // load refusal rather than a silent unlimited.
-    expect(sim.limits).toHaveLength(11);
-    expect(readout(sim).goods).toHaveLength(11);
+    // Sized off the enum rather than a literal, which is the whole claim — a
+    // number written out here would stop covering the newest good the moment
+    // one was appended, which is exactly the miss this test exists to catch.
+    expect(sim.limits).toHaveLength(GOOD_LIST.length);
+    expect(readout(sim).goods).toHaveLength(GOOD_LIST.length);
   });
 
   it("chain wool through cloth to clothes, and grain to cheese", () => {

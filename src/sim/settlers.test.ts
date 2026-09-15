@@ -98,6 +98,14 @@ function script(sim: Sim): Command[] {
       const s = site(sim, BuildingKind.Stockpile);
       return s ? [{ kind: "place", building: BuildingKind.Stockpile, x: s[0], y: s[1] }] : [];
     }
+    // A new pile accepts nothing, so this run opens it the tick after placing
+    // it — while it is still a blueprint, so nothing about the colony below
+    // moves. Without it the logs would stay where they fell and this file
+    // would be pinning a different scenario than the one it describes.
+    case 6: {
+      const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
+      return pile ? [{ kind: "setAllFilters", building: pile.id, on: true }] : [];
+    }
     case 200: {
       const s = site(sim, BuildingKind.Sawmill);
       return s ? [{ kind: "place", building: BuildingKind.Sawmill, x: s[0], y: s[1] }] : [];
@@ -240,7 +248,15 @@ describe("the scripted settling", () => {
     // not be otherwise — no script here builds a Tailor, so no garment exists,
     // so the composed `workTicks` pays every tick what the old boolean gate
     // paid, and every assertion in this file is unchanged and still passes.
-    expect(hashSim(settling())).toBe("3d64cb83");
+    // 3d64cb83 → ebb40f13 with the drink chain (SAVE_VERSION 11,
+    // docs/changelog/2026-09-14-hives-and-mead.md). **Shape only**, and proved
+    // rather than argued: strip the two new `Building` accept flags and the two
+    // new `limits` slots back out and this run hashes to 3d64cb83 exactly. It could
+    // not be otherwise — no script here builds a Hive, a Flowers or a Meadery,
+    // so no mead exists, so `cellarSet` is false on every tick and the
+    // countdown decrements by one as it always did, `batchTicks` answers
+    // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
+    expect(hashSim(settling())).toBe("ebb40f13");
   });
 
   it("builds a House out of planks, which is what planks are for", () => {
@@ -327,7 +343,15 @@ describe("the scripted death en route", () => {
     // not be otherwise — no script here builds a Tailor, so no garment exists,
     // so the composed `workTicks` pays every tick what the old boolean gate
     // paid, and every assertion in this file is unchanged and still passes.
-    expect(hashSim(caught())).toBe("78fd60d6");
+    // 78fd60d6 → 711457ba with the drink chain (SAVE_VERSION 11,
+    // docs/changelog/2026-09-14-hives-and-mead.md). **Shape only**, and proved
+    // rather than argued: strip the two new `Building` accept flags and the two
+    // new `limits` slots back out and this run hashes to 78fd60d6 exactly. It could
+    // not be otherwise — no script here builds a Hive, a Flowers or a Meadery,
+    // so no mead exists, so `cellarSet` is false on every tick and the
+    // countdown decrements by one as it always did, `batchTicks` answers
+    // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
+    expect(hashSim(caught())).toBe("711457ba");
   });
 
   it("loses the wanderer to an orc, and buries them like anyone", () => {

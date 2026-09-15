@@ -362,6 +362,46 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
       limits: Array.isArray(s.limits) ? [...s.limits, -1, -1, -1, -1] : s.limits,
     };
   },
+
+  /**
+   * 10 → 11: hives, flower fields and mead
+   * (docs/specs/2026-09-14-hives-and-mead.md). Two goods and three kinds; no
+   * colonist field, no world field, and nothing derived — a hive's fields are
+   * counted per read, so there is no state for the boost to migrate.
+   *
+   * **The two accept flags are stamped `0`, not `1`** — deliberately against
+   * the v9 rung's rule one line above. Since
+   * `2026-09-14-stockpile-default-and-clearing` a pile's filters are the
+   * player's curation, and a good that did not exist when the save was written
+   * was never opted into; a curated pile must not sprout acceptance of honey
+   * and mead behind the player's back, and `all` is one press. The v9 rung's
+   * reason for stamping `1` — that a missing flag refuses the good *forever*
+   * while its workshop jams at output cap — is answered by writing the field,
+   * not by its value.
+   *
+   * **Two `-1`s appended to `limits`**, per the production-control append
+   * ritual: exactly its own two, so an older save migrated after some later
+   * good exists still arrives at that good's rung with the right count.
+   *
+   * The three kinds need nothing in the state at all. The **bump** is for the
+   * older build: `BuildingKind` gained three values, and without a version rise
+   * an old build would load a kind-12 save cleanly and crash on its first frame
+   * (`defOf` of an unknown kind is `undefined`) — rung 8's reason, three kinds
+   * over.
+   */
+  10: (state) => {
+    const s = object(state);
+    return {
+      ...s,
+      buildings:
+        Array.isArray(s.buildings) ?
+          s.buildings.map((b) =>
+            b && typeof b === "object" ? { ...(b as Record<string, unknown>), acceptHoney: 0, acceptMead: 0 } : b,
+          )
+        : s.buildings,
+      limits: Array.isArray(s.limits) ? [...s.limits, -1, -1] : s.limits,
+    };
+  },
 };
 
 /**

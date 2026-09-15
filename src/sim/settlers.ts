@@ -1,9 +1,11 @@
 import { defOf } from "./buildings";
 import { FOODS } from "./goods";
-import { countItems } from "./items";
+import { countItems, removeItem } from "./items";
 import { occupancy, passable, type Occupancy } from "./path";
 import {
   BuildingState,
+  ItemType,
+  Loc,
   MonsterPhase,
   findBuilding,
   mintId,
@@ -117,6 +119,27 @@ export function tableSet(sim: Sim): boolean {
 }
 
 /**
+ * Is the cellar stocked — a cup of mead a head and one for the newcomer?
+ *
+ * `tableSet`'s bar, on mead, and counted the same way: every mead anywhere,
+ * stored, loose or carried, so the number cannot flicker as haulers walk. What
+ * it buys is **speed, never permission**: beds and food are still the only
+ * gates, and a colony with an empty cellar grows at exactly the rate it always
+ * did (docs/specs/2026-09-14-hives-and-mead.md).
+ *
+ * **No exemption for an empty colony**, unlike `tableSet`'s. That exemption
+ * exists to keep recovery possible, and there is nothing to recover here: with
+ * nobody home there is nobody to hurry.
+ *
+ * Exported for the House panel, which says so in a line — this is the one
+ * lever in the game whose effect is otherwise invisible until you time two
+ * arrivals.
+ */
+export function cellarSet(sim: Sim): boolean {
+  return countItems(sim, ItemType.Mead) >= settled(sim) + 1;
+}
+
+/**
  * One tick of the arrival loop, run after monsters and before workshops.
  *
  * After monsters, so a wanderer caught on the tick they would have arrived
@@ -153,7 +176,12 @@ export function stepSettlers(sim: Sim): void {
     // happen at today's tunables (all four are whole ticks), which is exactly
     // why the guard is worth having — a retuned `DAY_TICKS` is where it would
     // otherwise bite, silently.
-    sim.wandererTimer = Math.max(0, sim.wandererTimer - 1);
+    // **Mead's whole effect**: a stocked cellar runs the clock at double speed.
+    // Read here rather than folded into `restart`'s draw, so the PRNG stream is
+    // untouched and the boost switches on and off mid-countdown as stock
+    // crosses the line — and it sits *inside* the gate sequence, so a hurried
+    // clock is still a clock that only runs while somebody may actually come.
+    sim.wandererTimer = Math.max(0, sim.wandererTimer - (cellarSet(sim) ? 2 : 1));
     return;
   }
   const beach = landing(sim, home);
@@ -182,6 +210,11 @@ function resolve(sim: Sim, c: Colonist): void {
     // who never wandered — the field means nothing once `dest` is -1, and a
     // stale number would ride in every save from here on.
     c.patience = 0;
+    // The welcome, paid **on delivery**: a wanderer caught on the beach costs
+    // the colony nobody's drink. Demand therefore equals arrivals, which is
+    // what keeps the cellar a standing cost rather than a threshold crossed
+    // once and forgotten.
+    drinkCup(sim);
     return;
   }
   // Only `stepWanderer` ever advances this, and only on a tick where no route
@@ -190,6 +223,26 @@ function resolve(sim: Sim, c: Colonist): void {
   if (c.patience < WANDERER_PATIENCE) return;
   const i = sim.colonists.indexOf(c);
   if (i >= 0) sim.colonists.splice(i, 1);
+}
+
+/**
+ * A cup for the newcomer: the lowest-id **free** mead that is stored or on the
+ * ground, removed.
+ *
+ * Never a carried one and never a reserved one — removing either would orphan
+ * a haul mid-flight, and the reservation discipline (`labour/tasks`) is what
+ * makes that unthinkable rather than merely unlikely. **None found: they settle
+ * anyway**, exactly as somebody settles into a short table; the cellar hurries
+ * arrivals, it never gates them.
+ */
+function drinkCup(sim: Sim): void {
+  let best = -1;
+  for (const it of sim.items) {
+    if (it.type !== ItemType.Mead || it.reservedBy !== -1) continue;
+    if (it.loc !== Loc.Stored && it.loc !== Loc.Ground) continue;
+    if (best < 0 || it.id < best) best = it.id;
+  }
+  if (best >= 0) removeItem(sim, best);
 }
 
 /**

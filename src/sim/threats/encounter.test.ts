@@ -78,6 +78,12 @@ function script(sim: Sim): Command[] {
       return [{ kind: "designateChop", tiles: trees(sim, 24) }];
     case 5:
       return [{ kind: "place", building: BuildingKind.Stockpile, x: 126, y: 126 }];
+    // A new pile accepts nothing, so it is opened the tick after placement —
+    // while it is still a blueprint, so nothing in the encounter below moves.
+    case 6: {
+      const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
+      return pile ? [{ kind: "setAllFilters", building: pile.id, on: true }] : [];
+    }
     // Early enough to be standing when the monster's first full prowl arrives.
     // Moved 400 → 150 at the bread step: meals put every colonist on the road
     // for a few seconds a game-day, which was enough to leave this line half
@@ -96,7 +102,7 @@ function script(sim: Sim): Command[] {
 }
 
 /** The pinned hash of the run, named so the move history above can cite it. */
-const PINNED_V10 = "88d00a73";
+const PINNED_V11 = "b5e291f3";
 
 const damage = (sim: Sim): number => [...sim.wallDamageMap].reduce((n, v) => n + v, 0);
 
@@ -182,14 +188,22 @@ describe("the scripted encounter", () => {
     // unchanged: bitten hard, left standing, mended by labour, and somebody
     // does not come home.
     //
-    // 4e86c393 → PINNED_V10 with the sheep chain (SAVE_VERSION 10,
+    // 4e86c393 → 88d00a73 with the sheep chain (SAVE_VERSION 10,
     // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape only**, and
     // proved rather than argued: strip the two new colonist fields and the four
     // new `limits` slots back out and this run hashes to 4e86c393 exactly. It could
     // not be otherwise — no script here builds a Tailor, so no garment exists,
     // so the composed `workTicks` pays every tick what the old boolean gate
     // paid, and every assertion in this file is unchanged and still passes.
-    expect(hashSim(final())).toBe(PINNED_V10);
+    // 88d00a73 → PINNED_V11 with the drink chain (SAVE_VERSION 11,
+    // docs/changelog/2026-09-14-hives-and-mead.md). **Shape only**, and proved
+    // rather than argued: strip the two new `Building` accept flags and the two
+    // new `limits` slots back out and this run hashes to 88d00a73 exactly. It could
+    // not be otherwise — no script here builds a Hive, a Flowers or a Meadery,
+    // so no mead exists, so `cellarSet` is false on every tick and the
+    // countdown decrements by one as it always did, `batchTicks` answers
+    // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
+    expect(hashSim(final())).toBe(PINNED_V11);
   });
 
   it("bites a standing palisade, and leaves it standing when its hours run out", () => {

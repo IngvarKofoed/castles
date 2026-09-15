@@ -14,7 +14,9 @@ import {
   BEDS_PER_HOUSE,
   DAIRY_TICKS,
   FARM_TICKS,
+  HIVE_TICKS,
   MASON_TICKS,
+  MEADERY_TICKS,
   MILL_TICKS,
   MILL_TICKS_5B,
   OVEN_TICKS,
@@ -373,6 +375,77 @@ export const BUILDING_DEFS: Record<BuildingKindValue, BuildingDef> = {
       outputCap: WORKSHOP_OUTPUT_CAP,
     },
   },
+  /**
+   * The Hive: honey out of a keeper's hours, the Farm's `per: 0` recipe a
+   * third time — and **the first building in the game whose rate depends on
+   * where it stands**. `ticks` here is the base, with no fields in reach;
+   * `batchTicks` (economy/workshop.ts) reads `HIVE_TICKS_BY_FIELDS` instead
+   * for this one kind, and nothing about the def knows that
+   * (docs/specs/2026-09-14-hives-and-mead.md).
+   *
+   * Priced in logs, so the drink chain can start before the sawmill does —
+   * and `canPlace` is untouched, so a hive goes wherever a House goes, walled
+   * or not. That is the whole of "risk is chosen" applied to a resource.
+   */
+  [BuildingKind.Hive]: {
+    kind: BuildingKind.Hive,
+    name: "Hive",
+    w: 2,
+    h: 2,
+    cost: 4,
+    costType: ItemType.Log,
+    hasSlot: true,
+    beds: 0,
+    recipe: {
+      input: ItemType.Honey,
+      per: 0,
+      output: ItemType.Honey,
+      ticks: HIVE_TICKS,
+      inputCap: 0,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
+  },
+  /**
+   * Flowers: **the first building with no worker and no recipe** — a 3×3 plot
+   * that is placed, built once and then simply stands. It has no panel action
+   * and no state; its whole effect is that hives within `HIVE_REACH` of it
+   * work faster, derived per read the way `populationCap` sums beds.
+   *
+   * Priced at the Stockpile's two logs: a fenced plot, and cheap enough that
+   * siting three of them is a question about *ground* rather than about
+   * timber.
+   */
+  [BuildingKind.Flowers]: {
+    kind: BuildingKind.Flowers,
+    name: "Flowers",
+    w: 3,
+    h: 3,
+    cost: 2,
+    costType: ItemType.Log,
+    hasSlot: false,
+    beds: 0,
+    recipe: null,
+  },
+  /** The Meadery: honey into mead. The Mason move once more — one def row and
+   *  no machinery; hauls feed it, ceilings brake it, filters route it. */
+  [BuildingKind.Meadery]: {
+    kind: BuildingKind.Meadery,
+    name: "Meadery",
+    w: 2,
+    h: 2,
+    cost: 4,
+    costType: ItemType.Log,
+    hasSlot: true,
+    beds: 0,
+    recipe: {
+      input: ItemType.Honey,
+      per: 1,
+      output: ItemType.Mead,
+      ticks: MEADERY_TICKS,
+      inputCap: WORKSHOP_INPUT_CAP,
+      outputCap: WORKSHOP_OUTPUT_CAP,
+    },
+  },
 };
 
 export function defOf(b: Building): BuildingDef {
@@ -414,6 +487,32 @@ export function besideFootprint(b: { x: number; y: number; w: number; h: number 
   const dx = Math.max(b.x - x, 0, x - (b.x + b.w - 1));
   const dy = Math.max(b.y - y, 0, y - (b.y + b.h - 1));
   return Math.max(dx, dy) === 1;
+}
+
+/**
+ * The Chebyshev **gap between two footprints**: per axis, how far the nearer
+ * edge of one rectangle is from the nearer edge of the other, zero where they
+ * overlap on that axis — then the larger of the two. `besideFootprint`'s
+ * clamp-to-interval arithmetic, generalised from a point to a rectangle.
+ *
+ * Equivalently, and this is the form the overlay draws: the gap is at most `r`
+ * exactly when some tile of `b` lies inside `a` grown by `r` on every side. So
+ * the picture and the predicate agree at every edge — which origin-to-origin
+ * distance does not once either footprint is bigger than 1×1
+ * (docs/specs/2026-09-14-hives-and-mead.md).
+ */
+export function footprintGap(a: Footprint, b: Footprint): number {
+  const dx = Math.max(a.x - (b.x + b.w - 1), b.x - (a.x + a.w - 1), 0);
+  const dy = Math.max(a.y - (b.y + b.h - 1), b.y - (a.y + a.h - 1), 0);
+  return Math.max(dx, dy);
+}
+
+/** Enough of a building to place it on the grid. */
+export interface Footprint {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
 }
 
 /**

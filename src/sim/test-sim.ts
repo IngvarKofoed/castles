@@ -131,6 +131,8 @@ export function testBuilding(patch: Partial<Building> = {}): Building {
     acceptCloth: 1,
     acceptClothes: 1,
     acceptCheese: 1,
+    acceptHoney: 1,
+    acceptMead: 1,
     worker: -1,
     millProgress: -1,
     ...patch,

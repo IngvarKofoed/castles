@@ -50,7 +50,7 @@ import {
   type Task,
 } from "../store";
 import { clearDamage, repairWall } from "../threats/damage";
-import { abandonForFlight, fleeRoute, fleeing, threatNear } from "../threats/flee";
+import { abandonForFlight, fleeRoute, fleeing, prowlerNear, threatNear } from "../threats/flee";
 import { clearGrave } from "../threats/graves";
 import {
   BUILD_TICKS,
@@ -229,6 +229,14 @@ function stepEater(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   if (eatHere(sim, c)) return true;
 
   if (c.inside && b) {
+    // **The door guard.** Indoors is uncatchable wherever the building stands,
+    // and this errand is the one thing that ever opened that door: the flee
+    // check has already passed them over this tick *because* they were inside,
+    // and monsters step after colonists, so a prowler beside the doorstep kills
+    // them on the way out. So look first, and if something is there, no errand
+    // this tick — retried next tick like every errand
+    // (docs/specs/2026-09-14-hives-and-mead.md).
+    if (doorWatched(sim, occ, b)) return false;
     // Step out through the ordinary door, then plan from where they are
     // actually standing. If the loaf turns out to be unreachable they step
     // straight back in on the same tick, so the panel never blinks and the
@@ -245,6 +253,20 @@ function stepEater(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   const route = errandRoute(sim, occ, c, loaf);
   if (!route) return false;
   return startMeal(sim, occ, c, route);
+}
+
+/**
+ * Is a prowler watching the tile stepping out of this building would land on?
+ *
+ * Asked as **tile-centre floats**, the coordinates every other `reach` caller
+ * passes — integers would move the `FLEE_RANGE` boundary half a tile and make
+ * this guard and `threatNear` disagree about the same ground. A building with no
+ * free tile around it answers no: `leaveBuilding` does not move the worker in
+ * that case either, so there is no doorstep to watch.
+ */
+function doorWatched(sim: Sim, occ: Occupancy, b: Building): boolean {
+  const door = exitTile(sim, b, occ);
+  return door !== null && prowlerNear(sim, door[0] + 0.5, door[1] + 0.5) !== null;
 }
 
 /**
@@ -361,6 +383,9 @@ function stepDresser(sim: Sim, occ: Occupancy, c: Colonist): boolean {
   if (dressHere(sim, c)) return true;
 
   if (c.inside && b) {
+    // The meal loop's door guard, verbatim: a fitting is no more worth dying at
+    // the door for than a loaf is.
+    if (doorWatched(sim, occ, b)) return false;
     // Out through the ordinary door, then plan from where they are actually
     // standing — and straight back in on the same tick if the garment turns out
     // to be unreachable, so the panel never blinks and the workshop never loses
@@ -566,16 +591,31 @@ export function leaveBuilding(sim: Sim, c: Colonist, b: Building): void {
   c.inside = 0;
   c.path = [];
   c.step = 0;
-  const occ = occupancy(sim);
-  const [wx, wy] = workTile(b);
-  const spot =
-    passable(sim.world, sim.wallMap, occ, wx, wy) ? ([wx, wy] as [number, number])
-    : dropTile(sim, occ, b.x, b.y);
+  const spot = exitTile(sim, b);
   if (!spot) return;
   c.x = spot[0] + 0.5;
   c.y = spot[1] + 0.5;
   c.px = c.x;
   c.py = c.y;
+}
+
+/**
+ * The tile stepping out of this building would put somebody on — its work tile,
+ * or the nearest free ground around it when something has blocked that, or null
+ * when nothing is free.
+ *
+ * Split out of `leaveBuilding` so the self-errands can ask what is *at* the door
+ * before opening it. The two must agree: a guard that checked a different tile
+ * than the worker lands on would be a guard in name only.
+ */
+export function exitTile(sim: Sim, b: Building, known?: Occupancy): [number, number] | null {
+  // The tick's own occupancy when the caller holds it — buildings cannot move
+  // mid-tick, so it is the very set this would rebuild.
+  const occ = known ?? occupancy(sim);
+  const [wx, wy] = workTile(b);
+  return passable(sim.world, sim.wallMap, occ, wx, wy) ?
+      ([wx, wy] as [number, number])
+    : dropTile(sim, occ, b.x, b.y);
 }
 
 function stepPoolWorker(sim: Sim, occ: Occupancy, c: Colonist): void {

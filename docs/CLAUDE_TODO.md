@@ -16,19 +16,20 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
 - **The workshop panel's stall notes fabricate one plural and miss another** —
   `millNote` builds "nowhere to put the breads" by appending `s` to `GoodDef.name`,
   and prints "waiting for log" from the singular `name`, against its own docstring
-  promising "waiting for logs". Both want `GoodDef.label`, which is exactly the
+  promising "waiting for logs". The drink chain's two mass nouns make it visible on
+  two more panels — "nowhere to put the honeys", "the meads". Both want `GoodDef.label`, which is exactly the
   field documented as the prose that counts a good in a sentence
   (`2026-09-09-good-label-and-colour-docs`); the input case needs an `inputType` on
   `Inspection` first, mirroring `outputType`, and a Playwright pass because it
   changes rendered HUD text. Surfaced by the commit review of that entry.
 
-- **Six buildings share one silhouette** — the Dairy, Weaver and Tailor fall through
-  to the timber-workshop prop that the Sawmill, Mason and Mill already share, so half
-  the buildings in the game read identically across the map in a game whose whole
-  toolkit is reading the map. The Mill set that precedent for one building; three more
-  at once is what makes it worth a line. The Pasture and the Farm have props of their
-  own, so the pattern for fixing it exists. Surfaced by
-  `2026-09-11-sheep-and-clothes`.
+- **Seven buildings share one silhouette** — the Dairy, Weaver, Tailor and now the
+  Meadery fall through to the timber-workshop prop that the Sawmill, Mason and Mill
+  already share, so nearly half the buildings in the game read identically across the
+  map in a game whose whole toolkit is reading the map. The Mill set that precedent for
+  one building; four more is what makes it worth a line. The Pasture, the Farm, the Hive
+  and the Flowers have props of their own, so the pattern for fixing it exists. Surfaced
+  by `2026-09-11-sheep-and-clothes`, widened by `2026-09-14-hives-and-mead`.
 
 - **Seven comments across five `sim/` files still call the area drag a "marquee"** —
   the screen-space marquee was removed with `2026-09-13-map-space-selection-box`, but
@@ -38,3 +39,13 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   change; these sit across the sim boundary and were out of its scope, the same split
   `2026-09-08-stores-panel-and-icon-rail` made for "the ribbon". Surfaced by
   `2026-09-13-map-space-selection-box`.
+
+- **The stockpile panel's stuck-clear check walks the whole colony every frame** —
+  `know.inspect` asks `canRehome` once per good a pile is clearing, and each call
+  walks every stockpile and, through `freeCapacity`, every item in the colony. It
+  runs per frame for whichever building is selected, so a late colony clearing
+  several goods at once pays tens of thousands of iterations a frame for one note
+  row. The predicate is deliberately the haul's own rather than a cheaper read of
+  the accept flags (`2026-09-14-stockpile-default-and-clearing`), so the fix is a
+  per-frame memo, not a different question. Surfaced by the commit review of
+  `2026-09-15-hive-meter-and-panel-staleness`.

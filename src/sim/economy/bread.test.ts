@@ -48,7 +48,7 @@ const SIZE = 256;
 const TICKS = 2400;
 
 /** The pinned hash of the run. Named so a move history can cite it. */
-const PINNED = "077aabf8";
+const PINNED = "2e74c71c";
 
 function trees(sim: Sim, count: number): number[] {
   const out: number[] = [];
@@ -117,6 +117,14 @@ function script(sim: Sim): Command[] {
       return [{ kind: "designateChop", tiles: trees(sim, 30) }];
     case 5:
       return put(sim, BuildingKind.Stockpile);
+    // A new pile accepts nothing (2026-09-14-stockpile-default-and-clearing), so the
+    // chain's every good would sit on the ground. Opened the tick after
+    // placement, while the pile is still a blueprint and nothing reads its
+    // filters, so the run below is the one this file has always pinned.
+    case 6: {
+      const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
+      return pile ? [{ kind: "setAllFilters", building: pile.id, on: true }] : [];
+    }
     case 150:
       return put(sim, BuildingKind.Mason);
     case 400:
@@ -188,13 +196,21 @@ describe("the scripted bread chain", () => {
     // this fails, say in the changelog what moved and why — the assertions
     // below are what tell you whether it moved for a reason.
     //
-    // dacffdb6 → PINNED with the sheep chain (SAVE_VERSION 10,
+    // dacffdb6 → 077aabf8 with the sheep chain (SAVE_VERSION 10,
     // docs/changelog/2026-09-11-sheep-and-clothes.md). **Shape only**, and
     // proved rather than argued: strip the two new colonist fields and the four
     // new `limits` slots back out and this run hashes to dacffdb6 exactly. It could
     // not be otherwise — no script here builds a Tailor, so no garment exists,
     // so the composed `workTicks` pays every tick what the old boolean gate
     // paid, and every assertion in this file is unchanged and still passes.
+    // 077aabf8 → PINNED with the drink chain (SAVE_VERSION 11,
+    // docs/changelog/2026-09-14-hives-and-mead.md). **Shape only**, and proved
+    // rather than argued: strip the two new `Building` accept flags and the two
+    // new `limits` slots back out and this run hashes to 077aabf8 exactly. It could
+    // not be otherwise — no script here builds a Hive, a Flowers or a Meadery,
+    // so no mead exists, so `cellarSet` is false on every tick and the
+    // countdown decrements by one as it always did, `batchTicks` answers
+    // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
     expect(hashSim(colony())).toBe(PINNED);
   });
 
@@ -317,7 +333,9 @@ describe("the Farm's no-input recipe", () => {
     // Grain lying on the ground goes to a stockpile, never back into the farm
     // that grew it.
     applyCommands(sim, [{ kind: "place", building: BuildingKind.Stockpile, x: 4, y: 10 }]);
-    sim.buildings[sim.buildings.length - 1].state = BuildingState.Active;
+    const pile = sim.buildings[sim.buildings.length - 1];
+    pile.state = BuildingState.Active;
+    applyCommands(sim, [{ kind: "setAllFilters", building: pile.id, on: true }]);
     spawnItem(sim, ItemType.Grain, 8, 14);
     generateTasks(sim);
     expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToInput)).toHaveLength(0);

@@ -50,6 +50,18 @@ export const ItemType = {
   /** The dairy's grain-fed output, and bread's equal as a meal: ovens and
    *  dairies compete for the same fields. */
   Cheese: 10,
+  /** A hive's output, out of nothing but a keeper's hours — the Farm's `per: 0`
+   *  recipe again, but the only one whose rate the player can raise by building
+   *  something beside it (docs/specs/2026-09-14-hives-and-mead.md). The
+   *  meadery's input, and **not a food**. */
+  Honey: 11,
+  /**
+   * The colony's first drink, and the one good whose whole effect is on *who
+   * comes*: while the cellar holds a cup a head and one for the newcomer, the
+   * wanderer countdown runs at double speed, and each wanderer drinks one on
+   * settling. Not a food, no morale, no work-speed effect.
+   */
+  Mead: 12,
 } as const;
 export type ItemTypeValue = (typeof ItemType)[keyof typeof ItemType];
 
@@ -101,6 +113,23 @@ export const BuildingKind = {
   /** Cloth into clothes — the one workshop in the game whose output nobody
    *  hauls to a site: colonists come and put it on. */
   Tailor: 11,
+  /**
+   * The Hive: honey out of nothing but a keeper's hours, on the Farm's
+   * `per: 0` recipe — and **the only workshop whose rate is a fact about where
+   * it stands**, running up to three times faster for the Flowers in its reach
+   * (docs/specs/2026-09-14-hives-and-mead.md).
+   */
+  Hive: 12,
+  /**
+   * Flowers: a passive 3×3 plot with no worker, no recipe and no state beyond
+   * being built. Its whole effect is on hives within `HIVE_REACH` of it, and
+   * that effect is **derived per read** exactly as the population cap is —
+   * nothing on a Hive stores how many fields it has.
+   */
+  Flowers: 13,
+  /** The Meadery: honey into mead. The Mason move again — one def row, no
+   *  machinery. */
+  Meadery: 14,
 } as const;
 export type BuildingKindValue = (typeof BuildingKind)[keyof typeof BuildingKind];
 
@@ -374,13 +403,16 @@ export interface Building {
    */
   reservedIncoming: number;
   /**
-   * Stockpile filters, 0/1 — one per `ItemType`, read through
-   * `stockpileAccepts` (goods.ts) rather than by name and flipped by the
-   * `toggleFilter` command. They gate **inflow only**: a pile that refuses
-   * planks still hands out the planks it already holds, and nothing re-homes
-   * them — filters route, ceilings (`Sim.limits`) brake. A new good means a
-   * new field *and* a migration rung that stamps it on to every building
-   * already saved, or old stockpiles refuse it forever.
+   * Stockpile filters, **0/1/2** — one per `ItemType`, read through
+   * `stockpileAccepts` / `stockpileClearing` (goods.ts) rather than by name.
+   * `1` accepts; `0` refuses and *keeps* what is already here, so nothing
+   * re-homes it; `2` refuses **and clears**, handing the pile's stock of that
+   * good to the tidy-up hauls until the player turns it back on. `1` and `0`
+   * gate inflow only — filters route, ceilings (`Sim.limits`) brake — and `2`
+   * is the one explicit override of that, written by `clearFilter` alone. A new
+   * pile is placed with every flag `0`. A new good means a new field *and* a
+   * migration rung that stamps it on to every building already saved, or old
+   * stockpiles refuse it forever.
    */
   acceptLog: number;
   acceptPlank: number;
@@ -393,6 +425,8 @@ export interface Building {
   acceptCloth: number;
   acceptClothes: number;
   acceptCheese: number;
+  acceptHoney: number;
+  acceptMead: number;
   /** Slot worker, or -1. */
   worker: number;
   /**

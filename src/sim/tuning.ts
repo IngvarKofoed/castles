@@ -107,6 +107,33 @@ export const WEAVE_TICKS = 4 * TICK_HZ;
 export const TAILOR_TICKS = 6 * TICK_HZ;
 
 /**
+ * The drink chain (docs/specs/2026-09-14-hives-and-mead.md), and the game's
+ * first rate that is a fact about **where a building stands**.
+ *
+ * A keeper alone makes a honey every `HIVE_TICKS` — three a game-day, against
+ * the Farm's twelve grain — and the table below is what flower fields buy:
+ * indexed by how many fields are in reach, 0 to `HIVE_FIELDS_MAX`, so a hive
+ * among three fields makes ten a day. Integers throughout, and nothing is
+ * scaled at runtime: the batch length is a table lookup, read at the
+ * completion compare every tick.
+ *
+ * `HIVE_REACH` is a Chebyshev gap between **footprints**, not between origins,
+ * and it is exactly the rectangle the placement overlay draws — the hive's plot
+ * grown by six tiles on every side. Fields are never razed, so a rule that
+ * disagreed with its own picture would be baked into a colony's honey rate for
+ * good.
+ *
+ * `MEADERY_TICKS` is an ordinary one-in-one-out workshop cadence, in the band
+ * the Oven and Dairy already sit in: honey is the scarce half of the chain, so
+ * the brew is not where the pressure belongs.
+ */
+export const HIVE_TICKS_BY_FIELDS: readonly number[] = [20 * TICK_HZ, 12 * TICK_HZ, 8 * TICK_HZ, 6 * TICK_HZ];
+export const HIVE_TICKS = HIVE_TICKS_BY_FIELDS[0];
+export const HIVE_FIELDS_MAX = 3;
+export const HIVE_REACH = 6;
+export const MEADERY_TICKS = 5 * TICK_HZ;
+
+/**
  * Equipment: how long a garment lasts, and what wearing one is worth.
  *
  * `CLOTHES_WEAR_TICKS` counts **down** on `Colonist.clothes` every tick, worn

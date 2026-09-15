@@ -36,7 +36,7 @@ let cached: Store | null = null;
 const scripted = (): Store => (cached ??= scriptedRun(1500));
 
 /** The pinned hash of that run. Named so the move history above can cite it. */
-const GOLDEN_V10 = "cb721faa";
+const GOLDEN_V11 = "e9599a0f";
 
 /**
  * Designate a handful of trees, place a stockpile, place a sawmill, staff it.
@@ -64,6 +64,16 @@ function script(sim: Store): Command[] {
       const [x, y] = nearestSite(sim, BuildingKind.Stockpile);
       return [{ kind: "place", building: BuildingKind.Stockpile, x, y }];
     }
+    // A new pile accepts nothing, so the very next tick turns on the two goods
+    // this colony has — while it is still a blueprint, which is where a player
+    // configures one too (docs/specs/2026-09-14-stockpiles-default-off-and-clear.md).
+    // **Planks are never turned on**, so the two the mill makes stay in its own
+    // buffer, which is what the assertions below read.
+    case 6:
+      return [
+        ...filterCommand(sim, "toggleFilter", ItemType.Log),
+        ...filterCommand(sim, "toggleFilter", ItemType.Bread),
+      ];
     case 400: {
       const [x, y] = nearestSite(sim, BuildingKind.Sawmill, sim.buildings[0]);
       return [{ kind: "place", building: BuildingKind.Sawmill, x, y }];
@@ -87,15 +97,20 @@ function script(sim: Store): Command[] {
       return staffCommand(sim, "unstaff");
     // Production control, inside the pin: a plank ceiling of two, set before
     // the first plank exists, so the brake is what stops the mill rather than
-    // the log supply — and the stockpile told to refuse planks, so the two it
-    // makes stay in the mill's own buffer instead of being hauled away. Both
-    // are asserted below rather than left as hash noise.
+    // the log supply. The pile refuses planks throughout — it was never told to
+    // take them — so the two it makes stay in the mill's own buffer instead of
+    // being hauled away. Both are asserted below rather than left as hash noise.
     case 1250:
       return [{ kind: "setLimit", type: ItemType.Plank, value: 2 }];
-    case 1260: {
-      const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
-      return pile ? [{ kind: "toggleFilter", building: pile.id, type: ItemType.Plank }] : [];
-    }
+    // The accept flag's third value, inside the pin, on a good the pile is
+    // actually holding. **Pinned is all it is** — this script has one
+    // stockpile and `nearestStore` skips the item's own holder, so the clear
+    // can never generate a haul and the logs sit where they are for the rest
+    // of the run. The behaviour it turns on (haul-out, the nowhere-to-go
+    // stall, toggling back on stopping it) needs two piles and is pinned in
+    // `labour/tasks.test.ts`.
+    case 1210:
+      return filterCommand(sim, "clearFilter", ItemType.Log);
     // One L-shaped wall drag, as the single command a gesture produces — both
     // legs and the corner in one entry in the log, so the wall tier's
     // placement, its build-wall tasks and the enclosure recompute all sit
@@ -204,6 +219,12 @@ function lDrag(sim: Store, legX: number, legY: number): number[] {
 
 const tileList = (sim: Store, tiles: [number, number][]): number[] =>
   tiles.map(([x, y]) => tileIndex(x, y, sim.world.size));
+
+/** A filter command aimed at whatever stockpile this run has built. */
+function filterCommand(sim: Store, kind: "toggleFilter" | "clearFilter", type: number): Command[] {
+  const pile = sim.buildings.find((b) => b.kind === BuildingKind.Stockpile);
+  return pile ? [{ kind, building: pile.id, type }] : [];
+}
 
 function staffCommand(
   sim: Store,
@@ -353,7 +374,29 @@ describe("determinism", () => {
     // to the old `04f53ac6` exactly. Nothing behavioural could have moved —
     // this script builds no Tailor, so no garment exists, so `workTicks`
     // returns what the old boolean gate returned on every tick of the run.
-    expect(hashSim(scripted())).toBe(GOLDEN_V10);
+    //
+    // GOLDEN_V10 → 3216d1b3 when a new stockpile stopped accepting anything
+    // (docs/changelog/2026-09-14-stockpile-default-and-clearing.md). **No shape change
+    // at all** — the store is byte-identical in layout — and entirely
+    // behavioural, which is the reverse of the last two moves. The script now
+    // turns logs and bread on the tick after placing the pile and never turns
+    // planks on, so what this run stores is what it was told to store; and it
+    // presses `clear` on logs at 1210, over nine of them, so the flag's third
+    // value sits inside the pin. Every behavioural assertion below is
+    // unchanged and still passes — the ceiling still holds the mill at exactly
+    // two, both planks still in its own buffer — which is what says the number
+    // moved for the default and not for something quiet.
+    //
+    // 3216d1b3 → GOLDEN_V11 with the drink chain (SAVE_VERSION 11, and the
+    // first move where the constant's name and the save version agree again;
+    // docs/changelog/2026-09-14-hives-and-mead.md). **Shape only**, proved
+    // rather than argued: strip the two new `Building` accept flags and the two
+    // new `limits` slots back out and this run hashes to 3216d1b3 exactly. It
+    // could not be otherwise — this script builds no Hive, Flowers or Meadery,
+    // so no mead exists, `cellarSet` is false on every tick and the wanderer
+    // countdown decrements by one as it always did, `batchTicks` answers
+    // `recipe.ticks` for every kind here, and `drinkCup` finds nothing.
+    expect(hashSim(scripted())).toBe(GOLDEN_V11);
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {
@@ -402,10 +445,18 @@ describe("the labour loop", () => {
     expect(r.goods[ItemType.Plank]).toBe(2);
     expect(sim.limits[ItemType.Plank]).toBe(2);
     expect(inspect(sim, sawmill!.id)?.stall).toBe("at-limit");
-    // And the filter routed: the stockpile refuses planks, so both sit in the
-    // mill's own output buffer while its logs still came from that same pile.
+    // And the filter routed: the stockpile was never told to take planks, so
+    // both sit in the mill's own output buffer while its logs still came from
+    // that same pile.
     expect(stockpile?.acceptPlank).toBe(0);
     expect(sim.items.filter((it) => it.type === ItemType.Plank).every((it) => it.holder === sawmill?.id)).toBe(true);
+
+    // The clear pressed at 1210, over nine stored logs, is **still standing**
+    // three hundred ticks later — the mill and the wall drained the pile
+    // through `sourceForSite` as they always could, and a pile that now holds
+    // none of the good does not revert its own flag.
+    expect(stockpile?.acceptLog).toBe(2);
+    expect(sim.items.filter((it) => it.type === ItemType.Log && it.holder === stockpile?.id)).toHaveLength(0);
 
     // Both workshops are staffed, so the pool that feeds both is two pairs of
     // hands short — the labour trap, as a number.
@@ -529,3 +580,4 @@ describe("the labour loop", () => {
     expect(early.items.some((it) => it.type === ItemType.Plank)).toBe(false);
   });
 });
+

@@ -52,6 +52,10 @@
   --cloth: #7e93a3;
   --clothes: #4d6d8e;
   --cheese: #e0c765;
+  /* The drink chain. Honey is a deep amber and deliberately **not** --gold,
+     which is intent and may not be worn by a good; mead is a pale straw. */
+  --honey: #c07a1e;
+  --mead: #e8d79a;
   --ui: "Barlow Semi Condensed", "Helvetica Neue", Arial, sans-serif;
   --display: "Grenze Gotisch", "Grenze", Georgia, serif;
 }
@@ -214,14 +218,21 @@
  * of the column. The browser resolves the split at every window size — no
  * `calc()` against a stores height that the eighth good would invalidate.
  *
- * **The rail no longer fits at 768px**, and that is stated rather than
- * discovered: the sheep chain's four Build tools take it to ~465px and its four
- * Stores rows plus a group head take Stores to ~372px, so the scroll-free floor
- * moved from ~750px of window height to ~900px. At 768 the rail scrolls by
- * about four rows and the two panels still cannot overlap, which is the whole
- * reason the split is flex (docs/specs/2026-09-10-sheep-and-clothes.md). The
- * repair when it starts to hurt is a three-column rail or collapsible Stores
- * groups; neither is built.
+ * **The column fits again at 1280x720**, which it had stopped doing by the
+ * drink chain. Two of the three repairs that bought it back are here: the rail
+ * is a **three-column** grid at 145px and Stores is **two columns** of goods at
+ * 220px. The third is the rail showing one section at a time, so its height no
+ * longer depends on how many buildings exist
+ * (docs/specs/2026-09-15-rail-sections-and-fit.md).
+ *
+ * **Collapsible Stores groups are rejected, not merely unbuilt** — this comment
+ * used to offer them as the other repair. They put counts a player reads
+ * constantly behind a click, and the counts are a glance.
+ *
+ * The cost of the Stores width is stated rather than smuggled: it **breaks the
+ * Labour mirror** that `2026-09-08-stores-panel-and-icon-rail` set, where Stores
+ * and Labour were the two bottom corners at one width. Taken deliberately — the
+ * mirror is a visual rhyme, and being able to see the buildings is not.
  */
 .leftcol {
   position: absolute;
@@ -242,20 +253,23 @@
 /* ---------- build rail ---------- */
 
 /*
- * Twenty tools, icon-only, two to a row under each section head, with a
- * caption strip at the foot naming whichever one the pointer, the keyboard or
- * the press is pointing at. Two columns rather than one is what put the first
- * sixteen on a 768px window at once; past that the sections scroll (see the
- * left column above), and the strip is what gives the words back.
+ * Twenty-three tools, icon-only, three to a row, in **one of three sections at a
+ * time** — chosen from the tab strip at the head of the rail — with a caption
+ * strip at the foot naming whichever tool the pointer, the keyboard or the press
+ * is pointing at.
  *
- * The tool sections scroll; the caption strip does not. It sits outside the
- * scrolled box, pinned to the foot of the rail, because it is the strip that
- * carries the names and costs the buttons gave up — and the 20px the column is
- * short at 1280x720 would otherwise clip exactly that, leaving the cost line
- * unreadable at the minimum supported viewport.
+ * 145px rather than 96px is what keeps the cell at the width it already had:
+ * `(96 - 1) / 2 = 47.5px` before, `(145 - 2) / 3 = 47.7px` after, so the button,
+ * its 2px pressed left edge and the icon are all untouched.
+ *
+ * **Both the tab strip and the caption strip sit outside the scroller.** The
+ * tabs, because inside it they would scroll out of reach at exactly the heights
+ * one-section-at-a-time exists for; the caption, because it carries the names
+ * and costs the icon-only buttons gave up and must never be what a short window
+ * clips.
  */
 .rail {
-  width: 96px;
+  width: 145px;
   padding: 6px 0;
   display: flex;
   flex-direction: column;
@@ -279,25 +293,85 @@
 }
 .rail-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
 }
-/* A head above each section (Orders / Build / Walls), so a long column reads
- * as groups rather than as a list. The first needs no top rule. */
-.rail-label {
+/* Without this the closed sections stay on screen: `[hidden]` is a user-agent
+ * rule and `.rail-grid { display: grid }` above is an author rule, which wins on
+ * origin whatever the specificity. */
+.rail-grid[hidden] {
+  display: none;
+}
+
+/*
+ * The tab strip: Orders / Build / Walls laid across instead of down, in the
+ * styleguide's 10px caps section-head type — the same words in the same face the
+ * three stacked heads used.
+ *
+ * The open tab reads `ink` on a neutral pressed fill; the closed two read
+ * `ink-faint`. **Never gold**: the rail's one gold element is the caption strip
+ * naming the active tool, and a tab is a view, not an intent. The one exception
+ * is the dot below, which points at intent rather than at a view.
+ */
+.rail-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  margin: 0 0 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+/*
+ * `flex: 1 1 auto` rather than equal thirds: `ORDERS` in 10px caps needs 51px in
+ * the **fallback** stack against the 48px an even split of 145px gives, so equal
+ * tabs spill their label on every load before Barlow arrives and permanently
+ * offline. Content-sized with the spare shared out, the three fit in every stack
+ * measured (widest, Verdana: 131px of 145px), and the type stays the
+ * styleguide's section head exactly.
+ */
+.rail-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  flex: 1 1 auto;
+  font-family: var(--ui);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  /* Letter-spacing lands after the last character too, so without this the
+   * label sits visibly left of its cell. */
+  text-indent: 0.14em;
   color: var(--ink-faint);
-  text-align: center;
-  padding: 7px 0 5px;
-  margin-top: 4px;
-  border-top: 1px solid var(--line-soft);
+  padding: 6px 0 7px;
+  position: relative;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.12s,
+    background 0.12s;
 }
-.rail-label:first-child {
-  padding-top: 2px;
-  margin-top: 0;
-  border-top: 0;
+.rail-tab:hover {
+  color: var(--ink-dim);
+}
+.rail-tab[aria-selected="true"] {
+  color: var(--ink);
+  background: rgba(242, 236, 217, 0.06);
+}
+.rail-tab:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: -1px;
+}
+/* The tab owning the tool being held, while its own section may be closed. The
+ * caption strip already says *what* is held; this says *where* it is, so the
+ * player can get back to it. */
+.rail-tab.holds::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--gold);
 }
 .tool {
   appearance: none;
@@ -498,7 +572,8 @@
   white-space: nowrap;
 }
 .stepper,
-.toggle {
+.toggle,
+.word {
   appearance: none;
   background: transparent;
   border: 1px solid var(--line);
@@ -522,6 +597,27 @@
 .toggle {
   min-width: 36px;
   padding: 2px 7px;
+}
+/* `clear` on a filter row and `all` / `none` on the Stored row: the secondary
+ * recipe again, but sized to its word rather than to a fixed box — `clearing`
+ * is wider than `clear`, and the label to its left flexes to absorb it.
+ *
+ * **Not `.mini`**, which is the menu's small button and carries `flex: 1` plus
+ * a rust `armed` state; sharing the name would have stretched these across the
+ * cluster and lent a delete-confirm colour to a filter. */
+.word {
+  padding: 2px 6px;
+}
+.word:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.25);
+}
+/* A clear already under way: quiet, not gone — the steppers' end-of-range
+ * treatment, so the row keeps its shape while it drains. */
+.word:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+  background: transparent;
 }
 .stepper:hover:not(:disabled) {
   color: var(--ink);
@@ -551,7 +647,8 @@
   background: rgba(0, 0, 0, 0.25);
 }
 .stepper:focus-visible,
-.toggle:focus-visible {
+.toggle:focus-visible,
+.word:focus-visible {
   outline: 1px solid var(--ink);
   outline-offset: 1px;
 }
@@ -603,16 +700,26 @@
 /* ---------- stores panel ---------- */
 
 /*
- * Every good the colony holds, named and counted, in the bottom-left corner —
- * mirroring Labour bottom-right, because both top corners are already spoken
- * for by the rail and the inspector.
+ * Every good the colony holds, named and counted, in the bottom-left corner.
  *
- * One row per good, grouped by chain. A future good is one more row and costs
- * the HUD no arithmetic anywhere: this is what the ribbon gave the goods up
- * for.
+ * One row per good, **two rows to a line**, grouped by chain. A future good is
+ * one more cell and costs the HUD no arithmetic anywhere: this is what the
+ * ribbon gave the goods up for.
+ *
+ * **220px is forced, not chosen, and twice over.** A row is pip + name + count,
+ * so the longest — `Clothes 123` — does not fit the half-cell a narrower panel
+ * gives; and it must fit in the **fallback font**, because `index.html` loads
+ * Barlow with `display=swap`, so the non-condensed stack renders during every
+ * load and permanently offline. The width is sized for that case, not the
+ * condensed one. Truncating instead is rejected outright: `Cloth` and `Clothes`
+ * are both goods, and an ellipsis makes their rows identical.
+ *
+ * The cost is that Stores **no longer mirrors Labour** at 246px, which
+ * `2026-09-08-stores-panel-and-icon-rail` set deliberately
+ * (docs/specs/2026-09-15-rail-sections-and-fit.md).
  */
 .stores {
-  width: 150px;
+  width: 220px;
   padding: 10px 12px 12px;
   border-radius: 2px;
   /* Pinned to the foot of the left column. Auto margins resolve to zero once
@@ -635,6 +742,14 @@
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
+}
+/* The goods of one group, two to a line. The head stays full-width above them,
+ * which is what keeps the five chains reading as chains. An odd count leaves
+ * one empty cell, exactly as an odd tool count does in the rail. */
+.store-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 10px;
 }
 .store {
   display: flex;

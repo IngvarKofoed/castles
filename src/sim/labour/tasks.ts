@@ -1,5 +1,6 @@
 import { defOf, freeCapacity, recipeOf, storedCount } from "../buildings";
 import { atLimit } from "../economy/limits";
+import { stockpileClearing } from "../goods";
 import { canMine, isTargetHeight, keepsTerraforming } from "../ground";
 import { groundItem, isFree, itemTile } from "../items";
 import { occupancy, type Occupancy } from "../path";
@@ -390,12 +391,27 @@ function generateHaulToStore(sim: Sim): void {
   }
 }
 
-/** On the ground, or sitting in a workshop's output buffer. */
+/**
+ * On the ground, sitting in a workshop's output buffer, or held by a stockpile
+ * that is **clearing** that good — the flag's third value, which is how one
+ * press of `clear` becomes ordinary tidy-up hauling with no new task kind and
+ * no new colonist behaviour behind it.
+ *
+ * `BuildingState.Active` is load-bearing in that last clause rather than
+ * decorative: a blueprint's delivered construction materials are `Loc.Stored`
+ * in it too, so without the state check a `2` on a half-built pile would have
+ * these hauls strip the site of its own logs. `clearFilter` refusing a
+ * non-active pile is the other lock on the same door.
+ */
 function isLoose(sim: Sim, item: Item): boolean {
   if (item.loc === Loc.Ground) return true;
   if (item.loc !== Loc.Stored) return false;
   const b = findBuilding(sim, item.holder);
-  return b !== null && isOutputOf(b, item);
+  if (!b) return false;
+  if (b.kind === BuildingKind.Stockpile) {
+    return b.state === BuildingState.Active && stockpileClearing(b, item.type);
+  }
+  return isOutputOf(b, item);
 }
 
 /**
@@ -457,6 +473,18 @@ export function nearestFreeItem(
     }
   }
   return best;
+}
+
+/**
+ * Is there anywhere else for this item to go? `nearestStore`'s own verdict,
+ * exported so the stockpile panel's stuck note reads the very predicate the
+ * haul reads. A note computed from the accept flags alone would fall silent in
+ * the every-other-pile-is-full case, which is the one a player watching a clear
+ * is most likely to be looking at
+ * (docs/specs/2026-09-14-stockpiles-default-off-and-clear.md).
+ */
+export function canRehome(sim: Sim, item: Item): boolean {
+  return nearestStore(sim, item) !== null;
 }
 
 function nearestStore(sim: Sim, item: Item): Building | null {

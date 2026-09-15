@@ -1,7 +1,8 @@
 import type { Command } from "../../commands";
-import { canPlace } from "../../buildings";
+import { canPlace, footprintGap } from "../../buildings";
 import { canMine, canTerraform } from "../../ground";
 import { canPlaceWall } from "../../walls";
+import { HIVE_REACH } from "../../tuning";
 import { tileIndex } from "../../world/world";
 import { createSim, type Sim } from "../../store";
 import { advanceTick } from "../../tick";
@@ -21,12 +22,113 @@ import { advanceTick } from "../../tick";
 
 export const FIXTURE_SEED = 20260901;
 
+/**
+ * v11: hives, flower fields and mead, back on the default fixture seed — the
+ * whole drink chain is priced in **logs**, and 20260901's woods are two tiles
+ * from the centre, so nothing here waits on a sawmill.
+ *
+ * What it carries, and what no earlier file could: **a Hive standing and
+ * manned with three Flowers inside its reach**, so the file freezes a batch
+ * length that is a fact about *where a building stands* rather than a number
+ * from a def; a **Meadery** turning honey into mead; both new goods in the
+ * colony at once; and a **cellar that is set** — mead for every settled
+ * colonist plus one — which is the state the arrival clock reads and the one
+ * no save has ever held.
+ *
+ * The fields are sited off the **hive's own plot** rather than by the general
+ * search, because the thing being frozen is the reach: a field placed wherever
+ * there was room would have left the count to luck.
+ *
+ * Caught at 2500, a hundred ticks after the sixth cup and **well before the
+ * 2×2 pile fills**: the boosted hive out-produces the meadery, and a few
+ * hundred ticks later the whole chain is jammed at `output-full` with a full
+ * stockpile — a real colony state, but one that could not demonstrate running
+ * on from where it was saved.
+ */
+export const V11_TICKS = 2500;
+
+export function v11Script(sim: Sim): Command[] {
+  switch (sim.tick) {
+    // Twenty-four trees, not forty: sixteen logs build the whole chain and the
+    // eight left over sit in the pile beside the honey and the mead. Chopping
+    // the wood out would fill a 2×2 stockpile, and a file frozen with its
+    // workshops jammed at `output-full` could not demonstrate running on.
+    case 0:
+      return [{ kind: "designateChop", tiles: nearestTrees(sim, 24) }];
+    case 5:
+      return chainPlace(sim, 0 /* Stockpile */);
+    case 6:
+      return openPile(sim);
+    case 150:
+      return chainPlace(sim, 12 /* Hive */);
+    case 400:
+      return staff(sim, 12 /* Hive */);
+    // Three fields, spaced so each is fed rather than standing as a frame, and
+    // every one of them inside the hive's reach by construction.
+    case 700:
+      return fieldPlace(sim);
+    case 1000:
+      return fieldPlace(sim);
+    case 1300:
+      return fieldPlace(sim);
+    case 1700:
+      return chainPlace(sim, 14 /* Meadery */);
+    case 2100:
+      return staff(sim, 14 /* Meadery */);
+    default:
+      return [];
+  }
+}
+
+/**
+ * A 3×3 flower plot inside the hive's reach, searched outward from the hive's
+ * own origin so the answer is a pure function of the store — and so the fields
+ * this recipe builds are the ones the boost is meant to count.
+ */
+function fieldPlace(sim: Sim): Command[] {
+  const hive = sim.buildings.find((b) => b.kind === 12 /* Hive */);
+  if (!hive) return [];
+  for (let r = 3; r <= HIVE_REACH + 3; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const x = hive.x + dx;
+        const y = hive.y + dy;
+        const plot = { x, y, w: 3, h: 3 };
+        if (footprintGap(hive, plot) > HIVE_REACH) continue;
+        if (sim.buildings.some((b) => footprintGap(b, plot) < 2)) continue;
+        if (!canPlace(sim, 13 /* Flowers */, x, y)) continue;
+        return [{ kind: "place", building: 13, x, y }];
+      }
+    }
+  }
+  return [];
+}
+
+/**
+ * Turn every filter on, on the stockpile the recipe placed a tick ago.
+ *
+ * Not an edit to what any recipe *means*, which is why it does not break the
+ * freeze above: each was written when a new pile accepted everything, and
+ * default-off (docs/changelog/2026-09-14-stockpile-default-and-clearing.md) would
+ * otherwise leave every one of these colonies with its goods on the ground and
+ * v7's rock toggle meaning the opposite of what its prose claims. One press of
+ * `all`, on the tick *after* the placement while the pile is still a blueprint,
+ * restores the colony each recipe describes — and is behaviourally invisible,
+ * since nothing reads a blueprint's filters.
+ */
+function openPile(sim: Sim): Command[] {
+  const pile = sim.buildings.find((b) => b.kind === 0 /* BuildingKind.Stockpile */);
+  return pile ? [{ kind: "setAllFilters", building: pile.id, on: true }] : [];
+}
+
 /** v1: twelve trees marked, a stockpile placed. 400 ticks. */
 export const V1_TICKS = 400;
 
 export function v1Script(sim: Sim): Command[] {
   if (sim.tick === 0) return [{ kind: "designateChop", tiles: nearestTrees(sim, 12) }];
   if (sim.tick === 5) return [{ kind: "place", building: 0, x: 128, y: 128 }];
+  if (sim.tick === 6) return openPile(sim);
   return [];
 }
 
@@ -53,6 +155,7 @@ export const V2_TICKS = 1000;
 export function v2Script(sim: Sim): Command[] {
   if (sim.tick === 0) return [{ kind: "designateChop", tiles: nearestTrees(sim, 40) }];
   if (sim.tick === 5) return [{ kind: "place", building: 0, x: 128, y: 128 }];
+  if (sim.tick === 6) return openPile(sim);
   if (sim.tick === 200) {
     const ring = ringSite(sim);
     if (!ring.length) return [];
@@ -99,6 +202,8 @@ export function v3Script(sim: Sim): Command[] {
       return [{ kind: "designateChop", tiles: nearestTrees(sim, 40) }];
     case 5:
       return [{ kind: "place", building: 0, x: centre - 6, y: centre + 4 }];
+    case 6:
+      return openPile(sim);
     case 200: {
       const site = buildSite(sim, 1);
       return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
@@ -164,6 +269,8 @@ export function v4Script(sim: Sim): Command[] {
       return [{ kind: "designateChop", tiles: nearestTrees(sim, 24) }];
     case 5:
       return [{ kind: "place", building: 0, x: 126, y: 126 }];
+    case 6:
+      return openPile(sim);
     // Standing before the den's first full prowl, so it is bitten rather than
     // eaten as sticks — which is the whole of what this fixture is for.
     case 400:
@@ -200,6 +307,8 @@ export function v5Script(sim: Sim): Command[] {
       const site = buildSite(sim, 0);
       return site ? [{ kind: "place", building: 0, x: site[0], y: site[1] }] : [];
     }
+    case 6:
+      return openPile(sim);
     case 200: {
       const site = buildSite(sim, 1);
       return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
@@ -272,6 +381,8 @@ export function v7Script(sim: Sim): Command[] {
       const site = buildSite(sim, 0);
       return site ? [{ kind: "place", building: 0, x: site[0], y: site[1] }] : [];
     }
+    case 6:
+      return openPile(sim);
     case 200: {
       const site = buildSite(sim, 1);
       return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
@@ -319,6 +430,8 @@ export function v8Script(sim: Sim): Command[] {
       return [{ kind: "designateChop", tiles: nearestTrees(sim, 30) }];
     case 5:
       return chainPlace(sim, 0 /* Stockpile */);
+    case 6:
+      return openPile(sim);
     case 150:
       return chainPlace(sim, 2 /* Mason */);
     case 400:
@@ -391,6 +504,8 @@ export function v9Script(sim: Sim): Command[] {
       const site = buildSite(sim, 0);
       return site ? [{ kind: "place", building: 0, x: site[0], y: site[1] }] : [];
     }
+    case 6:
+      return openPile(sim);
     case 200: {
       const site = buildSite(sim, 1);
       return site ? [{ kind: "place", building: 1, x: site[0], y: site[1] }] : [];
@@ -446,6 +561,8 @@ export function v10Script(sim: Sim): Command[] {
       return [{ kind: "designateChop", tiles: nearestTrees(sim, 44) }];
     case 5:
       return chainPlace(sim, 0 /* Stockpile */);
+    case 6:
+      return openPile(sim);
     case 150:
       return chainPlace(sim, 1 /* Sawmill */);
     // The Farm is priced in logs, so it can go up before a single plank exists.
@@ -492,7 +609,7 @@ export function v10Script(sim: Sim): Command[] {
  * are frozen against: those files were written by whatever it returned then,
  * and a widened clearance would move where they put things.
  */
-function chainPlace(sim: Sim, kind: 0 | 1 | 2 | 4 | 5 | 6 | 8 | 9 | 10 | 11): Command[] {
+function chainPlace(sim: Sim, kind: 0 | 1 | 2 | 4 | 5 | 6 | 8 | 9 | 10 | 11 | 12 | 14): Command[] {
   const size = sim.world.size;
   const centre = Math.floor(size / 2);
   for (let r = 2; r < 30; r++) {

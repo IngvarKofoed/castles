@@ -5,6 +5,8 @@ import {
   BuildingState,
   GOODS,
   GOOD_LIST,
+  HIVE_FIELDS_MAX,
+  HIVE_REACH,
   ItemType,
   UNLIMITED,
   WALL_ITEM_COST,
@@ -21,6 +23,7 @@ import {
   type GoodDef,
   type ItemTypeValue,
   type Sim,
+  type StoredGood,
   type WallMaterial,
 } from "../sim/know";
 import "./hud.css";
@@ -84,6 +87,23 @@ function toolKey(tool: Tool): string {
   return tool.kind;
 }
 
+/** Which of the rail's three sections is open. The rail shows exactly one. */
+export type RailSection = "orders" | "build" | "walls";
+
+/**
+ * The rail's tab strip, in order.
+ *
+ * All three sections are tabs, including Orders and Walls at four tools each —
+ * a rail whose sections behaved differently from one another would be harder to
+ * learn than one that does not, and Walls has already grown once (timber, then
+ * stone).
+ */
+const RAIL_SECTIONS: readonly { readonly key: RailSection; readonly label: string }[] = [
+  { key: "orders", label: "Orders" },
+  { key: "build", label: "Build" },
+  { key: "walls", label: "Walls" },
+];
+
 export interface HudPorts {
   send(command: Command): void;
   setSpeed(speed: number): void;
@@ -119,6 +139,8 @@ const GOOD_VAR: Record<ItemTypeValue, string> = {
   [ItemType.Cloth]: "var(--cloth)",
   [ItemType.Clothes]: "var(--clothes)",
   [ItemType.Cheese]: "var(--cheese)",
+  [ItemType.Honey]: "var(--honey)",
+  [ItemType.Mead]: "var(--mead)",
 };
 
 /**
@@ -131,8 +153,12 @@ const GOOD_VAR: Record<ItemTypeValue, string> = {
  * Cloth goes **after** food: the chain arrived after the bread chain, it is the
  * one group whose goods are not consumed by a building, and reading the panel
  * top to bottom then tells the colony's own story in the order it was built.
+ * Drink goes after cloth for the same reason, and it is a **fifth group rather
+ * than a corner of Food**: a group is what a colonist does with the good, and
+ * nobody eats honey or mead — `FOODS` is unchanged and the arrival gate never
+ * counts either (docs/specs/2026-09-14-hives-and-mead.md).
  */
-export const GROUP_ORDER = ["wood", "stone", "food", "cloth"] as const;
+export const GROUP_ORDER = ["wood", "stone", "food", "cloth", "drink"] as const;
 type GoodGroup = (typeof GROUP_ORDER)[number];
 
 /**
@@ -160,6 +186,10 @@ export const GOOD_GROUP: Record<ItemTypeValue, GoodGroup> = {
   // Cheese is a meal, so it files with the food it is: the group is what a
   // colonist does with the good, never which building made it.
   [ItemType.Cheese]: "food",
+  // Honey rides with mead as grain rides with bread: the group is the chain's,
+  // and the chain's product is a drink.
+  [ItemType.Honey]: "drink",
+  [ItemType.Mead]: "drink",
 };
 
 const GROUP_LABEL: Record<GoodGroup, string> = {
@@ -167,6 +197,7 @@ const GROUP_LABEL: Record<GoodGroup, string> = {
   stone: "Stone",
   food: "Food",
   cloth: "Cloth",
+  drink: "Drink",
 };
 
 /**
@@ -253,43 +284,77 @@ const WORKER_LABEL: Record<Inspection["worker"], string> = {
   dressing: "dressing",
 };
 
+/**
+ * The icons for every tool that is **not** a building — orders and walls. Flat
+ * line marks in `currentColor`, so the rail's gold pressed state carries
+ * through without a second asset.
+ *
+ * Keyed by `toolKey`, and loosely: this set changes about once a year, and a
+ * missing entry falls through to an empty button. The buildings, which change
+ * once a chain, are in `BUILDING_ICONS` below and are compile-forced instead.
+ */
 const ICONS: Record<string, string> = {
-  // Axe, crate, mill — flat line marks in currentColor, so the rail's gold
-  // pressed state carries through without a second asset.
+  // Axe at a trunk. Pick swung at an outcrop. Ground stepping down to a level
+  // line. A stake coming apart.
   chop: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 15 L12 6"/><path d="M11 2 L19 6 L14 11 L9 5 Z"/></svg>`,
-  stockpile: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="7" height="7"/><rect x="12" y="7" width="7" height="7"/><path d="M3 5 h16"/></svg>`,
-  sawmill: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 8 L11 3 L19 8"/><rect x="5" y="8" width="12" height="7"/><path d="M9 15 v-4 h4 v4"/></svg>`,
-  // Palisade: stakes under two rails. Gate: the same run with the middle open
-  // under a lintel. Raze: a stake coming apart.
-  wall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V5"/><path d="M8 15 V4"/><path d="M12 15 V5"/><path d="M16 15 V4"/><path d="M3 8 h16"/><path d="M3 12 h16"/></svg>`,
-  gate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 15 V6"/><path d="M17 15 V6"/><path d="M3 5 h16"/><path d="M9 15 v-4"/><path d="M13 15 v-4"/></svg>`,
-  raze: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 V7 L3 4"/><path d="M16 15 V8 L19 4"/><path d="M9 11 l4 -3"/><path d="M11 4 v3"/></svg>`,
-  // Mine: a pick swung at an outcrop. Terraform: ground stepping down to a
-  // level line. Mason: a block on a bench under a chisel.
   mine: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 15 L11 7"/><path d="M7 3 q5 1 8 5"/><path d="M15 8 l-4 -5"/><path d="M13 15 h6 l-2 -4 h-3 Z"/></svg>`,
   terraform: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 14 h5 v-4 h5 v-4 h6"/><path d="M3 6 h6"/><path d="M6 4 v4"/></svg>`,
-  // House: a gabled box with a door — beds, and nothing that looks like work.
-  house: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 9 L11 3 L19 9"/><rect x="5" y="9" width="12" height="6"/><path d="M9 15 v-4 h4 v4"/></svg>`,
-  // Farm: furrows under a fence line. Mill: a hopper over a millstone.
-  // Oven: a domed stone oven with its mouth and a wisp above it.
-  farm: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5 h16"/><path d="M3 15 l3 -7"/><path d="M9 15 l3 -7"/><path d="M15 15 l3 -7"/><path d="M6 3 v4"/><path d="M16 3 v4"/></svg>`,
-  mill: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3 h10 l-2 5 h-6 Z"/><rect x="5" y="10" width="12" height="4"/><path d="M11 8 v2"/><path d="M4 15 h14"/></svg>`,
-  oven: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V9 q7 -6 14 0 v6 Z"/><path d="M9 15 v-3 h4 v3"/><path d="M16 6 q2 -2 0 -4"/></svg>`,
-  mason: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="9" width="14" height="6"/><path d="M11 9 v6"/><path d="M8 6 h6"/><path d="M11 3 v3"/></svg>`,
-  // Watchtower: battered legs under a railed platform with a cap over it —
-  // the prop's own silhouette, which is all a 1×1 has to be recognised by.
-  watchtower: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 15 L9 7"/><path d="M15 15 L13 7"/><path d="M8 11 h6"/><path d="M6 7 h10"/><path d="M6 5 h10"/><path d="M8 5 V3 h6 v2"/></svg>`,
-  // The sheep chain, four flat line marks in the same hand as the rest.
-  // Pasture: a fenced run with a sheep standing in it. Dairy: a churn under a
-  // wheel of cheese. Weaver: a warp on a loom frame. Tailor: shears over a
-  // folded bolt.
-  pasture: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5 h16"/><path d="M6 3 v4"/><path d="M16 3 v4"/><path d="M3 15 h16"/><path d="M8 13 q0 -3 3 -3 q3 0 3 3 Z"/><path d="M14 11 l2 -1"/><path d="M9 13 v2"/><path d="M13 13 v2"/></svg>`,
-  dairy: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 L7 7 h5 l1 8 Z"/><path d="M7 4 h5"/><path d="M9 4 v3"/><path d="M15 15 a3 3 0 0 1 3 -3 v3 Z"/></svg>`,
-  weaver: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="3" width="14" height="12"/><path d="M7 3 v12"/><path d="M11 3 v12"/><path d="M15 3 v12"/><path d="M4 9 h14"/></svg>`,
-  tailor: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="10" width="16" height="5"/><path d="M3 12.5 h16"/><path d="M7 8 L13 3"/><path d="M13 8 L7 3"/><circle cx="6" cy="8.6" r="1.2"/><circle cx="14" cy="8.6" r="1.2"/></svg>`,
-  // Stone wall: coursed blocks. Stone gate: the same arch, squared.
+  raze: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 V7 L3 4"/><path d="M16 15 V8 L19 4"/><path d="M9 11 l4 -3"/><path d="M11 4 v3"/></svg>`,
+  // Palisade: stakes under two rails. Gate: the same run with the middle open
+  // under a lintel. Stone wall: coursed blocks. Stone gate: the same arch,
+  // squared.
+  wall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V5"/><path d="M8 15 V4"/><path d="M12 15 V5"/><path d="M16 15 V4"/><path d="M3 8 h16"/><path d="M3 12 h16"/></svg>`,
+  gate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 15 V6"/><path d="M17 15 V6"/><path d="M3 5 h16"/><path d="M9 15 v-4"/><path d="M13 15 v-4"/></svg>`,
   stonewall: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="6" width="16" height="4"/><rect x="3" y="10" width="16" height="4"/><path d="M8 6 v4"/><path d="M14 6 v4"/><path d="M5 10 v4"/><path d="M11 10 v4"/><path d="M17 10 v4"/></svg>`,
   stonegate: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4" width="16" height="3"/><path d="M5 15 V7 h3 v8"/><path d="M17 15 V7 h-3 v8"/></svg>`,
+};
+
+/**
+ * One icon per building, **keyed by kind and typed as a total `Record`** — so a
+ * new `BuildingKind` with no icon is a compile error rather than a blank cell.
+ *
+ * That forcing function is the point of the split. The rail is icon-only, so a
+ * button with no entry reads to the player as a *missing building*, and
+ * `ICONS`' loose `Record<string, string>` with a `?? ""` fallback was the one
+ * per-kind table in this codebase with nothing behind it — which is exactly how
+ * the drink chain's three shipped blank past a build and two reviews.
+ * `BUILDING_DEFS`, `GOODS`, `GOOD_VAR`, `GOOD_GROUP` and `GOOD_HEX` were all
+ * already forced this way (docs/specs/2026-09-14-hives-and-mead.md).
+ *
+ * Same idiom throughout: a 22×18 viewBox, `fill="none"`, `currentColor` at 1.4.
+ */
+const BUILDING_ICONS: Record<BuildingKindValue, string> = {
+  // A crate pair under a lintel. A gabled mill house. A block on a bench under
+  // a chisel. A gabled box with a door — beds, and nothing that looks like work.
+  [BuildingKind.Stockpile]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="7" height="7"/><rect x="12" y="7" width="7" height="7"/><path d="M3 5 h16"/></svg>`,
+  [BuildingKind.Sawmill]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 8 L11 3 L19 8"/><rect x="5" y="8" width="12" height="7"/><path d="M9 15 v-4 h4 v4"/></svg>`,
+  [BuildingKind.Mason]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="9" width="14" height="6"/><path d="M11 9 v6"/><path d="M8 6 h6"/><path d="M11 3 v3"/></svg>`,
+  [BuildingKind.House]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 9 L11 3 L19 9"/><rect x="5" y="9" width="12" height="6"/><path d="M9 15 v-4 h4 v4"/></svg>`,
+  // The bread chain: furrows under a fence line, a hopper over a millstone, a
+  // domed stone oven with its mouth and a wisp above it.
+  [BuildingKind.Farm]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5 h16"/><path d="M3 15 l3 -7"/><path d="M9 15 l3 -7"/><path d="M15 15 l3 -7"/><path d="M6 3 v4"/><path d="M16 3 v4"/></svg>`,
+  [BuildingKind.Mill]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3 h10 l-2 5 h-6 Z"/><rect x="5" y="10" width="12" height="4"/><path d="M11 8 v2"/><path d="M4 15 h14"/></svg>`,
+  [BuildingKind.Oven]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 15 V9 q7 -6 14 0 v6 Z"/><path d="M9 15 v-3 h4 v3"/><path d="M16 6 q2 -2 0 -4"/></svg>`,
+  // Watchtower: battered legs under a railed platform with a cap over it — the
+  // prop's own silhouette, which is all a 1×1 has to be recognised by.
+  [BuildingKind.Watchtower]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 15 L9 7"/><path d="M15 15 L13 7"/><path d="M8 11 h6"/><path d="M6 7 h10"/><path d="M6 5 h10"/><path d="M8 5 V3 h6 v2"/></svg>`,
+  // The sheep chain. Pasture: a fenced run with a sheep standing in it. Dairy:
+  // a churn under a wheel of cheese. Weaver: a warp on a loom frame. Tailor:
+  // shears over a folded bolt.
+  [BuildingKind.Pasture]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5 h16"/><path d="M6 3 v4"/><path d="M16 3 v4"/><path d="M3 15 h16"/><path d="M8 13 q0 -3 3 -3 q3 0 3 3 Z"/><path d="M14 11 l2 -1"/><path d="M9 13 v2"/><path d="M13 13 v2"/></svg>`,
+  [BuildingKind.Dairy]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 15 L7 7 h5 l1 8 Z"/><path d="M7 4 h5"/><path d="M9 4 v3"/><path d="M15 15 a3 3 0 0 1 3 -3 v3 Z"/></svg>`,
+  [BuildingKind.Weaver]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="3" width="14" height="12"/><path d="M7 3 v12"/><path d="M11 3 v12"/><path d="M15 3 v12"/><path d="M4 9 h14"/></svg>`,
+  [BuildingKind.Tailor]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="10" width="16" height="5"/><path d="M3 12.5 h16"/><path d="M7 8 L13 3"/><path d="M13 8 L7 3"/><circle cx="6" cy="8.6" r="1.2"/><circle cx="14" cy="8.6" r="1.2"/></svg>`,
+  // The drink chain, and each is drawn away from the one it could be confused
+  // with. The Hive is a **banded skep** with an entrance arch at its foot —
+  // stacked bands, not the Oven's single dome with a door and a chimney curl.
+  // Flowers is **blooms on stems** over a ground line; circles on stems are in
+  // nothing else in the set, so it can be neither the Farm's furrows nor the
+  // Pasture's fence. The Meadery is a **cask on its side** with two hoops and a
+  // spigot, lying down where the Dairy's churn stands up.
+  [BuildingKind.Hive]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 15 q0 -12 6 -12 q6 0 6 12 Z"/><path d="M5.5 11 h11"/><path d="M6.5 7 h9"/><path d="M9.5 15 v-2 q1.5 -1.5 3 0 v2"/></svg>`,
+  [BuildingKind.Flowers]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 15 h16"/><path d="M7 15 V9"/><circle cx="7" cy="7" r="2"/><path d="M11 15 V6"/><circle cx="11" cy="4" r="2"/><path d="M15 15 V9"/><circle cx="15" cy="7" r="2"/></svg>`,
+  [BuildingKind.Meadery]: `<svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 5 q6 -2 12 0 v8 q-6 2 -12 0 Z"/><path d="M9 4 v10"/><path d="M13 4 v10"/><path d="M17 9 h2 v2"/></svg>`,
 };
 
 export class Hud {
@@ -298,6 +363,12 @@ export class Hud {
   private readonly speedButtons: HTMLButtonElement[] = [];
   private readonly toolButtons = new Map<string, HTMLButtonElement>();
   private readonly toolCaptions = new Map<string, { name: string; cost: string }>();
+  /** The tab strip's three buttons and the three grids they show, by section. */
+  private readonly railTabs = new Map<RailSection, HTMLButtonElement>();
+  private readonly railPanels = new Map<RailSection, HTMLElement>();
+  /** Which section each tool's button lives in, so the strip can mark the tab
+   *  owning a tool that is being held while its section is closed. */
+  private readonly toolSection = new Map<string, RailSection>();
   /** The rail's caption strip, built up front because `buildRail` only hangs
    *  it on the end of the column it returns. */
   private readonly caption = el("div", { class: "rail-caption" });
@@ -327,6 +398,18 @@ export class Hud {
   private readonly onKeyDown: (e: KeyboardEvent) => void;
 
   private tool_: Tool = { kind: "none" };
+  /**
+   * Which rail section is open — one at a time, which is what stops the rail's
+   * height depending on how many buildings exist.
+   *
+   * **It lives here and nowhere else.** This is view state, not game state: it
+   * belongs in neither the save nor the command log, and nothing in the HUD
+   * persists today — there is no `localStorage` anywhere in `src/ui/` or
+   * `src/app/`, and the codebase's first storage read should not arrive as a
+   * side effect of a layout fix. So **every session opens on Build**, the
+   * section that grows and the one a player reaches for most.
+   */
+  private section: RailSection = "build";
   /**
    * What the inspector is showing. Two shapes now — a building, or a monster —
    * because a den's inhabitant is a thing worth watching and nothing else in
@@ -620,7 +703,15 @@ export class Hud {
       const goods = GOOD_LIST.filter((good) => GOOD_GROUP[good.type] === group);
       if (goods.length === 0) continue;
       stores.append(el("h5", {}, GROUP_LABEL[group]));
-      for (const good of goods) stores.append(this.storeRow(good));
+      // The rows go **two to a row**, in a grid per group, so the panel is seven
+      // rows tall rather than thirteen — the height the rail needs to fit its
+      // open section at 1280x720. The group heads stay full-width above their
+      // goods, which is what keeps the five chains reading as chains rather than
+      // as a wall of thirteen. An odd count leaves one empty cell, exactly as an
+      // odd tool count does in the rail.
+      const grid = el("div", { class: "store-grid" });
+      for (const good of goods) grid.append(this.storeRow(good));
+      stores.append(grid);
     }
     return stores;
   }
@@ -640,35 +731,64 @@ export class Hud {
   // ------------------------------------------------------------------ rail
 
   /**
-   * The rail, in three labelled sections — **Orders** (tell people to do
+   * The rail: a **tab strip** of three sections — **Orders** (tell people to do
    * something to what is already there), **Build** (put a building down),
-   * **Walls** (draw a line). Eleven tools in one unbroken column stopped being
-   * readable — twenty since the bread chain, the Watchtower and the sheep
-   * chain — and the styleguide's rail anatomy already allowed section heads, so
-   * this is that allowance spent.
+   * **Walls** (draw a line) — with **exactly one open at a time**.
    *
-   * Each section is a **two-column grid of icon-only buttons**, which is what
-   * put all sixteen on a 768px-tall window without a scrollbar. **Twenty no
-   * longer fit**: the sheep chain takes the rail past the height the column has
-   * at 768px, and the four rows over budget scroll — gracefully, inside the
-   * rail, never over Stores. Stated rather than discovered
-   * (docs/specs/2026-09-10-sheep-and-clothes.md). The words the
-   * buttons gave up live in their accessible names and in the caption strip at
-   * the foot of the rail.
+   * That is what makes the rail *one section tall*: a closed section costs
+   * nothing however long it grows, which no layout change can promise. Three
+   * stacked heads with every section open took twenty-three tools well past the
+   * height the left column has at 1280x720, so of the fifteen build tools two
+   * were on screen and the newest was nowhere near — a player who built one
+   * could not see it (docs/specs/2026-09-15-rail-sections-and-fit.md).
    *
-   * The sections go in a scroller **inside** the rail rather than in the rail
-   * itself, so the one thing that gives on a short window is the tool grid and
-   * never the caption strip: at 1280x720 the column is ~20px short, and with
-   * the strip inside the scrolled box that shortfall landed squarely on the
-   * cost line — the rail clipping the very words its buttons gave up.
+   * **It is a real tablist, not three disclosures.** `aria-expanded` announces
+   * three independent collapsibles where the player has one of three, and gives
+   * a screen-reader user no signal that choosing one closes the others. The
+   * strip owns a roving tabindex and answers Left / Right; the closed grids take
+   * `hidden`, so their buttons leave the tab order for free.
+   *
+   * Build's tools sit **three to a row** and Orders' and Walls' four each become
+   * two rows of three, which with the strip in place of the heads is what puts
+   * every tool of the open section on screen at 1280x720 without a scrollbar.
+   *
+   * Two things sit **outside** the scroller: the tab strip, which inside it
+   * would scroll out of reach at exactly the heights this exists for, and the
+   * caption strip, which carries the names and costs the icon-only buttons gave
+   * up and must never be the thing a short window clips.
+   *
+   * Built **once**, at construction, and thereafter synced rather than rebuilt:
+   * switching tabs is a class-and-attribute change on nodes that already exist,
+   * so no node is created or destroyed after startup and nothing about focus
+   * survival has to be arranged.
    */
   private buildRail(): HTMLElement {
     const rail = el("nav", { class: "panel rail", "aria-label": "Build tools" });
+    const tabs = el("div", { class: "rail-tabs", role: "tablist", "aria-label": "Tool sections" });
+    for (const { key, label } of RAIL_SECTIONS) {
+      const tab = el(
+        "button",
+        {
+          class: "rail-tab",
+          type: "button",
+          role: "tab",
+          id: `railtab-${key}`,
+          "aria-controls": `railpanel-${key}`,
+          "aria-selected": "false",
+          tabindex: "-1",
+        },
+        label,
+      ) as HTMLButtonElement;
+      tab.addEventListener("click", () => this.openSection(key));
+      this.railTabs.set(key, tab);
+      tabs.append(tab);
+    }
+    tabs.addEventListener("keydown", (e) => this.onTabKey(e));
+
     const sections = el("div", { class: "rail-scroll" });
 
-    sections.append(el("span", { class: "rail-label" }, "Orders"));
     sections.append(
-      this.railGrid([
+      this.railGrid("orders", [
         this.toolButton("Chop", { kind: "chop" }, ""),
         this.toolButton("Mine", { kind: "mine" }, ""),
         this.toolButton("Level", { kind: "terraform" }, "labour"),
@@ -676,9 +796,9 @@ export class Hud {
       ]),
     );
 
-    sections.append(el("span", { class: "rail-label" }, "Build"));
     sections.append(
       this.railGrid(
+        "build",
         ([
           BuildingKind.Stockpile,
           BuildingKind.Sawmill,
@@ -687,19 +807,19 @@ export class Hud {
           BuildingKind.Farm,
           BuildingKind.Mill,
           BuildingKind.Oven,
-          // The eighth cell, which the seven above left empty: the rail's
-          // height does not move for this one.
           BuildingKind.Watchtower,
-          // And the sheep chain's four, which take Build from four grid rows to
-          // six — the change that moves the rail's scroll-free floor from ~750px
-          // of window height to ~900px. At 1280x720 and at 768px of height the
-          // tool sections scroll inside the rail, which is what the left
-          // column's flex split was built for
-          // (docs/specs/2026-09-10-sheep-and-clothes.md).
           BuildingKind.Pasture,
           BuildingKind.Dairy,
           BuildingKind.Weaver,
           BuildingKind.Tailor,
+          BuildingKind.Hive,
+          BuildingKind.Flowers,
+          // Fifteen tools, three to a row: five rows exactly, and room for about
+          // one more before the rail stops fitting at 1280x720. Adding a
+          // sixteenth costs the rail nothing while some *other* section is open,
+          // which is the whole point of the tab strip
+          // (docs/specs/2026-09-15-rail-sections-and-fit.md).
+          BuildingKind.Meadery,
         ] as BuildingKindValue[]).map((kind) => {
           const def = BUILDING_DEFS[kind];
           // The cost names the def's own material: the House costs planks, and
@@ -714,7 +834,6 @@ export class Hud {
     // choice is made by which button you press rather than by a mode you have
     // to remember. A gate costs the same material as a plain run of its
     // material and differs only in labour.
-    sections.append(el("span", { class: "rail-label" }, "Walls"));
     const walls: HTMLButtonElement[] = [];
     for (const material of ["timber", "stone"] as WallMaterial[]) {
       const cost = wallCost(material);
@@ -722,22 +841,84 @@ export class Hud {
       walls.push(this.toolButton(stone ? "Stone wall" : "Wall", { kind: "wall", material }, cost));
       walls.push(this.toolButton(stone ? "Stone gate" : "Gate", { kind: "gate", material }, cost));
     }
-    sections.append(this.railGrid(walls));
+    sections.append(this.railGrid("walls", walls));
 
     // The caption strip: always rendered, fixed height, empty when there is
     // nothing to name. Reserved space rather than a strip that appears — the
     // rail may never change height under the pointer.
     this.caption.append(this.captionName, this.captionCost);
-    rail.append(sections, this.caption);
+    rail.append(tabs, sections, this.caption);
+    this.syncRailTabs();
     return rail;
   }
 
-  /** One section's tools, two to a row. An odd count leaves the last cell
-   *  empty — Build's twelve fill six rows exactly. */
-  private railGrid(tools: readonly HTMLElement[]): HTMLElement {
-    const grid = el("div", { class: "rail-grid" });
+  /**
+   * One section's tools, **three to a row**, as the tabpanel its tab controls.
+   * An odd count leaves the trailing cells empty — Build's fifteen fill five
+   * rows exactly, Orders' and Walls' four leave one empty cell each.
+   *
+   * The grid also records which section each of its tools belongs to, which is
+   * what lets the strip put a gold dot on the tab owning a tool held while its
+   * own section is closed.
+   */
+  private railGrid(section: RailSection, tools: readonly HTMLButtonElement[]): HTMLElement {
+    const grid = el("div", {
+      class: "rail-grid",
+      role: "tabpanel",
+      id: `railpanel-${section}`,
+      "aria-labelledby": `railtab-${section}`,
+    });
     grid.append(...tools);
+    for (const b of tools) {
+      const key = b.dataset.tool;
+      if (key !== undefined) this.toolSection.set(key, section);
+    }
+    this.railPanels.set(section, grid);
     return grid;
+  }
+
+  /** Open one section, closing the other two. Never touches the active tool:
+   *  the caption strip sits outside the scroller, so a tool held in a closed
+   *  section is still named, and its tab still carries the dot. */
+  private openSection(section: RailSection): void {
+    if (this.section === section) return;
+    this.section = section;
+    this.syncRailTabs();
+  }
+
+  /**
+   * Left / Right across the strip, with the roving tabindex following.
+   *
+   * Automatic activation — moving the selection opens that section — because
+   * the panels already exist and showing one costs nothing. The list wraps.
+   */
+  private onTabKey(e: KeyboardEvent): void {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (step === 0) return;
+    e.preventDefault();
+    const at = RAIL_SECTIONS.findIndex((s) => s.key === this.section);
+    const next = RAIL_SECTIONS[(at + step + RAIL_SECTIONS.length) % RAIL_SECTIONS.length].key;
+    this.openSection(next);
+    this.railTabs.get(next)?.focus();
+  }
+
+  /**
+   * Put the open section on the page: which tab is selected, which grid is
+   * shown, and which tab — if any — owns the tool being held.
+   *
+   * The dot is **the only gold the rail grows here, and legitimately so**: the
+   * rule that a tab is never gold is about which tab is *selected*, a view,
+   * whereas the dot points at the tool being held, which is intent.
+   */
+  private syncRailTabs(): void {
+    const held = this.tool_.kind === "none" ? undefined : this.toolSection.get(toolKey(this.tool_));
+    for (const [key, tab] of this.railTabs) {
+      const open = key === this.section;
+      tab.setAttribute("aria-selected", String(open));
+      tab.tabIndex = open ? 0 : -1;
+      tab.classList.toggle("holds", key === held);
+    }
+    for (const [key, panel] of this.railPanels) panel.hidden = key !== this.section;
   }
 
   /**
@@ -759,7 +940,12 @@ export class Hud {
       "aria-label": named,
       title: named,
     }) as HTMLButtonElement;
-    b.innerHTML = ICONS[key] ?? "";
+    // No `??` on the building branch: `BUILDING_ICONS` is total over the kinds,
+    // so a building with no icon fails to compile instead of rendering blank.
+    b.innerHTML = tool.kind === "build" ? BUILDING_ICONS[tool.building] : (ICONS[key] ?? "");
+    // Read back by `railGrid`, which is what knows the section: the button is
+    // built before it is put in a grid, so the key rides along on it.
+    b.dataset.tool = key;
     b.addEventListener("click", () => {
       this.setTool(sameTool(this.tool_, tool) ? { kind: "none" } : tool);
     });
@@ -811,6 +997,9 @@ export class Hud {
     for (const [key, b] of this.toolButtons) {
       b.setAttribute("aria-pressed", String(key === active));
     }
+    // The open section is deliberately not touched: a tool held while its own
+    // section is closed keeps its dot and its name in the caption strip.
+    this.syncRailTabs();
     this.renderCaption();
   }
 
@@ -837,7 +1026,11 @@ export class Hud {
       b.state,
       b.staffed,
       b.delivered,
-      ...b.stored.map((s) => `${s.count}${s.accepted ? "+" : "-"}`),
+      // `clearing` and `stuck` join the count and the toggle here: pressing
+      // `clear` on a good the pile refuses moves neither of the first two, so
+      // without them the panel would never repaint — the button would keep
+      // reading `clear` and the stuck note would never appear.
+      ...b.stored.map((s) => `${s.count}${s.accepted ? "+" : "-"}${s.clearing ? "c" : ""}${s.stuck ? "!" : ""}`),
       Math.round(b.progress * 40),
       Math.round(b.milling * 50),
       b.stall,
@@ -845,6 +1038,13 @@ export class Hud {
       b.limit,
       b.colonyCount,
       b.tableShort,
+      // Both are derived from *other* buildings, so neither moves anything else
+      // on this panel when it changes: a House's signature is otherwise wholly
+      // static (no recipe means no milling, no limit and no colony count), and
+      // an unstaffed Hive's is too. Without them the mead note would never
+      // appear and the fields row would never leave `0 / 3`.
+      b.cellarStocked,
+      b.fields,
     ].join("|");
     if (signature === this.lastPanel) return;
     this.lastPanel = signature;
@@ -940,6 +1140,7 @@ export class Hud {
       // The house voice: quiet text in the panel, no alert and no colour
       // change anywhere else (docs/STYLEGUIDE.md, Tone).
       nodes.push(note(`waiting for ${material} (${b.delivered} / ${b.cost})`));
+      this.pushSiteFilters(b, nodes);
       nodes.push(this.actionButton("Cancel", () => this.ports.send({ kind: "cancelBlueprint", building: b.id })));
       return nodes;
     }
@@ -948,6 +1149,7 @@ export class Hud {
       nodes.push(rows([["Materials", `${b.cost} / ${b.cost}`]]));
       nodes.push(meter(b.progress));
       nodes.push(note("under construction"));
+      this.pushSiteFilters(b, nodes);
       nodes.push(this.actionButton("Cancel", () => this.ports.send({ kind: "cancelBlueprint", building: b.id })));
       return nodes;
     }
@@ -966,27 +1168,40 @@ export class Hud {
       // colony says so. Load-bearing rather than polish: the gate is silent,
       // player-caused, and can stand for game-days.
       if (b.tableShort) nodes.push(note("no one will come while the table is short"));
+      // And when the cellar is what is *helping*, this is where the colony says
+      // so — mead's whole effect is on a clock nobody can see, so unsaid it is
+      // a lever with no readout at all. The short-table note wins where both
+      // could apply, which `cellarStocked` already settles in `know`.
+      else if (b.cellarStocked) nodes.push(note("mead in the cellar — folk come sooner"));
+      return nodes;
+    }
+
+    if (b.kind === BuildingKind.Flowers) {
+      // The House's shape: what it is, then the consequence. A field has no
+      // worker, no recipe, no buffer and no action — the note is the whole
+      // panel, and it is **state-independent** because a field standing alone
+      // is still a field somebody may put a hive beside.
+      nodes.push(rows([["Plot", `${b.cost} logs`]]));
+      nodes.push(note(`boosts hives within ${HIVE_REACH} tiles`));
       return nodes;
     }
 
     if (b.kind === BuildingKind.Stockpile) {
-      // A row per good — its count here and its accept toggle — walked from the
-      // goods table, so a new good gets a row by existing. The toggle writes
-      // the filter the pile has carried since step 2; nothing about the panel
-      // knows which goods exist.
-      const box = rows([["Stored", `${b.storedTotal} / ${b.capacity}`]]);
-      for (const s of b.stored) {
-        box.append(
-          this.filterRow(GOODS[s.type as ItemTypeValue], s.count, s.accepted, () =>
-            this.ports.send({ kind: "toggleFilter", building: b.id, type: s.type }),
-          ),
-        );
-      }
+      // A row per good — its count, its accept toggle and its `clear` — walked
+      // from the goods table, so a new good gets a row by existing. Nothing
+      // about the panel knows which goods exist; the Stored row carries the
+      // `all` / `none` pair, which is what keeps a general-purpose pile one
+      // press rather than eleven now that a new pile accepts nothing.
+      const box = el("div", { class: "rows" });
+      box.append(this.filterAllRow(b.id, "Stored", `${b.storedTotal} / ${b.capacity}`));
+      for (const s of b.stored) box.append(this.filterRow(b.id, s, true));
       nodes.push(box);
       // The one sentence that keeps the two halves of production control apart:
       // filters route, ceilings brake. A player who wants a hoard the mill
       // cannot touch is looking for the workshop panel, and this says so.
       nodes.push(note(FILTER_NOTE));
+      const second = stockNote(b);
+      if (second) nodes.push(note(second));
       return nodes;
     }
 
@@ -1012,10 +1227,22 @@ export class Hud {
     // the whole colony shares. Editing it edits the global number — a second
     // sawmill's panel shows the same row.
     if (b.outputType >= 0) box.append(this.limitRow(b));
+    // A hive's rate is a fact about where it stands, so the panel prints the
+    // number the batch length actually reads — the Watchtower's `watching` row,
+    // one building over.
+    if (b.fields >= 0) box.append(row("Fields in reach", `${b.fields} / ${HIVE_FIELDS_MAX}`));
     nodes.push(box);
     if (b.milling >= 0) nodes.push(meter(b.milling));
     // A tower has no recipe to stall, so it says what it is watching instead.
     nodes.push(note(b.watching >= 0 ? watchNote(b) : millNote(b)));
+    // A hive with no fields is working, not stalled — so this is a second note
+    // rather than a stall, and it names the distance because "in reach" is
+    // otherwise a number with no unit.
+    if (b.fields === 0) nodes.push(note(`no flowers in reach — plant fields within ${HIVE_REACH} tiles`));
+    // The Meadery is the one place the game can say what mead is *for* before
+    // it is already working, so this note is state-independent like the
+    // Flowers' one.
+    if (b.kind === BuildingKind.Meadery) nodes.push(note("mead in the cellar brings folk sooner"));
     nodes.push(
       b.staffed ?
         this.actionButton("Unstaff", () => this.ports.send({ kind: "unstaff", building: b.id }))
@@ -1031,13 +1258,37 @@ export class Hud {
   }
 
   /**
-   * One good's row on a stockpile: its name, how many the pile holds, and the
-   * accept toggle. The toggle is the styleguide's secondary recipe with its
-   * state carried by ink weight and fill — never gold, which is intent, and
-   * never sage or rust, which mean other things. `on`/`off` in caps is the
-   * whole of its vocabulary.
+   * The filter rows and the `all` / `none` pair on a pile that is still a
+   * blueprint or still going up — **toggles only**, with no counts and no
+   * `clear`, because what the site holds is its own construction materials and
+   * not stock. This is what keeps accept-nothing from meaning "every first pile
+   * goes active accepting nothing": the click a player makes to check on the
+   * site is where they configure it
+   * (docs/specs/2026-09-14-stockpiles-default-off-and-clear.md).
    */
-  private filterRow(good: GoodDef, count: number, accepted: boolean, onToggle: () => void): HTMLElement {
+  private pushSiteFilters(b: NonNullable<ReturnType<typeof inspect>>, nodes: Node[]): void {
+    if (b.kind !== BuildingKind.Stockpile) return;
+    const box = el("div", { class: "rows" });
+    box.append(this.filterAllRow(b.id, "Accepts", null));
+    for (const s of b.stored) box.append(this.filterRow(b.id, s, false));
+    nodes.push(box);
+    const second = stockNote(b);
+    if (second) nodes.push(note(second));
+  }
+
+  /**
+   * One good's row on a stockpile: its name, how many the pile holds, the
+   * accept toggle, and — while it holds any — `clear`. The toggle is the
+   * styleguide's secondary recipe with its state carried by ink weight and
+   * fill — never gold, which is intent, and never sage or rust, which mean
+   * other things. `on`/`off` in caps is the whole of its vocabulary, and it
+   * stays **binary**: a good being cleared reads `off` here, with the button
+   * beside it saying what is actually happening.
+   *
+   * `detailed` is false on a site, where the row is the toggle alone.
+   */
+  private filterRow(id: number, s: StoredGood, detailed: boolean): HTMLElement {
+    const good = GOODS[s.type as ItemTypeValue];
     const row = el("div", { class: "row filter" });
     const ctl = el("span", { class: "ctl" });
     const toggle = el(
@@ -1045,15 +1296,64 @@ export class Hud {
       {
         class: "toggle",
         type: "button",
-        "aria-pressed": String(accepted),
+        "aria-pressed": String(s.accepted),
         "aria-label": `accept ${good.label}`,
-        title: accepted ? `accepting ${good.label} — click to refuse` : `refusing ${good.label} — click to accept`,
+        title: s.accepted ? `accepting ${good.label} — click to refuse` : `refusing ${good.label} — click to accept`,
       },
-      accepted ? "on" : "off",
+      s.accepted ? "on" : "off",
     ) as HTMLButtonElement;
-    toggle.addEventListener("click", onToggle);
-    ctl.append(el("b", {}, String(count)), toggle);
+    toggle.addEventListener("click", () => this.ports.send({ kind: "toggleFilter", building: id, type: s.type }));
+    if (detailed) ctl.append(el("b", {}, String(s.count)));
+    ctl.append(toggle);
+    // Offered from `on` and `off` alike, so "empty this pile of planks" is one
+    // press whatever the toggle says — and withdrawn once the pile holds none,
+    // where a finished clear is indistinguishable from `off` and meant to be.
+    if (detailed && s.count > 0) {
+      const clearing = s.clearing;
+      const button = el(
+        "button",
+        {
+          class: "word",
+          type: "button",
+          // One label for both faces, so keyboard focus survives the rebuild
+          // the press itself causes.
+          "aria-label": `clear ${good.label}`,
+          title:
+            clearing ?
+              `clearing ${good.label} out to other piles`
+            : `send the ${good.label} here to other piles, and take no more`,
+        },
+        clearing ? "clearing" : "clear",
+      ) as HTMLButtonElement;
+      if (clearing) button.disabled = true;
+      else button.addEventListener("click", () => this.ports.send({ kind: "clearFilter", building: id, type: s.type }));
+      ctl.append(button);
+    }
     row.append(el("span", {}, good.name), ctl);
+    return row;
+  }
+
+  /** The row the `all` / `none` pair sits in — the Stored row on a finished
+   *  pile, a bare `Accepts` label on a site that has no stock to count. */
+  private filterAllRow(id: number, label: string, value: string | null): HTMLElement {
+    const row = el("div", { class: "row filter" });
+    const ctl = el("span", { class: "ctl" });
+    if (value !== null) ctl.append(el("b", {}, value));
+    const press = (text: string, aria: string, title: string, on: boolean): HTMLButtonElement => {
+      const button = el(
+        "button",
+        { class: "word", type: "button", "aria-label": aria, title },
+        text,
+      ) as HTMLButtonElement;
+      button.addEventListener("click", () => this.ports.send({ kind: "setAllFilters", building: id, on }));
+      return button;
+    };
+    ctl.append(
+      press("all", "accept every good", "accept every good", true),
+      // `none` steps around a good that is clearing — see `setAllFilters`.
+      press("none", "refuse every good", "refuse every good, but let a clear finish", false),
+    );
+    row.append(el("span", {}, label), ctl);
     return row;
   }
 
@@ -1222,6 +1522,24 @@ export function watchNote(b: Pick<Inspection, "watching" | "worker">): string {
  */
 const FILTER_NOTE = "filters choose what this pile accepts — to stop a good being made, set its limit on the workshop";
 
+/**
+ * The stockpile panel's **second** note, in the consequence voice — the
+ * styleguide allows one when it says what follows rather than what is, and both
+ * of these do. The two states are mutually exclusive by construction: a pile
+ * with a good stuck mid-clear is holding some of it, which is exactly what the
+ * accept-nothing note excludes.
+ *
+ * "Clearing" is defined here as *clearing with a count above zero*, on purpose:
+ * a finished `2` reads as `off` everywhere else in the panel, and it must not
+ * cost a pile the note that explains why it is empty.
+ */
+export function stockNote(b: Pick<NonNullable<ReturnType<typeof inspect>>, "stored">): string | null {
+  const stuck = b.stored.find((s) => s.stuck);
+  if (stuck) return `clearing ${GOODS[stuck.type as ItemTypeValue].label} — no other pile will take them`;
+  const idle = !b.stored.some((s) => s.accepted) && !b.stored.some((s) => s.clearing && s.count > 0);
+  return idle ? "accepts nothing yet — turn on what this pile should take" : null;
+}
+
 function tagClass(b: NonNullable<ReturnType<typeof inspect>>): string {
   if (b.state !== BuildingState.Active) return "blueprint";
   return b.hasSlot ? "slot" : "pool";
@@ -1234,12 +1552,15 @@ function tagLabel(b: NonNullable<ReturnType<typeof inspect>>): string {
 
 function rows(pairs: [string, string][]): HTMLElement {
   const box = el("div", { class: "rows" });
-  for (const [label, value] of pairs) {
-    const row = el("div", { class: "row" });
-    row.append(el("span", {}, label), el("b", {}, value));
-    box.append(row);
-  }
+  for (const [label, value] of pairs) box.append(row(label, value));
   return box;
+}
+
+/** One label-left, value-right row, for appending to a box built already. */
+function row(label: string, value: string): HTMLElement {
+  const node = el("div", { class: "row" });
+  node.append(el("span", {}, label), el("b", {}, value));
+  return node;
 }
 
 function note(message: string): HTMLElement {

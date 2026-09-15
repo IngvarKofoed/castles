@@ -36,7 +36,9 @@ export interface GoodDef {
     | "acceptWool"
     | "acceptCloth"
     | "acceptClothes"
-    | "acceptCheese";
+    | "acceptCheese"
+    | "acceptHoney"
+    | "acceptMead";
 }
 
 export const GOODS: Record<ItemTypeValue, GoodDef> = {
@@ -56,6 +58,8 @@ export const GOODS: Record<ItemTypeValue, GoodDef> = {
     accept: "acceptClothes",
   },
   [ItemType.Cheese]: { type: ItemType.Cheese, name: "Cheese", label: "cheese", accept: "acceptCheese" },
+  [ItemType.Honey]: { type: ItemType.Honey, name: "Honey", label: "honey", accept: "acceptHoney" },
+  [ItemType.Mead]: { type: ItemType.Mead, name: "Mead", label: "mead", accept: "acceptMead" },
 };
 
 /**
@@ -82,8 +86,29 @@ export function goodOf(type: number): GoodDef | null {
   return GOODS[type as ItemTypeValue] ?? null;
 }
 
+/**
+ * The third value an accept flag can hold: *refusing the good, and pushing out
+ * what the pile still holds of it.* `0` refuses and keeps — production
+ * control's grandfathering — and `2` is the explicit override the player
+ * presses `clear` for. A spare value of the flag rather than an eleventh pair
+ * of fields: clearing is exclusive with accepting by definition, so a separate
+ * `clearX` could only ever disagree with `acceptX`
+ * (docs/specs/2026-09-14-stockpiles-default-off-and-clear.md).
+ */
+export const FILTER_CLEARING = 2;
+
 /** Does this stockpile take that good? Unknown goods are refused, not stored. */
 export function stockpileAccepts(b: Building, type: number): boolean {
   const def = goodOf(type);
   return def !== null && b[def.accept] === 1;
+}
+
+/**
+ * Is this pile clearing that good out — refusing it *and* handing back what it
+ * holds? Read by the tidy-up hauls (`labour/tasks`) and by the panel, which is
+ * the whole of the state's reach.
+ */
+export function stockpileClearing(b: Building, type: number): boolean {
+  const def = goodOf(type);
+  return def !== null && b[def.accept] === FILTER_CLEARING;
 }

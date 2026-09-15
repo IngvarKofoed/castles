@@ -1,6 +1,6 @@
 # Castles — HUD style guide
 
-*Last updated 2026-09-11. Distilled from the approved visual mock
+*Last updated 2026-09-15. Distilled from the approved visual mock
 (https://claude.ai/code/artifact/fa8e50e2-7a08-422e-890b-23e3f262711c — the
 live, editable reference), the HUD refit canvas
 (https://claude.ai/code/artifact/abc3851b-250b-48b1-8406-6871d5816c66 — the
@@ -10,7 +10,7 @@ visual gets invented per-session.*
 
 **The minimum supported viewport is 1280×720.** Every region below fits at that
 size without wrapping or scrolling, except the rail, which is allowed to scroll
-inside itself below 768px of window height. Nothing is designed for narrower or
+inside itself below 720px of window height. Nothing is designed for narrower or
 shorter than that.
 
 ## Tone
@@ -59,6 +59,8 @@ The game promises calm; the UI must keep it:
 | `cloth` | `#7e93a3` | cloth resource icon (a woven bolt: the **only blue pip in Stores**, so a bolt is never a plank) |
 | `clothes` | `#4d6d8e` | clothes resource icon (the bolt's blue, deepened — the `rock`/`block` move one chain over) |
 | `cheese` | `#e0c765` | cheese resource icon (pale yellow, kept clear of `grain`'s olive **and of `gold`**, which means intent and which nothing in Stores may borrow) |
+| `honey` | `#c07a1e` | honey resource icon (deep amber: **darker and redder than `gold`**, deliberately, the way `bread` is darker and redder than `timber` — gold means intent and no good may wear it) |
+| `mead` | `#e8d79a` | mead resource icon (pale straw, lifted clear of `cheese`'s yellow and of the sand in the world palette) |
 
 World colors live in `src/render/palette.ts` and are not UI colors.
 
@@ -83,18 +85,27 @@ gold action button, full width, at the bottom. Fixed width 246px on the
 right edge. Padding `12px 14px 14px`, vertical gap 12px, radius 2px.
 
 **A control row** is the same label-left row with a small cluster on the
-right in place of the bare value — a count and a toggle (`Plank  3  ON`), or
-a value between two steppers (`Planks in colony  − 14 / 20 +`). The label
-may wrap; the cluster never does. Two rows use it so far, both from
-production control: every good on a stockpile's panel gets a count-and-toggle
-row, and a workshop's panel gets one "in colony" row for its output, under
-the per-building output count — the wording is what keeps the local plank
-number and the colony-wide one from reading as the same figure. The ceiling
-reads `unlimited` at the top of its range; the row never shows `∞`. A
-workshop held by its ceiling says so in the note row, in the house voice:
+right in place of the bare value — a count, a toggle and a `CLEAR`
+(`Plank  3  ON  CLEAR`), or a value between two steppers
+(`Planks in colony  − 14 / 20 +`). The label may wrap; the cluster never
+does, and at 246px a full three-control cluster leaves the label about 78px
+to flex in. Three rows use it: every good on a stockpile's panel gets a
+count-toggle-clear row, the stockpile's own `Stored` row carries an
+`ALL` / `NONE` pair in place of steppers (`Stored  3 / 32  ALL  NONE`), and a
+workshop's panel gets one "in colony" row for its output, under the
+per-building output count — the wording is what keeps the local plank number
+and the colony-wide one from reading as the same figure. The ceiling reads
+`unlimited` at the top of its range; the row never shows `∞`. A workshop held
+by its ceiling says so in the note row, in the house voice:
 `at limit (20 planks in the colony)`. A stockpile's note row carries the one
 sentence that keeps filters and ceilings apart — filters choose what a pile
 accepts, ceilings stop a good being made.
+
+**A stockpile that is still a blueprint carries the same filter rows**, minus
+the counts and the `CLEAR` — its `ALL` / `NONE` row is labelled `Accepts`,
+because what a site holds is its own construction materials and not stock. A
+pile is configured before it is built, which is what a default of accepting
+nothing needs in order not to be a trap.
 
 **A chain chip may be one-sided.** A workshop whose recipe consumes nothing —
 the Farm — draws `→ Grain` with no chip to the left of the arrow, rather than
@@ -106,7 +117,11 @@ for" anything.
 than a status: the House says `raises the cap by 2` under its beds row (the
 number alone is a figure with nothing attached to it), and adds `no one will
 come while the table is short` while the food gate — not the cap — is what
-holds arrivals. Both are the italic faint recipe; neither is an alarm.
+holds arrivals. A stockpile's second note is the same shape, and says either
+why the pile stays empty (`accepts nothing yet — turn on what this pile
+should take`) or why a clear is not moving (`clearing planks — no other pile
+will take them`); the two can never both apply. All are the italic faint
+recipe; none is an alarm.
 
 ## Buttons, tags, meters
 
@@ -125,7 +140,19 @@ holds arrivals. Both are the italic faint recipe; neither is an alarm.
   border is the same both ways so the row keeps its shape. **State is ink
   weight and fill, never a colour** — gold is intent, sage and rust already
   mean other things, and four toggles in one panel would otherwise be four
-  gold elements.
+  gold elements. The toggle stays **binary** even where the underlying state
+  has three values: a good being cleared out reads `off`, and the button
+  beside it says what is really happening.
+- **Word buttons** (`clear`, `all`, `none`, in a control row's cluster): the
+  secondary recipe again in 11px caps, sized to the word rather than to a
+  fixed box, since `clearing` is wider than `clear` and the row's label
+  absorbs the difference. Distinct from the *menu's* small buttons, which
+  share the recipe but stretch to fill their row and carry a rust armed
+  state. While a
+  clear is running its button reads `clearing`, disabled and `ink-faint` —
+  the steppers' end-of-range treatment, quiet rather than gone — and it is
+  not rendered at all once the pile holds none of the good. Never gold: like
+  a ceiling, a filter is a setting and not an order.
 - **Rail tools**: borderless, 2px transparent left edge; pressed = gold
   text, gold left edge, `rgba(220,162,60,0.13)` fill. **Icon only** — the name
   and cost live in the button's `aria-label` and `title` ("Stone wall — 1
@@ -137,9 +164,11 @@ holds arrivals. Both are the italic faint recipe; neither is an alarm.
   scrolled box**, so a short window scrolls the tool sections and never clips
   the strip. It names the hovered or
   keyboard-focused tool first, else the active tool, else nothing — and the
-  name is **gold only while it is naming the active tool**, which is the rail's
-  one gold element. A preview of some other tool reads in plain ink: hover is
-  not intent.
+  name is **gold only while it is naming the active tool**. A preview of some
+  other tool reads in plain ink: hover is not intent. The rail's only other gold
+  is the tab strip's held-tool dot, which points at the same intent from the
+  other end — no tab, meter or button in the rail may take gold for anything
+  else.
 - **Tags** (10px caps, 2px radius): POOL sage on `rgba(143,191,82,0.16)`;
   SLOT `#e08a72` on `rgba(184,80,58,0.18)`; BLUEPRINT ink-dim on
   `rgba(126,122,104,0.18)`.
@@ -397,32 +426,61 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
   claimed who is not away at a meal. It is the player's read on how much slack
   the pool has, so it reads as hands that could take work now rather than hands
   that merely hold nothing (`Readout.idle` is the definition it follows).
-- **Build rail** — left edge, 96px wide, below the ribbon: a 10px caps section
-  head, then that section's tools in a **two-column grid** of icon-only
-  buttons, repeating, with the caption strip as the last thing in the rail. An
-  odd count leaves one empty cell. Sections are by *what the tool does to the
-  world* — **Orders** (tell people to work on what is already there), **Build**
-  (put a building down), **Walls** (draw a line) — and each head after the
-  first carries a `line-soft` rule above it.
+- **Build rail** — left edge, 145px wide, below the ribbon: a **tab strip** of
+  the three sections, then the open section's tools in a **three-column grid**
+  of icon-only buttons, with the caption strip as the last thing in the rail.
+  An odd count leaves the trailing cells empty. Sections are by *what the tool
+  does to the world* — **Orders** (tell people to work on what is already
+  there), **Build** (put a building down), **Walls** (draw a line).
 
-  Two columns is what put all sixteen tools on screen at once at 768px of
-  window height. **Twenty no longer fit, and this guide says so rather than
-  leaving it to be discovered**: the sheep chain takes Build to six grid rows
-  and the rail to ~465px, and Stores to ~372px, so the scroll-free floor moved
-  from ~750px of window height to ~900px. At 768 the rail scrolls by about four
-  rows. It never slides over Stores at any height, because the two share one
-  left-edge flex column in which the rail is the item that gives — which is
-  exactly what that split was built for. Accepted for now; the repair when it
-  starts to hurt is a three-column rail or collapsible Stores groups, neither
-  of which is built.
-- **Stores** — bottom-left, 150px wide, mirroring Labour bottom-right (both
-  top corners are already spoken for). A 10px caps head, then per chain a 10px
+  **Exactly one section is open**, and the strip opens on **Build** every
+  session — the section that grows, and the one a player reaches for most.
+  Nothing about which tab was open is remembered: it is view state, and nothing
+  in the HUD persists. One-at-a-time is what makes the rail *one section tall*,
+  so a closed section costs nothing however long it grows — which no amount of
+  re-columning can promise, and which is why three independently collapsible
+  disclosure heads were rejected in favour of a tab set.
+
+  **Tab strip anatomy**: one ~30px row across the head of the rail, outside the
+  scroller, in the same 10px caps section-head type the stacked heads used, with
+  a `line-soft` rule beneath. The open tab is `ink` on a neutral pressed fill;
+  the closed two are `ink-faint`. **Never gold** — the rail's one gold element
+  is the caption strip naming the active tool, and a tab is a view, not an
+  intent. The one exception is a **4px gold dot** under the label of the tab
+  owning the tool currently held, which points at intent rather than at a view:
+  a tool stays active while its section is closed, and the dot is how the player
+  sees *where* it is.
+
+  It is a real tablist — `role="tablist"` / `tab` / `tabpanel`, a roving
+  tabindex, Left / Right between tabs — never `aria-expanded`, which announces
+  three independent collapsibles where the player has one of three.
+
+  Three columns plus the strip is what puts every tool of the open section on
+  screen at **1280×720**, with room for about one more row of buildings before
+  that stops being true. 145px is the width that keeps the cell at its old size
+  (`(96 − 1) / 2` and `(145 − 2) / 3` are both ~47.6px), so the button, its 2px
+  pressed left edge and the icon are untouched. The rail never slides over
+  Stores at any height, because the two share one left-edge flex column in which
+  the rail is the item that gives.
+- **Stores** — bottom-left, 220px wide. A 10px caps head, then per chain a 10px
   caps group label over a `line-soft` rule — **Wood**, **Stone**, **Food**,
-  **Cloth**, in that fixed order, the first without a rule — then one 13px row
-  per good: the
+  **Cloth**, **Drink**, in that fixed order, the first without a rule — then that
+  group's goods **two to a line** in a 13px row each: the
   9px rotated resource pip in the good's colour, its name in ink-dim, its count
-  right-aligned in ink and tabular. **Every good the game has, named and
-  counted**; a new good is one more row and the ribbon never changes.
+  right-aligned in ink and tabular. An odd count leaves one empty cell, as in the
+  rail. **Every good the game has, named and counted**; a new good is one more
+  cell and the ribbon never changes.
+
+  **220px is forced, not chosen, and it breaks the Labour mirror.** Stores and
+  Labour were the two bottom corners at one width; they no longer are. A row is
+  pip + name + count, so the longest — `Clothes 123` — does not fit the half-cell
+  a narrower panel gives, and it has to fit in the **fallback font**, since
+  Barlow loads with `display=swap` and the non-condensed stack renders during
+  every load and permanently offline. Truncating instead is rejected outright:
+  `Cloth` and `Clothes` are both goods, and an ellipsis makes their rows
+  identical. Hiding the counts behind a click — collapsible groups — is rejected
+  too: they are a glance. The mirror is a visual rhyme, and being able to see the
+  buildings is not.
 
   The order is **fixed here, never read off the enum**: `ItemType` is
   append-only, so a good's position in it says when it was added and nothing
@@ -431,7 +489,10 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
   good's group is what a colonist *does* with it, not which building made it. **Cloth comes
   after Food** because the chain arrived after the bread chain and because it is
   the one group nothing eats or builds with, so the panel read top to bottom
-  tells the colony's own story in the order it was built.
+  tells the colony's own story in the order it was built; **Drink comes after
+  Cloth** for the same reason, and is a group of its own rather than a corner of
+  Food because nobody eats honey or mead — what a colonist does with them is
+  neither eating nor building.
 - **Inspector** — right edge, 246px, below the ribbon; a second panel may
   sit above the bottom edge. It has **two shapes**: a building, and a
   monster — display-20px kind as the title, an `ORC` / `TROLL` tag in the

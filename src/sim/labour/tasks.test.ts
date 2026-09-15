@@ -10,6 +10,7 @@ import {
   Loc,
   TaskKind,
   createSim,
+  type Building,
   type Sim,
 } from "../store";
 import { advanceTick } from "../tick";
@@ -366,6 +367,131 @@ describe("the mill says why it stopped", () => {
     for (let t = 0; t < 60 && mill.millProgress < 0; t++) advanceTick(sim);
     expect(mill.millProgress).toBeGreaterThanOrEqual(0);
     expect(inspect(sim, mill.id)?.stall).toBe("none");
+  });
+});
+
+describe("clearing a good out of a pile", () => {
+  /**
+   * Two finished piles accepting planks, with `n` of them stored in the
+   * first. Two is the smallest colony the clear is observable in: with one pile
+   * `nearestStore` skips the item's own holder and nothing can ever move.
+   */
+  function twoPiles(sim: Sim, n: number): [Building, Building] {
+    const first = site(sim, BuildingKind.Stockpile);
+    const second = site(sim, BuildingKind.Stockpile, [{ x: first[0], y: first[1] }]);
+    applyCommands(sim, [
+      { kind: "place", building: BuildingKind.Stockpile, x: first[0], y: first[1] },
+      { kind: "place", building: BuildingKind.Stockpile, x: second[0], y: second[1] },
+    ]);
+    const piles = sim.buildings.filter((b) => b.kind === BuildingKind.Stockpile);
+    expect(piles).toHaveLength(2);
+    // Planks only, so the colony's opening provision bread stays in the
+    // clearing and every haul below is unambiguously about the clear.
+    for (const b of piles) {
+      b.state = BuildingState.Active;
+      applyCommands(sim, [{ kind: "toggleFilter", building: b.id, type: ItemType.Plank }]);
+    }
+    for (let i = 0; i < n; i++) {
+      const plank = spawnItem(sim, ItemType.Plank, piles[0].x, piles[0].y)!;
+      plank.loc = Loc.Stored;
+      plank.holder = piles[0].id;
+      plank.x = -1;
+      plank.y = -1;
+    }
+    return [piles[0], piles[1]];
+  }
+
+  it("hands the pile's stock to the tidy-up hauls, bound for the other pile", () => {
+    const sim = createSim(SEED);
+    const [from, to] = twoPiles(sim, 3);
+    generateTasks(sim);
+    // Nothing yet: a stored good is not loose while the pile accepts it.
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToStore)).toHaveLength(0);
+
+    applyCommands(sim, [{ kind: "clearFilter", building: from.id, type: ItemType.Plank }]);
+    generateTasks(sim);
+    const hauls = sim.tasks.filter((t) => t.kind === TaskKind.HaulToStore);
+    expect(hauls).toHaveLength(3);
+    // No new task kind and no new destination rule: every one of them is an
+    // ordinary haul-to-store aimed at the only other pile that will take it.
+    for (const h of hauls) {
+      expect(h.building).toBe(to.id);
+      expect(sim.items.find((it) => it.id === h.item)?.holder).toBe(from.id);
+    }
+  });
+
+  it("finishes the job by itself, and drops nothing on the ground doing it", () => {
+    const sim = createSim(SEED);
+    const [from, to] = twoPiles(sim, 3);
+    applyCommands(sim, [{ kind: "clearFilter", building: from.id, type: ItemType.Plank }]);
+    const planks = (): { loc: number; holder: number }[] => sim.items.filter((it) => it.type === ItemType.Plank);
+    for (let t = 0; t < 600 && planks().some((it) => it.holder !== to.id); t++) {
+      advanceTick(sim);
+      // The promise, checked every tick rather than at the end: a cleared good
+      // is carried, never put down outside a pile.
+      for (const it of planks()) expect(it.loc).not.toBe(Loc.Ground);
+    }
+    expect(planks().every((it) => it.loc === Loc.Stored && it.holder === to.id)).toBe(true);
+    // And it is still clearing — nothing reverts when the pile runs out.
+    expect(from.acceptPlank).toBe(2);
+  });
+
+  it("stalls where it stands when no other pile will take them, and says so", () => {
+    const sim = createSim(SEED);
+    const [from, to] = twoPiles(sim, 2);
+    applyCommands(sim, [
+      { kind: "toggleFilter", building: to.id, type: ItemType.Plank },
+      { kind: "clearFilter", building: from.id, type: ItemType.Plank },
+    ]);
+    for (let t = 0; t < 120; t++) advanceTick(sim);
+    expect(sim.items.filter((it) => it.type === ItemType.Plank && it.holder === from.id)).toHaveLength(2);
+    expect(sim.items.some((it) => it.type === ItemType.Plank && it.loc === Loc.Ground)).toBe(false);
+    const row = inspect(sim, from.id)?.stored.find((g) => g.type === ItemType.Plank);
+    expect(row).toMatchObject({ count: 2, accepted: false, clearing: true, stuck: true });
+
+    // Give them somewhere to go and the colony finishes the job unasked.
+    applyCommands(sim, [{ kind: "toggleFilter", building: to.id, type: ItemType.Plank }]);
+    generateTasks(sim);
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToStore)).toHaveLength(2);
+    expect(inspect(sim, from.id)?.stored.find((g) => g.type === ItemType.Plank)?.stuck).toBe(false);
+  });
+
+  it("stops generating hauls the moment the good is accepted again", () => {
+    const sim = createSim(SEED);
+    const [from] = twoPiles(sim, 2);
+    applyCommands(sim, [
+      { kind: "clearFilter", building: from.id, type: ItemType.Plank },
+      { kind: "toggleFilter", building: from.id, type: ItemType.Plank },
+    ]);
+    expect(from.acceptPlank).toBe(1);
+    generateTasks(sim);
+    expect(sim.tasks.filter((t) => t.kind === TaskKind.HaulToStore)).toHaveLength(0);
+  });
+
+  it("never strips a half-built pile of its own construction materials", () => {
+    const sim = createSim(SEED);
+    const [x, y] = site(sim, BuildingKind.Stockpile);
+    const [ax, ay] = site(sim, BuildingKind.Stockpile, [{ x, y }]);
+    applyCommands(sim, [
+      { kind: "place", building: BuildingKind.Stockpile, x, y },
+      { kind: "place", building: BuildingKind.Stockpile, x: ax, y: ay },
+    ]);
+    const [siteB, done] = sim.buildings.filter((b) => b.kind === BuildingKind.Stockpile);
+    done.state = BuildingState.Active;
+    applyCommands(sim, [{ kind: "setAllFilters", building: done.id, on: true }]);
+    const log = spawnItem(sim, ItemType.Log, siteB.x, siteB.y)!;
+    log.loc = Loc.Stored;
+    log.holder = siteB.id;
+    log.x = -1;
+    log.y = -1;
+
+    // The command refuses a blueprint; the `isLoose` state check is the second
+    // lock on the same door, so force the flag and check that too.
+    applyCommands(sim, [{ kind: "clearFilter", building: siteB.id, type: ItemType.Log }]);
+    expect(siteB.acceptLog).toBe(0);
+    siteB.acceptLog = 2;
+    generateTasks(sim);
+    expect(sim.tasks.some((t) => t.kind === TaskKind.HaulToStore && t.item === log.id)).toBe(false);
   });
 });
 

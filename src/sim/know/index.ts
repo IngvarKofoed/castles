@@ -10,7 +10,8 @@ import {
   workTile,
 } from "../buildings";
 import { limitOf, overLimit, stepLimit } from "../economy/limits";
-import { GOODS, GOOD_LIST, stockpileAccepts } from "../goods";
+import { batchTicks, fieldsInReach } from "../economy/workshop";
+import { GOODS, GOOD_LIST, stockpileAccepts, stockpileClearing } from "../goods";
 import { canMine, canTerraform, isTargetHeight } from "../ground";
 import { countItems, groundItemsAt } from "../items";
 import {
@@ -28,11 +29,14 @@ import {
   type Sim,
 } from "../store";
 import { hungry } from "../labour/hunger";
-import { populationCap, settled, tableSet } from "../settlers";
+import { canRehome } from "../labour/tasks";
+import { cellarSet, populationCap, settled, tableSet } from "../settlers";
 import { defOfMonster, monsterAt } from "../threats";
 import {
   BUILD_TICKS,
   DAY_TICKS,
+  HIVE_FIELDS_MAX,
+  HIVE_REACH,
   LIMIT_MAX,
   LIMIT_STEP,
   RHYTHM_FUZZ,
@@ -104,6 +108,14 @@ export { stepLimit, LIMIT_MAX, LIMIT_STEP, UNLIMITED };
  * player nothing (docs/specs/2026-09-09-watchtowers.md).
  */
 export { WATCH_RANGE };
+/**
+ * A hive's reach and the fields that fill it — for the placement overlay's
+ * rectangle and for the panel's `Fields in reach` row. Knowledge in the strict
+ * sense, as `WATCH_RANGE` is: both are flat stated rules with no line of sight
+ * and nothing hidden, so drawing them denies the player nothing
+ * (docs/specs/2026-09-14-hives-and-mead.md).
+ */
+export { HIVE_FIELDS_MAX, HIVE_REACH };
 
 export function colonists(sim: Sim): readonly Colonist[] {
   return sim.colonists;
@@ -310,7 +322,20 @@ export interface StoredGood {
   type: number;
   name: string;
   count: number;
+  /** Strictly "the flag is `1`", so a good being cleared reads as `off` — the
+   *  toggle stays binary and `clearing` carries the third state. */
   accepted: boolean;
+  /** The pile is clearing this good out: refusing it, and handing what it holds
+   *  to the tidy-up hauls. A `2` with nothing stored is indistinguishable from
+   *  `off` everywhere in the panel, which is why nothing reverts it. */
+  clearing: boolean;
+  /**
+   * The clear has nowhere to go — no other active pile accepts the good, *or*
+   * every one that does is full. Asked of `canRehome`, the very predicate the
+   * haul asks, rather than computed from the flags: the full-but-accepting case
+   * is the one a player watching a stalled clear is most likely looking at.
+   */
+  stuck: boolean;
 }
 
 /** Everything the inspector panel shows about one building. */
@@ -400,6 +425,15 @@ export interface Inspection {
    */
   tableShort: boolean;
   /**
+   * For a House: the cellar is stocked and arrivals are actually possible, so
+   * the panel may say that mead is bringing folk sooner. **Composed here, not
+   * in the HUD**: it is the same `beds > 0 && Active && under cap && table set`
+   * sequence `tableShort` is composed from, and the HUD carries neither the cap
+   * nor the settled count to rebuild it
+   * (docs/specs/2026-09-14-hives-and-mead.md). False for everything else.
+   */
+  cellarStocked: boolean;
+  /**
    * For a Watchtower: **how many dens are within `WATCH_RANGE` of it**,
    * counted whether or not anybody is standing in it. `-1` for everything
    * else, which is how the panel tells a tower from a workshop.
@@ -410,6 +444,13 @@ export interface Inspection {
    * is what carries the difference, off `worker` (docs/specs/2026-09-09-watchtowers.md).
    */
   watching: number;
+  /**
+   * For a Hive: **how many flower fields are within `HIVE_REACH` of its plot**,
+   * the very number the batch length reads, capped at `HIVE_FIELDS_MAX`. `-1`
+   * for everything else, which is how the panel tells a hive from a workshop —
+   * `watching`'s convention, one building over.
+   */
+  fields: number;
 }
 
 export function inspect(sim: Sim, id: number): Inspection | null {
@@ -417,12 +458,20 @@ export function inspect(sim: Sim, id: number): Inspection | null {
   if (!b) return null;
   const def = defOf(b);
   const recipe = recipeOf(b);
-  const stored = GOOD_LIST.map((good) => ({
-    type: good.type,
-    name: good.name,
-    count: storedCount(sim, b.id, good.type),
-    accepted: stockpileAccepts(b, good.type),
-  }));
+  const stored = GOOD_LIST.map((good) => {
+    const count = storedCount(sim, b.id, good.type);
+    const clearing = stockpileClearing(b, good.type);
+    return {
+      type: good.type,
+      name: good.name,
+      count,
+      accepted: stockpileAccepts(b, good.type),
+      clearing,
+      // The pile's items of one good share a holder, so they share the answer —
+      // one of them is asked for all of them.
+      stuck: clearing && count > 0 && !rehomable(sim, b, good.type),
+    };
+  });
   const held = (type: number): number => stored.find((s) => s.type === type)?.count ?? 0;
   // Asked only of a recipe that actually eats something: a no-input recipe's
   // `input` is a dummy naming its own *output* good (see `Recipe`), so without
@@ -459,7 +508,10 @@ export function inspect(sim: Sim, id: number): Inspection | null {
     inputCap: recipe?.inputCap ?? 0,
     outputCount,
     outputCap: recipe?.outputCap ?? 0,
-    milling: !recipe || b.millProgress < 0 ? -1 : Math.min(1, b.millProgress / recipe.ticks),
+    // Against `batchTicks`, not `recipe.ticks`: a boosted Hive's batch is
+    // shorter than its def says, and a meter measured against the def would
+    // fill to 30% and snap back rather than ever completing.
+    milling: !recipe || b.millProgress < 0 ? -1 : Math.min(1, b.millProgress / batchTicks(sim, b, recipe)),
     outputType: recipe ? recipe.output : -1,
     limit,
     colonyCount,
@@ -477,8 +529,24 @@ export function inspect(sim: Sim, id: number): Inspection | null {
       : consumes(recipe) ? "no-input"
       : "none",
     tableShort: def.beds > 0 && b.state === BuildingState.Active && settled(sim) < populationCap(sim) && !tableSet(sim),
+    // The short-table note wins where both could apply: nobody is coming
+    // either way, so "folk come sooner" would be the panel contradicting the
+    // line above it.
+    cellarStocked:
+      def.beds > 0 &&
+      b.state === BuildingState.Active &&
+      settled(sim) < populationCap(sim) &&
+      tableSet(sim) &&
+      cellarSet(sim),
     watching: b.kind === BuildingKind.Watchtower ? densInReach(sim, b) : -1,
+    fields: b.kind === BuildingKind.Hive ? fieldsInReach(sim, b) : -1,
   };
+}
+
+/** Is there another pile that would take one of these? */
+function rehomable(sim: Sim, b: Building, type: number): boolean {
+  const item = sim.items.find((it) => it.loc === Loc.Stored && it.holder === b.id && it.type === type);
+  return item !== undefined && canRehome(sim, item);
 }
 
 function workerState(sim: Sim, b: Building): Inspection["worker"] {
@@ -626,16 +694,16 @@ export function rhythm(sim: Sim, id: number): Rhythm | null {
 }
 
 /**
- * Every Watchtower on the map, whatever state it is in.
+ * Every building of a kind, whatever state it is in.
  *
- * Exported for the range overlay, which draws a boundary for a tower the
- * player has only just placed as well as for a finished one — the coverage
- * you are siting the next tower against includes the site you just committed,
- * and a boundary that vanished the instant the ghost became a blueprint would
- * be the overlay flinching at the one moment it is being used.
+ * Exported for the reach overlay, which draws a boundary for a tower or a hive
+ * the player has only just placed as well as for a finished one — the coverage
+ * you are siting the next one against includes the site you just committed, and
+ * a boundary that vanished the instant the ghost became a blueprint would be
+ * the overlay flinching at the one moment it is being used.
  */
-export function watchtowers(sim: Sim): readonly Building[] {
-  return sim.buildings.filter((b) => b.kind === BuildingKind.Watchtower);
+export function reachBuildings(sim: Sim, kind: number): readonly Building[] {
+  return sim.buildings.filter((b) => b.kind === kind);
 }
 
 /**
