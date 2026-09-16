@@ -88,6 +88,10 @@ function swaying(b: Box, weight: number): Box {
  * knee-high and a furrow ridge and a bloom head are small boxes whose *tops*
  * carry the whole displacement, so both take a fraction or the lean reads as a
  * shear. Nothing structural appears here at all.
+ *
+ * `cloth` is the lightest of the lot: a tarp lashed at its foot against a
+ * building site's frame **stirs, it does not toss**, and it is the one entry
+ * here that is not a growing thing.
  */
 const SWAY = {
   canopyLow: 0.8,
@@ -96,6 +100,7 @@ const SWAY = {
   bush: 0.5,
   crop: 0.5,
   bloom: 0.6,
+  cloth: 0.4,
 } as const;
 
 /** Block height in world units — one voxel step. Shared with the mesher. */
@@ -150,6 +155,65 @@ export const BUFFER_Y: Record<BuildingKindValue, number> = {
 
 /** The deck a stockpile's pile and a blueprint's materials stack on. */
 export const DECK_Y = 0.16 * BH;
+
+/**
+ * The site frame's proportions.
+ *
+ * `SITE_INSET` is the binding number, and it stands **outboard of where the
+ * corner stakes used to**. A blueprint's delivered materials and its shortfall
+ * ghosts do not sit at tile centres: `lattice` offsets them ±0.18 and a good's
+ * box is 0.34 across, so a corner slot reaches to **0.15 from the footprint
+ * edge**, spanning heights 0.08–0.49. The old 0.14-section stake at a 0.18
+ * inset overlapped that by 0.10 × 0.10 in plan and escaped notice only because
+ * it was ankle-high and grazed the lower lattice level; anything taller at that
+ * inset pierces both. A member at 0.07 spans 0.00–0.14 and clears the cubes
+ * with a hair to spare — on a 1×1 plot too, where the four slots span 0.15–0.49
+ * and 0.51–0.85. That binds **every future prop sharing a plot with
+ * materials**, not just this one (docs/specs/2026-09-16-site-scaffolding.md).
+ */
+const SITE_INSET = 0.07;
+const SITE_SECTION = 0.14;
+/**
+ * Post height: **one storey, the same for every site**, whatever it becomes.
+ *
+ * The sawmill's own wall height, so a frame is a storey in this game's own
+ * vocabulary. **Deriving it from the finished building was tried and
+ * abandoned**: the Stockpile tops out at 0.55·BH and the Flowers plot at
+ * 0.54·BH, so any frame kept under those stood about 0.22 — shorter than a
+ * delivered material cube (0.08–0.28) and unreadable as a frame at all.
+ * Several buildings therefore finish *lower* than the frame that wrapped them,
+ * which is both true of real scaffolding and the better read: a deck emerging
+ * from a taller frame is scaffolding coming down, not a building shrinking.
+ */
+const SITE_TOP = 1.5 * BH;
+/**
+ * Rail heights as fractions of the **post**, never as absolute heights. The
+ * Pasture's fence supplies the two numbers (0.34·BH and 0.66·BH on a 0.85·BH
+ * post), but not its absolutes — a site has to keep its proportions at one
+ * fixed height rather than borrow a pasture's.
+ */
+const SITE_RAILS = [0.4, 0.78] as const;
+const SITE_RAIL_DEPTH = 0.1 * BH;
+/**
+ * The diagonal brace: what makes this scaffolding rather than a fence.
+ *
+ * Posts plus horizontal rails is literally `pasture()`'s grammar and reads as a
+ * fence; a fence never carries a diagonal and scaffolding almost always does.
+ * **It is drawn as a stepped run of short boxes, because a tilted member is not
+ * expressible**: `Box.rot` spins about +y only and `emitBox` rotates about no
+ * other axis, so the alternative is new mesher machinery. Stepping it is also
+ * the voxel answer — everything else in this world is axis-aligned too.
+ *
+ * Lighter than a rail on purpose: at the rails' own 0.14 section a diagonal on
+ * every face closes the frame into a solid.
+ */
+const SITE_BRACE = 0.09;
+/** How many boxes a bay's stepped diagonal is drawn with. */
+const SITE_BRACE_STEPS = 4;
+/** How far the brace stands out from the face it crosses. */
+const SITE_BRACE_PROUD = 0.05;
+/** How far the walkway's planking hangs outboard of the far face. */
+const SITE_WALK_OUT = 0.16;
 
 /**
  * One tree on tile (tx, ty), standing on ground of height `h` blocks.
@@ -218,21 +282,28 @@ export function buildingBoxes(b: Building, h: number, out: Box[]): void {
   const cz = b.y + b.h / 2;
 
   if (b.state === BuildingState.Blueprint || b.state === BuildingState.Building) {
-    // Marked-out plot: a scraped plate and a stake at each corner.
+    // Marked-out plot: a scraped plate, and the site's timber frame over it.
+    //
+    // **Every footprint, the 1×1 Watchtower included.** The posts' 0.07 inset
+    // spans 0.00–0.14 while a single tile's four material slots span 0.15–0.49
+    // and 0.51–0.85, so the geometry holds at one tile — and with the near face
+    // open it reads as a frame rather than as a cage. The tower is also the
+    // tallest thing the colony builds, so a storey-tall frame is the one thing
+    // it cannot overshadow.
     out.push(box(cx, g, cz, b.w - 0.1, 0.06, b.h - 0.1, PROP.stake, 0, 0.85));
-    for (const [ox, oz] of corners(b)) {
-      out.push(box(ox, g, oz, 0.14, 0.5 * BH, 0.14, PROP.stake));
-    }
-    if (b.state === BuildingState.Building) {
-      // Materials are in: the shape starts coming up out of the ground.
-      if (b.kind === BuildingKind.Stockpile) deck(cx, g, cz, b, out, 0.5);
-      else out.push(box(cx, g + 0.06, cz, b.w - 0.35, 0.7 * BH, b.h - 0.35, PROP.timber, 0, 0.9));
-    }
+    siteFrame(g, b, out);
+    // **`Building` adds nothing, and the two states draw the same.** A
+    // featureless timber slab made sense on a bare plot as the only sign that
+    // materials were in; inside a frame it is a blank block standing among the
+    // delivered cubes, which stay visible until the build completes. Gone — and
+    // the Stockpile's half-`deck` with it — a stocked site now differs from a
+    // waiting one by exactly the true statement, that no empty slot is left.
+    // It lasts four seconds.
     return;
   }
 
   if (b.kind === BuildingKind.Stockpile) {
-    deck(cx, g, cz, b, out, 1);
+    deck(cx, g, cz, b, out);
     return;
   }
   if (b.kind === BuildingKind.House) {
@@ -283,16 +354,213 @@ function corners(b: Building): [number, number][] {
   ];
 }
 
-/** Stockpile: a timber deck with corner posts. Its goods are drawn on top,
- *  by the dynamic layer, because they change every few seconds. */
-function deck(cx: number, g: number, cz: number, b: Building, out: Box[], scale: number): void {
+/**
+ * The timber frame every site wears: four posts a storey tall, rails on all
+ * four faces, a walkway along the far one, and a rolled tarp stirring against a
+ * post.
+ *
+ * **It stands from `Blueprint`, not from `Building`.** Fiction says you raise
+ * scaffolding when work starts, but `BUILD_TICKS` makes `Building` four
+ * seconds, so a prop that waited for it would be one nobody ever sees. A site
+ * waiting on its haulers is the longest anything in this game stays unfinished
+ * and the emptiest thing on the map to look at; the frame covers the minutes
+ * rather than the seconds, and comes down when the building goes up.
+ *
+ * **The frame is closed on all four faces**; an open near face was tried and
+ * rejected, and the rails loop below records why. Which face is *near* still
+ * matters, because the walkway sits on the far one, and it is settled **by
+ * rule, never by hash**: south is the one the camera can always see, the rule
+ * the House's door and the Oven's mouth already follow. So the walkway is on
+ * the far side of every site in the colony, and a site cannot rearrange itself
+ * between two looks — which is also why `buildingBoxes` receiving no seed costs
+ * nothing here.
+ */
+function siteFrame(g: number, b: Building, out: Box[]): void {
+  const cx = b.x + b.w / 2;
+  const cz = b.y + b.h / 2;
+  const west = b.x + SITE_INSET;
+  const east = b.x + b.w - SITE_INSET;
+  const far = b.y + SITE_INSET;
+  const near = b.y + b.h - SITE_INSET;
+
+  // Four posts, the old corner stakes moved outboard and raised.
+  for (const ox of [west, east]) {
+    for (const oz of [far, near]) out.push(box(ox, g, oz, SITE_SECTION, SITE_TOP, SITE_SECTION, PROP.stake));
+  }
+  // Two rails on **every** face, the near one included. They span `b.w`/`b.h`,
+  // so a 3×3 Farm site and a 2×2 House site are one object at two sizes with no
+  // second set of numbers anywhere.
+  //
+  // **The near face was open once and is closed now.** Three sides answered a
+  // camera-occlusion worry that never survived a screenshot: every material
+  // lands on the footprint's *first* tile, which is the far one, so at a 38°
+  // view the near members clear the cubes by a whole tile on any footprint
+  // larger than 1×1 — and on a 1×1 the lower near rail grazes the back edge of
+  // the near cubes' tops and nothing else. What the missing side did buy was a
+  // frame that read as broken rather than as deliberately open.
+  for (const f of SITE_RAILS) {
+    const y = g + f * SITE_TOP;
+    for (const oz of [far, near]) {
+      out.push(box(cx, y, oz, b.w - 2 * SITE_INSET, SITE_RAIL_DEPTH, SITE_SECTION, PROP.timber, 0, 0.92));
+    }
+    for (const ox of [west, east]) {
+      out.push(box(ox, y, cz, SITE_SECTION, SITE_RAIL_DEPTH, b.h - 2 * SITE_INSET, PROP.timber, 0, 0.92));
+    }
+  }
+  // One diagonal across each face's single bay, all four circling the plot the
+  // same way, so the bracing reads as deliberate from any angle rather than as
+  // four unrelated sticks.
+  brace(g, west, far, east, far, true, -1, out);
+  brace(g, east, far, east, near, false, 1, out);
+  brace(g, east, near, west, near, true, 1, out);
+  brace(g, west, near, west, far, false, -1, out);
+  // The walkway: planking resting **on** the upper far rail and laid outboard of
+  // that face, where real scaffold boards go. One plank wide is wider than the
+  // 0.14 section the clearance above buys, and the surplus goes outboard rather
+  // than in over the plot — the 0.07 budget is the whole reason the frame clears
+  // the material slots, and a member that reached back inboard would spend it.
+  //
+  // **It sits a rail's thickness above the rail, not at the rail's own base.**
+  // Flush, the plank's x and y extents are exactly the far rail's and its z
+  // range a superset, so the rail is swallowed whole — no visible surface, four
+  // coplanar faces decided by draw order, and "two rails on every face" stops
+  // being true of what renders. Stacked, the deck reads as planking on a ledger
+  // and clears the lattice's 0.49 ceiling by even more (0.64 against 0.59).
+  //
+  // The 0.16 overhang reaches neither `canPlace`, which tests the footprint, nor
+  // pathing, whose occupancy is footprint-based — but it is **not** free.
+  // `Picker.tileAt` floors the hit position, so a click on the overhang selects
+  // the tile beyond the far face; a framed site measured about a fifth of its
+  // own clickable area gone (docs/changelog/2026-09-16-no-leaning-geometry.md).
+  const walk = SITE_WALK_OUT + SITE_SECTION;
+  out.push(
+    box(
+      cx,
+      g + SITE_RAILS[1] * SITE_TOP + SITE_RAIL_DEPTH,
+      b.y + SITE_SECTION - walk / 2,
+      b.w - 2 * SITE_INSET,
+      SITE_RAIL_DEPTH,
+      walk,
+      PROP.plank,
+      0,
+      0.96,
+    ),
+  );
+  // The tarp: rolled, stood on its foot against the far corner post, outside
+  // the frame line where it hides nothing and the camera sees it whole.
+  //
+  // **Bottom-rooted is not a style choice.** `emitBox` writes the sway weight
+  // through the same top-vertex mask it uses for `aBlockY`, pinning a box's
+  // bottom and moving its top — so a strip *hung* from a rail would swing at
+  // its lashing and hold still at its free end, backwards. Standing it on its
+  // foot leans it the way the mask already moves, which is why this is sway and
+  // not a fourth motion class (docs/STYLEGUIDE.md, Motion).
+  out.push(
+    swaying(
+      box(b.x + b.w + 0.06, g, b.y + 0.24, SITE_SECTION, 0.82 * SITE_TOP, 0.26, PROP.linen, 0, 0.92),
+      SWAY.cloth,
+    ),
+  );
+}
+
+/**
+ * The diagonal bracing along one face, from (x0, z0) to (x1, z1).
+ *
+ * **A face is split into roughly square bays first**, and each bay gets its own
+ * diagonal, alternating direction so the run zigzags. One diagonal corner to
+ * corner was built first and does not work: a 2×2 face is 1.86 long and a storey
+ * is 0.75, so the member lies at 22° and reads as a third rail — which is
+ * exactly the fence the brace exists to stop the frame being. Bays about as wide
+ * as the frame is tall put it near 50°, which is both what real scaffolding
+ * looks like and unmistakable at map distance.
+ *
+ * **Each diagonal is a stepped run of boxes, because a tilted member does not
+ * exist here**: `Box.rot` spins about +y and `emitBox` knows no other axis, so a
+ * true diagonal would mean new mesher machinery for one prop. A staircase is
+ * what a voxel world draws instead. The steps overlap — each is taller than its
+ * own rise — so the run has no daylight in it, and the end ones land exactly on
+ * the ground and on the post head.
+ *
+ * `alongX` says which way the face runs, because a box's two horizontal extents
+ * are not interchangeable: a brace is `SITE_BRACE` thin across the face and one
+ * step long down it. `outward` is which way is *away* from the plot on that
+ * face, since nothing about the endpoints says which side of them the world is.
+ */
+function brace(
+  g: number,
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  alongX: boolean,
+  outward: -1 | 1,
+  out: Box[],
+): void {
+  // **Proud of the face, and in the walkway's pale plank rather than the rails'
+  // timber.** Flush and in the same tone the brace merges with the two rails it
+  // crosses into one plane of wood, and the diagonal stops being legible at all
+  // — measured on screen, not guessed. Standing it out by `SITE_BRACE_PROUD`
+  // puts it unambiguously in front, and **outward** rather than inward because
+  // inward is where the material slots are and the 0.07 budget is spoken for.
+  const ox = alongX ? 0 : outward * SITE_BRACE_PROUD;
+  const oz = alongX ? outward * SITE_BRACE_PROUD : 0;
+  const span = Math.abs(alongX ? x1 - x0 : z1 - z0);
+  const bays = Math.max(1, Math.round(span / SITE_TOP));
+  // One box per step of the stair, each exactly its own rise and run with a
+  // fifth over for the overlap. Sized as a step rather than as a bar is the
+  // whole difference between a diagonal and a thick vertical smear: a box much
+  // taller than its rise overlaps its neighbours into a continuous band.
+  //
+  // The `+ 0.2` is what makes the run *end* on the post head rather than a
+  // fifth of a step above it: boxes are placed by their **base**, so the top of
+  // the last is `(steps - 1 + 1.2) · rise`, and dividing the storey by
+  // `steps + 0.2` is what makes that come to exactly `SITE_TOP`. Spacing stays
+  // `rise` against a height of `1.2 · rise`, so the overlap is untouched.
+  const rise = SITE_TOP / (SITE_BRACE_STEPS + 0.2);
+  const long = (span / bays / SITE_BRACE_STEPS) * 1.2;
+  for (let bay = 0; bay < bays; bay++) {
+    // Alternate, so the bracing zigzags along the face instead of reading as a
+    // row of parallel sticks.
+    const up = bay % 2 === 0;
+    for (let i = 0; i < SITE_BRACE_STEPS; i++) {
+      const t = (i + 0.5) / SITE_BRACE_STEPS;
+      const along = (bay + (up ? t : 1 - t)) / bays;
+      out.push(
+        box(
+          x0 + (x1 - x0) * along + ox,
+          g + i * rise,
+          z0 + (z1 - z0) * along + oz,
+          alongX ? long : SITE_BRACE,
+          rise * 1.2,
+          alongX ? SITE_BRACE : long,
+          PROP.plank,
+          0,
+          0.94,
+        ),
+      );
+    }
+  }
+}
+
+/**
+ * Stockpile: a timber deck with corner posts. Its goods are drawn on top, by
+ * the dynamic layer, because they change every few seconds.
+ *
+ * **Only a finished stockpile draws it.** A site under construction used to get
+ * a half-height copy, which is what the old `scale` argument was for; the site
+ * frame replaced it, and drawing both would have worn two frames on one
+ * perimeter — its posts sit at these same `corners()` and its rails on these
+ * same lines. So the deck emerges at full height when the frame comes down,
+ * standing lower than the frame that wrapped it, which is the intended read.
+ */
+function deck(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
   out.push(box(cx, g, cz, b.w - 0.12, 0.16 * BH, b.h - 0.12, PROP.timber));
   for (const [ox, oz] of corners(b)) {
-    out.push(box(ox, g, oz, 0.16, 0.55 * BH * scale, 0.16, PROP.stake));
+    out.push(box(ox, g, oz, 0.16, 0.55 * BH, 0.16, PROP.stake));
   }
   // Two rails along the long sides, so a full pile still reads as contained.
-  out.push(box(cx, g + 0.45 * BH * scale, b.y + 0.18, b.w - 0.36, 0.1 * BH, 0.1, PROP.timber, 0, 0.92));
-  out.push(box(cx, g + 0.45 * BH * scale, b.y + b.h - 0.18, b.w - 0.36, 0.1 * BH, 0.1, PROP.timber, 0, 0.92));
+  out.push(box(cx, g + 0.45 * BH, b.y + 0.18, b.w - 0.36, 0.1 * BH, 0.1, PROP.timber, 0, 0.92));
+  out.push(box(cx, g + 0.45 * BH, b.y + b.h - 0.18, b.w - 0.36, 0.1 * BH, 0.1, PROP.timber, 0, 0.92));
 }
 
 /**

@@ -292,19 +292,22 @@ describe("props bake into the chunk", () => {
     expect(overBuilding(east)).toBe(0);
   });
 
-  it("redraws a building at each step of blueprint → building → active", () => {
+  it("draws a site the same whether it is waiting or stocked, and the building differently", () => {
     const heights = new Array(32 * 32).fill(3);
     const bare = quadCount(meshChunk(makeWorld(32, heights), 0, 0));
     const counts = [BuildingState.Blueprint, BuildingState.Building, BuildingState.Active].map((state) =>
       quadCount(meshChunk(withBuilding(makeWorld(32, heights), { x: 4, y: 4, state }), 0, 0)),
     );
-    // Every state is a distinct silhouette, and every one is more than bare
-    // ground. Under construction is not the largest: it carries the marker
-    // stakes *and* the half-built shape, and the stakes come down when it's
-    // finished.
-    expect(new Set(counts).size).toBe(3);
     for (const c of counts) expect(c).toBeGreaterThan(bare);
-    expect(counts[1]).toBeGreaterThan(counts[0]);
+    // **Blueprint and Building are one silhouette on purpose.** Both are the
+    // site's timber frame over its plate and nothing else; `Building` lasts four
+    // seconds and its honest difference from waiting is that no empty material
+    // slot is left, which the mover layer draws and this mesh knows nothing
+    // about. The featureless half-body that used to mark it was removed when the
+    // frame arrived — inside a frame it was a blank block among the delivered
+    // cubes (docs/changelog/2026-09-16-site-scaffolding.md).
+    expect(counts[1]).toBe(counts[0]);
+    expect(counts[2]).not.toBe(counts[0]);
   });
 });
 

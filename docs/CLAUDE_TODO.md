@@ -40,6 +40,24 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   `2026-09-08-stores-panel-and-icon-rail` made for "the ribbon". Surfaced by
   `2026-09-13-map-space-selection-box`.
 
+- **Nothing mechanically pins the site frame's clearance over the material lattice** —
+  the 0.07 outboard inset is what keeps a site's posts, rails and walkway off the
+  delivered goods and the shortfall ghosts that sit 0.15 from the footprint edge, and
+  `2026-09-16-site-scaffolding` states it binds every future prop sharing a plot with
+  materials — with only 0.01 of margin on the 1×1 Watchtower's plot, where all four
+  slots share one tile. It rests on a comment and one browser screenshot:
+  `props.test.ts` covers `wallBoxes` only, so `buildingBoxes` has no test at all and
+  a later prop can reach back inboard with nothing failing. Surfaced by
+  `2026-09-16-site-scaffolding`.
+
+- **`fauna.test.ts`'s shepherd's-hut clearance test is flaky** — it drives the flock
+  forty simulated seconds and asserts a hard keep-out box, but the wander uses
+  `Math.random` (legal outside `sim/`, per `2026-09-15-wandering-sheep-and-deer`), so
+  the assertion fails roughly one run in eight. Measured on an otherwise unmodified
+  tree, so it is not something a change caused; it wants a seeded generator for the
+  test or a bound derived from the wander's own limits rather than a hand-picked
+  0.58. Found while running the suite for `2026-09-16-site-scaffolding`.
+
 - **The stockpile panel's stuck-clear check walks the whole colony every frame** —
   `know.inspect` asks `canRehome` once per good a pile is clearing, and each call
   walks every stockpile and, through `freeCapacity`, every item in the colony. It

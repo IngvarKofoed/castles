@@ -40,9 +40,11 @@ and everything that moves picks one of **three classes**. A fourth is a design
 decision, not a detail — pick one of these or write the class down here first.
 
 - **Sway** — baked geometry displaced *in place* by the shader: crop furrows,
-  bloom heads, tree canopies. It leans well under a tile and never travels.
-  Structure never sways; a wall or a roof that waved its top would be a lie
-  about what wind does to a building.
+  bloom heads, tree canopies, a building site's tarp. It leans well under a tile
+  and never travels. Structure never sways; a wall or a roof that waved its top
+  would be a lie about what wind does to a building — the tarp is the exception
+  that proves it, because cloth lashed to a frame is the one thing on a site
+  that *should* move.
 - **Motes** — instanced specks on a closed path around an anchor: bees over a
   hive or a field, chimney smoke, the flock on its circuit. Position is a pure
   function of (anchor, index, time) — nothing is integrated and nothing is
@@ -452,6 +454,44 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
   slots, which is the honest picture of a dozen queued blueprints. Nothing
   moves: the slots are static geometry keyed to a count, outside all three
   motion classes.
+- **A site wears a braced frame, and the brace is what makes it scaffolding.**
+  Every building site — every footprint, the 1×1 Watchtower included — stands a
+  timber frame from the moment it is placed until the building replaces it: four
+  posts, two rails on all four faces, **a diagonal brace across every bay**, a
+  walkway along the far side, and a rolled tarp that stirs on the sway class.
+  **The diagonal is not decoration.** Posts plus horizontal rails is literally
+  the Pasture's fence grammar and reads as a fence; a fence never carries a
+  diagonal and scaffolding almost always does. It only does its job if it is
+  *steep* and *legible* — so a face is split into bays about as wide as the frame
+  is tall before it is braced, and the brace stands proud of the rails it crosses
+  in the paler plank tone. Flush, flat and in the rails' own timber it merges
+  into one plane of wood and the frame reads as a pen again.
+
+  An open near face was tried and rejected: it was aimed at a camera-occlusion
+  worry that never survived a screenshot — every material lands on the
+  footprint's *first* tile, which is the far one — and what it actually bought
+  was a frame that read as broken rather than as deliberately open. Which face is
+  near still matters, because the walkway sits on the far one, and that is
+  settled **by rule, not by hash**: south is the face the camera can always see,
+  the rule the House's door and the Oven's mouth already follow. So the walkway
+  is on the same side of every site in the colony and a site cannot rearrange
+  itself between two looks.
+
+  **Nothing stands inside the frame but the materials.** The `Building` state
+  adds no geometry of its own: a stocked site is the frame plus a full set of
+  material cubes, and its honest difference from a waiting one is that no empty
+  slot is left. The featureless timber slab that used to mark it was a blank
+  block among the delivered cubes, and it lasted four seconds.
+
+  **Every site stands the same height — one storey — and several buildings
+  finish lower than the frame that wrapped them.** That is the read, not a
+  defect: real scaffolding is routinely taller than what it is built around, and
+  a Stockpile deck emerging from a taller frame says *scaffolding coming down*
+  rather than *building shrinking*. Scaling the frame to what the site becomes
+  was tried and rejected — the flattest kinds finish so low that a frame kept
+  under them stood shorter than a delivered material cube. One height is also
+  what lets a site read as a site before the player knows what is going up
+  there.
 
 ## Layout regions
 
