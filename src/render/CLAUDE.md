@@ -21,6 +21,17 @@ changes it. Broader context in `docs/ARCHITECTURE.md`.
   version-sensitive.
 - **Per-chunk, never per-world.** Rebuild only dirty chunks; a change must
   never trigger a whole-world rebuild.
+- **Nothing leans.** `Box.rot` spins about **+y** and `emitBox` knows no other
+  axis, so no member in this renderer can tilt — not in props, not anywhere.
+  Draw a diagonal as a stepped run of boxes, and keep the steps short against
+  the span or it reads as a staircase rather than a brace
+  (`docs/changelog/2026-09-16-site-scaffolding.md`).
+- **Geometry is never "visual only" — it costs clickable area.**
+  `Picker.tileAt` floors the hit position, so anything standing proud of a
+  footprint resolves a click on itself to the *neighbouring* tile. A scaffolded
+  site measured a fifth of its own selectable area gone. Props reach neither
+  placement nor pathing, but they do reach picking: check it before overhanging
+  a footprint (same entry).
 - **Before renderer work, read the "Gotchas" section of
   `docs/ARCHITECTURE.md`** — all eight cost real time once already.
 - **In-world overlay colors follow `docs/STYLEGUIDE.md`'s overlay
