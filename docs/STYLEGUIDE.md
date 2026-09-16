@@ -432,6 +432,26 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
 
   It is also not a bake: colonists are per-frame movers with no dirty
   machinery, so a garment donned or worn out shows on the very next frame.
+- **A ghosted good is an absence.** A blueprint draws a faint empty slot for
+  every material it is still owed, continuing the same stack its delivered
+  items sit in, so a site two short and a site one short are told apart from
+  the map. One pale neutral tone at low alpha — `smoke` `#c4bdae` at `0.42`
+  — over the standard `ground` keyline, **never a good's own colour** (a
+  building's cost is one item type, so the colour would say nothing the site
+  does not already say) and **never sage, gold or rust** (those mean valid,
+  intent and invalid, and a missing material claims none of the three). Not
+  `stake`: that is the plot plate the slots stand on, the one background they
+  could not read against.
+
+  **It is a prop, not an overlay, and that is the distinction worth
+  stating where a reader meets both.** A placement ghost is *proposed* and
+  lives only while its tool is held; a material ghost is *owed* and stands
+  until the material arrives — no tool gate, no selection gate, because a
+  shortfall is a fact about the world rather than an answer to a question the
+  player just asked. A dozen queued blueprints therefore show four dozen empty
+  slots, which is the honest picture of a dozen queued blueprints. Nothing
+  moves: the slots are static geometry keyed to a count, outside all three
+  motion classes.
 
 ## Layout regions
 

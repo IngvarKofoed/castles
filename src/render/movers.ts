@@ -24,6 +24,7 @@ import {
   terraformLayer,
   monsters,
   BUILDING_DEFS,
+  defOf,
   MonsterKind,
   type Building,
   type BuildingKindValue,
@@ -357,6 +358,28 @@ const GRAZE_REACH = 0.12;
  *  anchors as ever stand inside the camera radius at once. */
 const MAX_FAUNA = 384;
 
+/**
+ * The empty slots a blueprint is still owed, in each of the two layers that
+ * draw one. Every queued blueprint on the map contributes its whole shortfall,
+ * so this is sized past any plausible build queue: the dearest def today costs
+ * 4, so 1,024 covers 256 blueprints standing unfed at once.
+ *
+ * Past the cap `put` silently drops the instance, which is the right failure
+ * here by `drawReach`'s own distinction: a missing ghost merely *understates* a
+ * shortfall, where a watch square drawn short would claim a reach the tower
+ * does not have.
+ */
+const MAX_GHOST = 1024;
+
+/**
+ * One item's box, on the ground or on a plot. The ghosts a blueprint is owed
+ * take the same numbers, because the whole point is that the stack a site shows
+ * is one object whether a slot is filled or not — a delivery replaces a ghost
+ * in place and nothing re-flows.
+ */
+const GOOD_BOX = 0.34;
+const GOOD_BOX_H = 0.2;
+
 interface Layer {
   mesh: InstancedMesh;
   used: number;
@@ -544,6 +567,8 @@ export class MoverRenderer {
   private readonly selFill: Layer;
   private readonly selKeyline: Layer;
   private readonly selEdge: Layer;
+  private readonly ghostGoodKeyline: Layer;
+  private readonly ghostGoodSlot: Layer;
   private readonly bees: Layer;
   private readonly smoke: Layer;
   private readonly birds: Layer;
@@ -606,6 +631,24 @@ export class MoverRenderer {
     this.selFill = overlayLayer(scene, MAX_INSIDE, GOLD, 0.1);
     this.selKeyline = overlayLayer(scene, MAX_BOUNDARY, KEYLINE, 0.5);
     this.selEdge = overlayLayer(scene, MAX_BOUNDARY, GOLD, 0.85);
+    // A material a blueprint is still owed, drawn as an empty slot in its own
+    // stack. **Not a good's colour and not an overlay colour**: a def names one
+    // `costType`, so every ghost on a plot is the same good as every solid cube
+    // beside it and a tint would say nothing; and sage, gold and rust mean
+    // valid, intent and invalid, where this is an absence making no claim at
+    // all. `PROP.smoke` is the one world token paler than every surface a plot
+    // can sit on — `stake` is the plate and the corner stakes themselves, which
+    // is the single background it could not read against.
+    //
+    // 0.42 is dialed by eye against all four of the surfaces a slot can be read
+    // over — bright grass at the opening zoom, sand, the plot's own plate, and
+    // a levelled plot dark with its own occlusion — and it is the *composite*
+    // that was dialed, not the tone: the keyline box sits inside the slot's own
+    // volume, so the pale tone is already blended over a dark one before it
+    // reaches the ground. Lowering it further reads as dirt on the plate rather
+    // than as an empty slot, which is the failure worth naming.
+    this.ghostGoodKeyline = overlayLayer(scene, MAX_GHOST, KEYLINE, 0.5);
+    this.ghostGoodSlot = overlayLayer(scene, MAX_GHOST, PROP.smoke, 0.42);
     // The motes. Past a cap `put` silently drops the instance, which is the
     // right failure for ambience and deliberately **not** the refuse-the-shape-
     // whole rule `drawReach` follows: a missing bee says nothing false, whereas
@@ -693,6 +736,8 @@ export class MoverRenderer {
       this.selFill,
       this.selKeyline,
       this.selEdge,
+      this.ghostGoodKeyline,
+      this.ghostGoodSlot,
       this.bees,
       this.smoke,
       this.birds,
@@ -798,10 +843,20 @@ export class MoverRenderer {
    * Goods on the ground and goods inside a building — a stockpile's pile, a
    * blueprint's delivered logs, a mill's input and output buffers. Piles use a
    * fixed 8-slot lattice per tile, so a filling stockpile visibly fills.
+   *
+   * A blueprint also draws the materials it is **still owed**, as faint empty
+   * slots continuing that same lattice, so a site two short and a site one
+   * short are told apart from the map rather than only from the inspector
+   * (docs/specs/2026-09-16-missing-material-ghosts.md).
    */
   private drawGoods(): void {
     const perTile = new Map<number, number>();
     const perBuilding = new Map<number, number>();
+    // One pass to index the buildings, rather than a `find` per stored item: a
+    // late colony has hundreds of each and this loop runs every frame, so the
+    // scan is the difference between a lookup and a colony-sized walk per good.
+    const byId = new Map<number, Building>();
+    for (const b of buildings(this.sim)) byId.set(b.id, b);
 
     for (const item of items(this.sim)) {
       // One colour table for every good (palette.ts), so a rock pile and a
@@ -813,12 +868,22 @@ export class MoverRenderer {
         const n = perTile.get(key) ?? 0;
         perTile.set(key, n + 1);
         const [ox, oy, oz] = lattice(n);
-        put(this.solids, item.x + 0.5 + ox, this.groundY(item.x, item.y) + oy, item.y + 0.5 + oz, 0.34, 0.2, 0.34, 0, tint);
+        put(
+          this.solids,
+          item.x + 0.5 + ox,
+          this.groundY(item.x, item.y) + oy,
+          item.y + 0.5 + oz,
+          GOOD_BOX,
+          GOOD_BOX_H,
+          GOOD_BOX,
+          0,
+          tint,
+        );
         continue;
       }
       if (item.loc !== Loc.Stored) continue;
 
-      const b = buildings(this.sim).find((x) => x.id === item.holder);
+      const b = byId.get(item.holder);
       if (!b) continue;
       const n = perBuilding.get(b.id) ?? 0;
       perBuilding.set(b.id, n + 1);
@@ -835,12 +900,62 @@ export class MoverRenderer {
         b.x + (cell % b.w) + 0.5 + ox,
         this.groundY(b.x, b.y) + deck + oy,
         b.y + Math.floor(cell / b.w) + 0.5 + oz,
-        0.34,
-        0.2,
-        0.34,
+        GOOD_BOX,
+        GOOD_BOX_H,
+        GOOD_BOX,
         0,
         tint,
       );
+    }
+
+    this.drawOwed(perBuilding);
+  }
+
+  /**
+   * The other half of a blueprint's stack: one faint empty slot per material it
+   * is still waiting for.
+   *
+   * **Only a blueprint**, because a building flips to `Building` exactly when
+   * its materials are complete — from that moment the shortfall is zero and
+   * there is nothing to ghost.
+   *
+   * **No tool gate and no selection gate**, unlike every entry in the
+   * styleguide's in-world *overlay* grammar. Those are all answers to a
+   * question the player just asked — a drag being held, a tool, a selection —
+   * whereas a shortfall is a fact about the world whether or not anybody is
+   * asking, and it is most wanted while panning across a colony wondering why
+   * nothing is going up. A dozen queued blueprints really do show four dozen
+   * empty slots, and that is the honest picture of a dozen queued blueprints.
+   *
+   * **The placement is `drawGoods`' own, both terms of it.** `lattice` re-wraps
+   * internally, so `lattice(n)` alone is right below 8 and silently repeats
+   * after, with the footprint-tile term missing — a ninth slot would ghost on
+   * the first tile while its delivered cube landed on the second. Invisible at
+   * today's defs (the dearest costs 4) and a trap the next one would spring, so
+   * the formula is mirrored rather than shortened. Sharing it is also what
+   * makes a delivery *fill* its slot instead of moving it.
+   */
+  private drawOwed(perBuilding: Map<number, number>): void {
+    for (const b of buildings(this.sim)) {
+      if (b.state !== BuildingState.Blueprint) continue;
+      const cost = defOf(b).cost;
+      const delivered = perBuilding.get(b.id) ?? 0;
+      for (let n = delivered; n < cost; n++) {
+        const cell = Math.floor(n / 8) % (b.w * b.h);
+        const [ox, oy, oz] = lattice(n % 8);
+        const x = b.x + (cell % b.w) + 0.5 + ox;
+        const base = this.groundY(b.x, b.y) + DECK_Y + oy;
+        const z = b.y + Math.floor(cell / b.w) + 0.5 + oz;
+        // The styleguide's keyline rule, taken for a box: the dark token one
+        // line-width wider **around** the slot rather than as a plate beneath
+        // it — at the lattice's 0.36 spacing a plate per slot merges with its
+        // neighbours into one dark slab and the separate-slots read is gone,
+        // which was tried on screen and rejected there. A pale low-alpha slot
+        // on bright grass at the opening zoom is the failure the rule was
+        // measured into existence for, so it is taken, just not literally.
+        put(this.ghostGoodKeyline, x, base, z, GOOD_BOX + KEYLINE_GROWTH, GOOD_BOX_H, GOOD_BOX + KEYLINE_GROWTH, 0);
+        put(this.ghostGoodSlot, x, base + 0.01, z, GOOD_BOX, GOOD_BOX_H, GOOD_BOX, 0);
+      }
     }
   }
 
