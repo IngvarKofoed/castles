@@ -79,6 +79,17 @@ export interface ChunkGeometry {
   colors: Float32Array;
   /** 0 at a column's base, 1 at its top; 1.0 on top faces. Feeds vBlockY. */
   blockY: Float32Array;
+  /**
+   * How hard this vertex leans in the wind. A literal copy of `blockY`'s
+   * shape — one float per vertex, baked with the chunk — because the motion is
+   * entirely in the vertex shader: a swaying chunk costs exactly what a still
+   * one costs, and a rebuild is unaffected.
+   *
+   * Zero on every terrain vertex and on every structural prop; non-zero only on
+   * the canopy, crop and bloom boxes `props.ts` marks, and there only on the
+   * box's **top** vertices (see `emitBox`).
+   */
+  sway: Float32Array;
   indices: Uint32Array;
 }
 
@@ -108,6 +119,7 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
   const normals: number[] = [];
   const colors: number[] = [];
   const blockY: number[] = [];
+  const sway: number[] = [];
   const indices: number[] = [];
 
   // Neighbour lookups read the world, not the chunk, so chunk-border faces
@@ -119,11 +131,23 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
   let g = 0;
   let b = 0;
 
-  const vertex = (px: number, py: number, pz: number, nx: number, ny: number, nz: number, by: number): void => {
+  // `sy` is the vertex's sway weight. Terrain never passes one — the ground
+  // does not lean — so it defaults to 0 and only `emitBox` ever sets it.
+  const vertex = (
+    px: number,
+    py: number,
+    pz: number,
+    nx: number,
+    ny: number,
+    nz: number,
+    by: number,
+    sy = 0,
+  ): void => {
     positions.push(px, py, pz);
     normals.push(nx, ny, nz);
     colors.push(r, g, b);
     blockY.push(by);
+    sway.push(sy);
   };
 
   const quadIndices = (): void => {
@@ -257,11 +281,21 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
     normals: new Float32Array(normals),
     colors: new Float32Array(colors),
     blockY: new Float32Array(blockY),
+    sway: new Float32Array(sway),
     indices: new Uint32Array(indices),
   };
 }
 
-type Vertex = (px: number, py: number, pz: number, nx: number, ny: number, nz: number, by: number) => void;
+type Vertex = (
+  px: number,
+  py: number,
+  pz: number,
+  nx: number,
+  ny: number,
+  nz: number,
+  by: number,
+  sy?: number,
+) => void;
 
 // Unit cube corners, then the six faces as corner quads with their normals.
 // Written out rather than generated so the winding is inspectable: every quad
@@ -279,6 +313,12 @@ const FACES: readonly { n: readonly [number, number, number]; q: readonly [numbe
  * Emit one prop box, optionally spun about +y. `aBlockY` runs 0 at the box's
  * own bottom to 1 at its own top — the same convention the mockup's unit cube
  * gave every prop, so contact shading dims each box toward its base.
+ *
+ * `aSway` rides the **same top-vertex mask**: the box's weight at its top, zero
+ * at its bottom. Per vertex rather than per box is load-bearing — weighted per
+ * box, every furrow ridge and every bloom slides bodily sideways and a bloom
+ * head walks off its stem; masked, a canopy bends its head and keeps its feet
+ * within a box as well as between boxes.
  */
 function emitBox(p: Box, vertex: Vertex, quad: () => void): void {
   const cos = Math.cos(p.rot);
@@ -301,6 +341,7 @@ function emitBox(p: Box, vertex: Vertex, quad: () => void): void {
         face.n[1],
         nz,
         syi > 0 ? 1 : 0,
+        syi > 0 ? p.sway : 0,
       );
     }
     quad();

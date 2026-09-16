@@ -33,6 +33,40 @@ The game promises calm; the UI must keep it:
   centre belongs to the game.
 - At most one gold element per region: gold is scarce or it is nothing.
 
+### Motion
+
+"No animation except what physically moves in the world" is the licence above,
+and everything that moves picks one of **three classes**. A fourth is a design
+decision, not a detail — pick one of these or write the class down here first.
+
+- **Sway** — baked geometry displaced *in place* by the shader: crop furrows,
+  bloom heads, tree canopies. It leans well under a tile and never travels.
+  Structure never sways; a wall or a roof that waved its top would be a lie
+  about what wind does to a building.
+- **Motes** — instanced specks on a closed path around an anchor: bees over a
+  hive or a field, chimney smoke, the flock on its circuit. Position is a pure
+  function of (anchor, index, time) — nothing is integrated and nothing is
+  saved, so a load or a suspended tab cannot desynchronise them.
+- **Fauna** — creatures that walk, bounded to a home radius: the Pasture's
+  sheep, the deer of the wilds. They integrate, so they take the frame's
+  clamped delta.
+
+**The rule between the three: only colonists and monsters cross the map.**
+Everything ambient is tied to an anchor and stays near it — a sheep does not
+leave its pasture, a deer does not cross the island, a flock does not migrate.
+Reading the map is the player's entire threat toolkit, and translation across
+open ground is what makes something read as *alive and consequential*; spend it
+on decoration and the reading is gone.
+
+**All of it runs on the world's clock, the water included.** At ×0 the world
+holds completely still and at ×4 all of it runs fast. Pause is when a player
+stops to read the map, so a paused world whose only motion is the motion that
+does not matter is the boundedness rule standing on its head.
+
+**`prefers-reduced-motion` stills everything ambient and nothing else.**
+Colonists still walk and monsters still prowl: someone asking for less motion
+is not asking to stop seeing the orc.
+
 ## Palette
 
 | Token | Value | Means |

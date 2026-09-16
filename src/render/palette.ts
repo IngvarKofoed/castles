@@ -103,6 +103,33 @@ export const PROP = {
   /** A grave marker: weathered board and turned earth. */
   graveBoard: 0x7d6b4e,
   graveEarth: 0x4a4231,
+  /**
+   * The motes: bees over a hive or a field, chimney smoke, birds on a circuit.
+   *
+   * All three are specks a pixel or two across at the opening zoom, so they are
+   * read by *contrast* rather than by hue. The bee is a dark amber kept beside
+   * `honey` — bees and honey are the same fact — the smoke is the palest warm
+   * grey in the world palette so it lifts off both roof and grass, and the bird
+   * is near-charcoal because it is seen against lit ground from this camera and
+   * nothing else. **None of them is gold**: gold is player intent and nothing in
+   * the world may wear it.
+   */
+  bee: 0x6b4f18,
+  smoke: 0xc4bdae,
+  bird: 0x3c3a33,
+  /**
+   * The wandering fauna. A sheep is the Pasture's `fleece` over the `door`
+   * brown its face and legs already used when the flock was baked into the
+   * fence; a deer is a warm tan with a pale rump.
+   *
+   * **A deer must never be mistaken for a monster.** Orcs are lean and green,
+   * trolls bulky and grey, and both stand at folk height on two legs; a deer is
+   * low, four-legged and tan, which is a different silhouette before it is a
+   * different colour. Tan is also kept clear of `timber` and `crate` so a deer
+   * on open grass is not read as a dropped log.
+   */
+  deerHide: 0x9c6b3c,
+  deerRump: 0xd9c3a0,
 } as const;
 
 /** Per-prop colour wobble, so a wood doesn't read as poured concrete. */

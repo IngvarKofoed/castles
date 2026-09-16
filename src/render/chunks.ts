@@ -132,6 +132,10 @@ function toGeometry(data: ChunkGeometry): BufferGeometry {
   geometry.setAttribute("normal", new BufferAttribute(data.normals, 3));
   geometry.setAttribute("color", new BufferAttribute(data.colors, 3));
   geometry.setAttribute("aBlockY", new BufferAttribute(data.blockY, 1));
+  // The wind weight, bound exactly as `aBlockY` is. Only chunk geometry carries
+  // it: the mover layer's shared box has no `aSway`, so that attribute reads 0
+  // there and the same compiled program leaves colonists and goods stock still.
+  geometry.setAttribute("aSway", new BufferAttribute(data.sway, 1));
   geometry.setIndex(new BufferAttribute(data.indices, 1));
   // Each chunk's own bounding sphere is what gives per-chunk frustum culling.
   geometry.computeBoundingSphere();

@@ -9,8 +9,33 @@ import { MeshLambertMaterial } from "three";
  * because chunk vertices are baked in world coordinates.
  */
 
-/** Drives the water wave; the app loop writes elapsed seconds into it. */
+/**
+ * The ambient clock, shared by the water wave and the sway injection. The app
+ * loop writes **game** seconds into it, not wall-clock seconds: at ×0 the world
+ * holds completely still and at ×3 it runs three times as fast. Pause is when a
+ * player stops to read the map, and a paused world whose only motion is the
+ * motion that does not matter stands the boundedness rule on its head
+ * (docs/specs/2026-09-15-ambient-life.md).
+ */
 export const waveTime = { value: 0 };
+
+/**
+ * How hard anything ambient leans, 1 normally and **0 under
+ * `prefers-reduced-motion`** — which is the rest pose.
+ *
+ * Reduced motion cannot be served by holding the clock, the way the water's is:
+ * at `uTime = 0` the sway's two-sine is a *fixed non-zero* number, so a stilled
+ * forest would stand permanently leaning. Amplitude is the only handle that has
+ * a rest position. Colonists and monsters are untouched by it either way — a
+ * player asking for less motion is not asking to stop seeing the orc.
+ */
+export const swayAmp = { value: 1 };
+
+/**
+ * How far a full-weight vertex leans, in world units, at the peak of the wave.
+ * Well under a tile on purpose: a lean, not a sweep.
+ */
+const SWAY_REACH = 0.13;
 
 // Fake contact shading: dim each block toward its base, tint low ground
 // warm-dark. This is most of the "cosy" and it costs one multiply. The one
@@ -20,17 +45,35 @@ export const waveTime = { value: 0 };
 // in sRGB space, which is why it can't ride the linear-space vertex colors.
 const COZY_VERT_HEAD = `
   attribute float aBlockY;
+  attribute float aSway;
+  uniform float uTime;
+  uniform float uSwayAmp;
   varying float vBlockY;
   varying float vWorldY;
 `;
+// The sway rides here rather than on a material of its own so every cosy
+// material keeps one compiled program and `customProgramCacheKey` stays "cosy".
+// Geometry with no `aSway` — the mover layer's shared box — reads 0 and is left
+// stock still, exactly as an absent colour attribute reads black.
+//
+// Two sines of *world* position, so a wood leans as one gust rather than each
+// tree on its own beat, and the phase is continuous across a chunk seam. The
+// weight arrives already masked to the box's top vertices (mesher.ts), which is
+// what keeps feet on the ground and bloom heads on their stems.
 const COZY_VERT_BODY = `
   #include <begin_vertex>
   vBlockY = aBlockY;
   #ifdef USE_INSTANCING
-    vWorldY = ( instanceMatrix * vec4( transformed, 1.0 ) ).y;
+    vec3 cosyWorld = ( instanceMatrix * vec4( transformed, 1.0 ) ).xyz;
   #else
-    vWorldY = transformed.y;
+    vec3 cosyWorld = transformed;
   #endif
+  vWorldY = cosyWorld.y;
+  float cosyGust = sin( cosyWorld.x * 0.35 + uTime * 0.9 ) * 0.6
+                 + sin( cosyWorld.z * 0.27 + uTime * 0.55 ) * 0.4;
+  float cosyLean = aSway * uSwayAmp * cosyGust * ${SWAY_REACH.toFixed(3)};
+  transformed.x += cosyLean;
+  transformed.z += cosyLean * 0.55;
 `;
 const COZY_FRAG_HEAD = `
   varying float vBlockY;
@@ -53,6 +96,8 @@ export function cozify(material: MeshLambertMaterial): MeshLambertMaterial {
       console.warn("Castles: shader anchor missing, contact shading skipped");
       return;
     }
+    shader.uniforms.uTime = waveTime;
+    shader.uniforms.uSwayAmp = swayAmp;
     shader.vertexShader =
       COZY_VERT_HEAD + shader.vertexShader.replace("#include <begin_vertex>", COZY_VERT_BODY);
     shader.fragmentShader =

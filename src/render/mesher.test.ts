@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BuildingState, WallState, type Building } from "../sim/know";
+import { BuildingKind, BuildingState, WallState, type Building } from "../sim/know";
 import { testBuilding } from "../sim/test-sim";
 import { Terrain, type TerrainValue, type World } from "../sim/world/world";
 import { BH, WATER_SURFACE_OFFSET, meshChunk, meshWaterChunk, type ChunkGeometry, type Scene } from "./mesher";
@@ -125,6 +125,64 @@ describe("meshChunk", () => {
     // side of the step, so it has no +X face there.
     const none = verticesWhere(west, (px, _py, pz, nx) => nx === 1 && px === 16 && pz >= 5 && pz <= 6);
     expect(none.length).toBe(0);
+  });
+});
+
+describe("sway bakes into the chunk", () => {
+  const swaying = (g: ChunkGeometry): number[] => {
+    const out: number[] = [];
+    for (let v = 0; v < g.sway.length; v++) if (g.sway[v] > 0) out.push(v);
+    return out;
+  };
+
+  it("leaves bare terrain with no lean at all", () => {
+    const g = meshChunk(makeWorld(2, [2, 1, 1, 1]), 0, 0);
+    expect(g.sway.length).toBe(g.blockY.length);
+    expect(swaying(g).length).toBe(0);
+  });
+
+  it("carries one weight per vertex, never one per box", () => {
+    // The mask is the whole design: weighted per box instead, every furrow
+    // ridge and every bloom slides bodily sideways and a bloom head walks off
+    // its stem. So a leaning vertex is always a box's *top* vertex.
+    const g = meshChunk(withTree(makeWorld(2, [2, 1, 1, 1]), 0, 0), 0, 0);
+    const leaning = swaying(g);
+    expect(leaning.length).toBeGreaterThan(0);
+    for (const v of leaning) expect(g.blockY[v]).toBe(1);
+    // And every box that leans also has vertices that do not — its own feet.
+    expect(leaning.length).toBeLessThan(g.sway.length);
+  });
+
+  it("leans a tree's canopy and leaves its trunk, the ground and a shed still", () => {
+    const g = meshChunk(withTree(makeWorld(2, [2, 1, 1, 1]), 0, 0), 0, 0);
+    // Nothing at or below the trunk's own top leans: the canopy boxes all
+    // start at 1.15·BH or above on the tall style, 0.95·BH on the round one,
+    // and a bush is all canopy sitting on the ground — so the invariant that
+    // holds for every style is that the *ground* itself never moves.
+    for (const v of swaying(g)) expect(g.positions[v * 3 + 1]).toBeGreaterThan(2 * BH);
+
+    // A timber workshop is structure from plinth to ridge; none of it leans.
+    const shed = withBuilding(makeWorld(4, new Array(16).fill(1)), {
+      x: 1,
+      y: 1,
+      kind: BuildingKind.Sawmill,
+      state: BuildingState.Active,
+    });
+    expect(swaying(meshChunk(shed, 0, 0)).length).toBe(0);
+  });
+
+  it("leans a Farm's standing green but not the earth it grows in", () => {
+    const flat = new Array(16).fill(1);
+    const bare = meshChunk(withBuilding(makeWorld(4, flat), { x: 0, y: 0, w: 3, h: 3, kind: BuildingKind.Pasture }), 0, 0);
+    const farm = meshChunk(withBuilding(makeWorld(4, flat), { x: 0, y: 0, w: 3, h: 3, kind: BuildingKind.Farm }), 0, 0);
+    // The Pasture is the Farm's grammar with the furrows taken out, so it is
+    // the control: same plot, same fence, nothing that grows.
+    expect(swaying(bare).length).toBe(0);
+    expect(swaying(farm).length).toBeGreaterThan(0);
+    // Two furrows on a 3×3 — the last row is the yard — and twelve leaning
+    // vertices each: a box is 24 vertices and exactly half of them are its top
+    // (the top face's four, plus the upper pair of each of the four sides).
+    expect(swaying(farm).length).toBe(2 * 12);
   });
 });
 

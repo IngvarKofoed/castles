@@ -48,13 +48,24 @@ export interface Box {
    */
   jx: number;
   jz: number;
+  /**
+   * How hard this box leans in the wind, 0 for everything that should not move
+   * at all. The mesher multiplies it by the same top-vertex mask it already
+   * computes for `aBlockY`, so a swaying box keeps its feet and bends its head;
+   * the shader's amplitude is a fraction of a tile at weight 1.
+   *
+   * Zero on trunks, walls, buildings and ground — **by world height would have
+   * been free and wrong**, because it waves the tops of walls and roofs
+   * (docs/specs/2026-09-15-ambient-life.md).
+   */
+  sway: number;
 }
 
 const TREE_SALT = 0x1b873593;
 const WALL_SALT = 0xc2b2ae35;
 
 function box(x: number, base: number, z: number, sx: number, sy: number, sz: number, color: number, rot = 0, shade = 1): Box {
-  return { x, y: base + sy / 2, z, sx, sy, sz, rot, color, shade, jx: x, jz: z };
+  return { x, y: base + sy / 2, z, sx, sy, sz, rot, color, shade, jx: x, jz: z, sway: 0 };
 }
 
 /** Wobble this box's colour as if it sat at (jx, jz). See `Box.jx`. */
@@ -63,6 +74,29 @@ function anchorJitter(b: Box, jx: number, jz: number): Box {
   b.jz = jz;
   return b;
 }
+
+/** Let this box lean in the wind, at `weight`. See `Box.sway`. */
+function swaying(b: Box, weight: number): Box {
+  b.sway = weight;
+  return b;
+}
+
+/**
+ * Sway weights, by what is doing the swaying.
+ *
+ * A canopy leans hardest and a tip harder than the branch under it; a bush is
+ * knee-high and a furrow ridge and a bloom head are small boxes whose *tops*
+ * carry the whole displacement, so both take a fraction or the lean reads as a
+ * shear. Nothing structural appears here at all.
+ */
+const SWAY = {
+  canopyLow: 0.8,
+  canopyMid: 1.0,
+  canopyTop: 1.2,
+  bush: 0.5,
+  crop: 0.5,
+  bloom: 0.6,
+} as const;
 
 /** Block height in world units — one voxel step. Shared with the mesher. */
 export const BH = 0.5;
@@ -147,20 +181,29 @@ export function treeBoxes(
 
   if (v > 0.7) {
     out.push(box(x, g, z, 0.24, 1.15 * BH, 0.24, PROP.trunk, rot));
-    out.push(box(x, g + 1.15 * BH, z, 0.9, 1.05 * BH, 0.9, leaf(PROP.leafA), rot));
-    out.push(box(x, g + 2.2 * BH, z, 0.62, 0.85 * BH, 0.62, leaf(PROP.leafB), rot));
-    out.push(box(x, g + 3.05 * BH, z, 0.32, 0.55 * BH, 0.32, leaf(PROP.leafA), rot));
+    out.push(swaying(box(x, g + 1.15 * BH, z, 0.9, 1.05 * BH, 0.9, leaf(PROP.leafA), rot), SWAY.canopyLow));
+    out.push(swaying(box(x, g + 2.2 * BH, z, 0.62, 0.85 * BH, 0.62, leaf(PROP.leafB), rot), SWAY.canopyMid));
+    out.push(swaying(box(x, g + 3.05 * BH, z, 0.32, 0.55 * BH, 0.32, leaf(PROP.leafA), rot), SWAY.canopyTop));
     return;
   }
   if (v > 0.3) {
     out.push(box(x, g, z, 0.28, 0.95 * BH, 0.28, v > 0.52 ? PROP.trunk : PROP.birch, rot));
-    out.push(box(x, g + 0.95 * BH, z, 1.0, 1.35 * BH, 1.0, leaf(v > 0.46 ? PROP.leafB : PROP.leafC), rot));
-    out.push(box(x + 0.1, g + 2.3 * BH, z - 0.08, 0.58, 0.62 * BH, 0.58, leaf(PROP.leafA), -rot));
+    out.push(
+      swaying(
+        box(x, g + 0.95 * BH, z, 1.0, 1.35 * BH, 1.0, leaf(v > 0.46 ? PROP.leafB : PROP.leafC), rot),
+        SWAY.canopyLow,
+      ),
+    );
+    out.push(
+      swaying(box(x + 0.1, g + 2.3 * BH, z - 0.08, 0.58, 0.62 * BH, 0.58, leaf(PROP.leafA), -rot), SWAY.canopyMid),
+    );
     return;
   }
-  // A bush is all canopy — there is no trunk to leave alone.
-  out.push(box(x, g, z, 0.68, 0.5 * BH, 0.68, leaf(PROP.leafB), rot));
-  out.push(box(x + 0.2, g, z - 0.16, 0.46, 0.38 * BH, 0.46, leaf(PROP.leafC), -rot));
+  // A bush is all canopy — there is no trunk to leave alone, so both boxes
+  // lean, and at a knee-high weight: they are wider than they are tall, and a
+  // canopy's lean on one would read as the whole shrub shearing.
+  out.push(swaying(box(x, g, z, 0.68, 0.5 * BH, 0.68, leaf(PROP.leafB), rot), SWAY.bush));
+  out.push(swaying(box(x + 0.2, g, z - 0.16, 0.46, 0.38 * BH, 0.46, leaf(PROP.leafC), -rot), SWAY.bush));
 }
 
 /**
@@ -310,7 +353,8 @@ function farm(cx: number, g: number, cz: number, b: Building, out: Box[]): void 
   for (let r = 0; r < b.h - 1; r++) {
     // The last row is the yard: the hut and the path stand there instead.
     const z = b.y + r + 0.5;
-    out.push(box(cx, g + 0.1 * BH, z, b.w - 0.5, 0.16 * BH, 0.34, PROP.crop, 0, 0.94));
+    // The standing green leans; the turned earth it stands in does not.
+    out.push(swaying(box(cx, g + 0.1 * BH, z, b.w - 0.5, 0.16 * BH, 0.34, PROP.crop, 0, 0.94), SWAY.crop));
   }
   // A fence of low posts round the plot — a farm has a boundary, and it is what
   // keeps a flat prop from reading as a stain on the grass.
@@ -379,14 +423,16 @@ function flowers(g: number, b: Building, out: Box[]): void {
   out.push(box(cx, g + 0.32 * BH, b.y + b.h - 0.18, b.w - 0.36, 0.07 * BH, 0.07, PROP.timber, 0, 0.92));
   out.push(box(b.x + 0.18, g + 0.32 * BH, cz, 0.07, 0.07 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
   out.push(box(b.x + b.w - 0.18, g + 0.32 * BH, cz, 0.07, 0.07 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
-  // Nine blooms on a fixed lattice — static, like the Pasture's sheep, because
-  // renderer-owned animation state is a door no step has opened.
+  // Nine blooms on a fixed lattice. **The head leans, the stem does not** —
+  // the head's own bottom vertices are masked to zero displacement, so it stays
+  // seated on the stem instead of sliding off it, which is the whole reason the
+  // sway weight is per vertex rather than per box.
   const bloom = [PROP.honey, PROP.mead, PROP.bolt] as const;
   for (let i = 0; i < 9; i++) {
     const ox = b.x + 0.55 + (i % 3) * 0.95;
     const oz = b.y + 0.55 + Math.floor(i / 3) * 0.95;
     out.push(box(ox, g + 0.1 * BH, oz, 0.08, 0.3 * BH, 0.08, PROP.crop, 0, 0.7));
-    out.push(box(ox, g + 0.4 * BH, oz, 0.26, 0.14 * BH, 0.26, bloom[i % 3]));
+    out.push(swaying(box(ox, g + 0.4 * BH, oz, 0.26, 0.14 * BH, 0.26, bloom[i % 3]), SWAY.bloom));
   }
 }
 
@@ -400,11 +446,15 @@ function flowers(g: number, b: Building, out: Box[]): void {
  * grass), but a proper rail fence rather than the Farm's two low bars, because
  * a pasture's whole job is to hold something in.
  *
- * **The sheep are static props, never entities.** They are placed off the
- * footprint's own coordinates and baked into the chunk with the fence: the
- * mockup's wander machine stays retired, and renderer-owned animation state is
- * a door this step does not open (docs/specs/2026-09-10-sheep-and-clothes.md).
- * Nothing in the sim knows they exist.
+ * **The sheep are no longer baked here.** They came out when they started
+ * walking: the flock is per-frame fauna in `render/fauna.ts`, bounded to this
+ * footprint, so the fence is still the promise and it is now a promise you can
+ * watch being kept. That reverses `docs/changelog/2026-09-11-sheep-and-clothes.md`,
+ * which baked three static sheep in and closed the door on renderer-owned
+ * animation state; what kept it shut was scope, not principle
+ * (docs/specs/2026-09-15-ambient-life.md). Nothing in the sim knows they exist
+ * either way — and a blueprint or half-built pasture still has no flock,
+ * exactly as it had no baked sheep.
  */
 function pasture(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
   out.push(box(cx, g, cz, b.w - 0.1, 0.1 * BH, b.h - 0.1, PROP.crop, 0, 0.9));
@@ -418,20 +468,6 @@ function pasture(cx: number, g: number, cz: number, b: Building, out: Box[]): vo
     out.push(box(cx, g + h * BH, b.y + b.h - 0.18, b.w - 0.36, 0.08 * BH, 0.08, PROP.timber, 0, 0.92));
     out.push(box(b.x + 0.18, g + h * BH, cz, 0.08, 0.08 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
     out.push(box(b.x + b.w - 0.18, g + h * BH, cz, 0.08, 0.08 * BH, b.h - 0.36, PROP.timber, 0, 0.92));
-  }
-  // Three sheep, heads down, at fixed spots inside the rails and clear of the
-  // hut's corner. Fleece body, dark face — the same two-box grammar the
-  // colonists and the monsters are built from.
-  const flock: [number, number, number][] = [
-    [0.62, 0.55, 0.5],
-    [1.55, 1.35, -0.7],
-    [0.75, 1.9, 0.2],
-  ];
-  for (const [ox, oz, rot] of flock) {
-    const sx = b.x + ox;
-    const sz = b.y + oz;
-    out.push(box(sx, g + 0.1 * BH, sz, 0.5, 0.42 * BH, 0.34, PROP.fleece, rot));
-    out.push(box(sx, g + 0.1 * BH, sz + 0.24, 0.2, 0.24 * BH, 0.18, PROP.door, rot, 0.9));
   }
   // The hut, in the south-east corner beside the work tile: the Farm's, one
   // shade lighter on the roof so the two 3×3 plots are tellable apart.

@@ -1,6 +1,6 @@
 import { CameraRig } from "../render/camera";
 import { ChunkRenderer } from "../render/chunks";
-import { createTerrainMaterial, createWaterMaterial, waveTime } from "../render/materials";
+import { createTerrainMaterial, createWaterMaterial, swayAmp, waveTime } from "../render/materials";
 import { MoverRenderer, type Ghost, type ReachRect } from "../render/movers";
 import {
   Picker,
@@ -760,10 +760,17 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(resize, 120);
 });
 
-// Reduced motion stills the water; the camera keeps responding regardless.
+/**
+ * `prefers-reduced-motion`: stills everything ambient and nothing else. The
+ * water's clock is held at 0 as it always was; sway goes to its rest pose
+ * through an amplitude uniform, because at `uTime = 0` its two-sine is a fixed
+ * non-zero number and a forest would stand permanently leaning. Colonists and
+ * monsters keep moving, and the camera keeps responding, because they are the
+ * game rather than its decoration.
+ */
 const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const t0 = performance.now();
-let last = t0;
+swayAmp.value = still ? 0 : 1;
+let last = performance.now();
 
 /**
  * Accumulated game time owed to the sim, in ticks. Real seconds × speed ×
@@ -772,11 +779,24 @@ let last = t0;
  */
 let owed = 0;
 
+/**
+ * Elapsed **game** seconds — real seconds × speed, off the same clamped `dt`
+ * the sim is fed. Everything ambient runs on this rather than on the wall
+ * clock: at ×0 the world holds completely still and at ×3 all of it runs fast.
+ * The water came onto this clock with the rest of it, since a paused world
+ * whose only motion is the motion that does not matter is the worst possible
+ * moment to invert what the map is read for
+ * (docs/specs/2026-09-15-ambient-life.md).
+ */
+let worldTime = 0;
+
 function frame(nowMs: number): void {
   const s = current();
   const dt = Math.min(0.1, Math.max(0, nowMs - last) / 1000);
   last = nowMs;
-  if (!still) waveTime.value = (nowMs - t0) / 1000;
+  const gameDt = dt * speed;
+  worldTime += gameDt;
+  waveTime.value = still ? 0 : worldTime;
 
   owed += dt * speed * TICK_HZ;
   // A suspended tab wakes owing thousands of ticks; run a few and drop the
@@ -804,7 +824,17 @@ function frame(nowMs: number): void {
   s.chunks.sync();
   // At ×0 the world is frozen, so there is nothing between two ticks to
   // interpolate: pin the fraction rather than letting it drift.
-  s.movers.sync(speed === 0 ? 1 : owed, s.ghost(), isWallTool(s.hud.tool), s.reachRects(), s.box());
+  s.movers.sync(
+    speed === 0 ? 1 : owed,
+    // The camera focus is what bounds which anchors get motes and herds, and
+    // `gameDt` is what the herds integrate by — so a tab that wakes owing ten
+    // seconds does not teleport one across its pasture, and ×0 stands it still.
+    { time: worldTime, dt: gameDt, fx: rig.focus.x, fz: rig.focus.z, still },
+    s.ghost(),
+    isWallTool(s.hud.tool),
+    s.reachRects(),
+    s.box(),
+  );
   s.hud.update();
   stage.renderer.render(stage.scene, rig.camera);
   requestAnimationFrame(frame);
