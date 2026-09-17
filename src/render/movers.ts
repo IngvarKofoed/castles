@@ -26,6 +26,7 @@ import {
   BUILDING_DEFS,
   defOf,
   MonsterKind,
+  Phase,
   type Building,
   type BuildingKindValue,
   type ItemTypeValue,
@@ -124,7 +125,30 @@ const KEYLINE_GROWTH = 0.05;
  */
 const CLOTH = [PROP.tunic, PROP.wool, PROP.smock];
 
+/**
+ * The folk layer's population term. Worth knowing while reading it: **nothing
+ * in `sim/` caps population at this number** — beds keep being built and
+ * wanderers keep arriving — so 64 is already a figure the game can exceed. A
+ * pre-existing gap, made dearer per head by the work swing rather than
+ * introduced by it.
+ */
 const MAX_COLONISTS = 64;
+/**
+ * Boxes one colonist can cost at once: body, head, two arms, and the tool's
+ * haft and head — a working colonist is six, a hauling one three. **Not
+ * seven**: the carried box cannot coexist with the tool, because
+ * `drawColonists` suppresses it while the swing runs.
+ *
+ * Colonists have a layer of their own for exactly this reason. Past a cap `put`
+ * drops whatever is drawn **last**, which in the shared `solids` layer is
+ * monsters and loose goods — a dropped monster being the one false claim about
+ * the map this file refuses everywhere else. Separated, a colonist overflow
+ * costs a colonist — a *whole* one, because `drawColonists` reserves the figure
+ * before it draws any of it rather than letting `put` truncate one mid-body.
+ */
+const COLONIST_BOXES = 6;
+/** The folk layer's size, and the budget `drawColonists` reserves against. */
+const FOLK_BOXES = MAX_COLONISTS * COLONIST_BOXES;
 /** Two boxes each, and the lair pass targets a couple of dozen dens — sized
  *  well clear of that so a denser map never silently drops one. */
 const MAX_MONSTERS = 128;
@@ -446,6 +470,92 @@ const HEAD = { w: 0.32, h: 0.26, y: 0.5 };
 const CARRY = { w: 0.32, h: 0.26, y: 0.8 };
 
 /**
+ * The work swing: the styleguide's **fourth motion class**, and the only one
+ * gated on sim state.
+ *
+ * Arms and a tool appear while a colonist is working a stint — chop, mine,
+ * level, build, raze, repair — and vanish the moment it ends, so a busy colony
+ * and a stalled one look different from across the map with no panel open. One
+ * motion for every job: the *place* says which job it is, and the motion says
+ * only that work is happening.
+ *
+ * **Closed form off `(id, time)`** — the motes' rule applied to a figure.
+ * Nothing is integrated, nothing is saved, a reload or a tab-wake needs no
+ * catch-up, and two folk on adjacent trees are never in step. Deliberately
+ * **not** driven off `c.work`: `workTicks` returns 0, 1 or 2 per tick at 10 Hz,
+ * so a hungry colonist's stroke would stall and freeze mid-arc.
+ *
+ * **On the world clock, and deliberately not stilled by reduced motion.** At ×0
+ * the swing stops with the colony, because no work is being done; under
+ * `prefers-reduced-motion` it keeps going with walking and prowling, because it
+ * says work is happening and that is information rather than decoration
+ * (docs/STYLEGUIDE.md, Motion).
+ *
+ * **There is no arc, and that is the rule rather than a limitation of the mover
+ * layer.** `put` composes an arbitrary quaternion in two lines, so a shoulder
+ * pivot is expressible here in a way it is not in the chunk mesher — but
+ * *Nothing leans* (src/render/CLAUDE.md) covers all geometry, and one rule over
+ * every prop is worth more than one better-looking arm. The stroke is built
+ * from what the rule allows: the hands and tool rise and draw back, then drive
+ * down and forward, with a small y-twist of the whole figure squaring into the
+ * blow.
+ */
+const STROKE_PERIOD = 0.8;
+/**
+ * The fraction of the stroke spent winding up. The blow gets the rest and
+ * accelerates into it: a stroke that falls slower than it rises reads as
+ * lifting rather than striking.
+ *
+ * At this period the two shortest stints in the game get **one stroke and
+ * two** — `RAZE_TICKS` is a second and `WALL_BUILD_TICKS` two — which is
+ * correct rather than broken. A three-second chop gets nearly four and a
+ * twelve-second stone gate fifteen.
+ */
+const STROKE_RAISE = 0.62;
+/** The golden-ratio conjugate, so consecutive ids land as far apart in the
+ *  cycle as they can and two colonists on adjacent tiles never strike
+ *  together. */
+const STROKE_STAGGER = PHI - 1;
+/** How far the figure squares round through the drive. The only rotation this
+ *  renderer has, and what stops the motion reading as a box moving up and
+ *  down. */
+const STROKE_TWIST = 0.28;
+/** Where the hands sit at each end of the stroke: about head height and drawn
+ *  back at the top, knee height and past the body's face at the bottom. */
+const HAND_HIGH_Y = 0.5;
+const HAND_LOW_Y = 0.1;
+const HAND_BACK = -0.06;
+const HAND_FRONT = 0.26;
+/**
+ * One arm, and how far out it flanks the body. `ARM_SPAN` puts its inner face
+ * just inside the body's half-width (0.22) and its outer face clear of it, so
+ * an arm is attached at every point of the stroke and never swallowed by the
+ * trunk — including at the top, where the hands draw back *inside* the body's
+ * own depth.
+ *
+ * Arms take the body's `cloth` tint rather than the head's linen: the
+ * clothed/unclothed contrast is a map-distance read
+ * (docs/changelog/2026-09-11-sheep-and-clothes.md), and two always-pale arms
+ * would dilute it.
+ */
+const ARM_W = 0.12;
+const ARM_H = 0.15;
+const ARM_SPAN = 0.26;
+/**
+ * The implement: a short haft reaching forward out of the hands with a heavier
+ * head at its end, in timber and stone tones.
+ *
+ * **Deliberately not an axe.** An axe at a wall would be wrong, and a generic
+ * implement at a tree reads as an axe because of the tree. One shape, no table,
+ * nothing to extend when a job is added.
+ */
+const HAFT_T = 0.07;
+const HAFT_LEN = 0.26;
+const TOOL_W = 0.16;
+const TOOL_H = 0.15;
+const TOOL_D = 0.12;
+
+/**
  * The Wilds, at folk scale so the comparison is immediate.
  *
  * The two kinds have to be tellable apart across the map, because reading them
@@ -550,6 +660,7 @@ export interface Ambient {
 }
 
 export class MoverRenderer {
+  private readonly folk: Layer;
   private readonly solids: Layer;
   private readonly markKeyline: Layer;
   private readonly markFill: Layer;
@@ -589,7 +700,12 @@ export class MoverRenderer {
     private readonly scene: Scene,
     private readonly sim: Sim,
   ) {
-    this.solids = solidLayer(scene, MAX_COLONISTS * 3 + MAX_MONSTERS * 2 + MAX_ITEMS);
+    // Folk have a layer of their own so that an overflow of folk drops folk.
+    // In one shared layer `put` drops whatever is queued last — monsters and
+    // loose goods — and a monster missing from the map is the one false claim
+    // this file refuses everywhere else (see `COLONIST_BOXES`).
+    this.folk = solidLayer(scene, FOLK_BOXES);
+    this.solids = solidLayer(scene, MAX_MONSTERS * 2 + MAX_ITEMS);
     this.markKeyline = overlayLayer(scene, MAX_OVERLAY, KEYLINE, 0.5);
     this.markFill = overlayLayer(scene, MAX_OVERLAY, GOLD, 0.13);
     this.markEdge = overlayLayer(scene, MAX_OVERLAY, GOLD, 0.85);
@@ -688,7 +804,11 @@ export class MoverRenderer {
     box: SelectionBox | null = null,
   ): void {
     for (const l of this.layers) l.used = 0;
-    this.drawColonists(alpha);
+    // The work swing takes the world clock and **not** `still`: it is the one
+    // motion here that is game rather than decoration, so it keeps running
+    // under `prefers-reduced-motion` exactly as walking does, and stops at ×0
+    // with the colony that is no longer working.
+    this.drawColonists(alpha, ambient.time);
     this.drawMonsters(alpha);
     this.drawGoods();
     // Reduced motion holds the clock rather than emptying the layers: a mote is
@@ -719,6 +839,7 @@ export class MoverRenderer {
 
   private get layers(): Layer[] {
     return [
+      this.folk,
       this.solids,
       this.markKeyline,
       this.markFill,
@@ -764,13 +885,40 @@ export class MoverRenderer {
     return world.hmap[tileIndex(tx, ty, world.size)] * BH;
   }
 
-  private drawColonists(alpha: number): void {
+  /**
+   * The folk: two boxes standing, three walking with something in hand, and
+   * six swinging a tool.
+   *
+   * `time` is **game** seconds off the world clock and `still` is deliberately
+   * not consulted — see `STROKE_PERIOD` for why the work swing sits on the game
+   * side of the reduced-motion line.
+   */
+  private drawColonists(alpha: number, time: number): void {
     for (const c of colonists(this.sim)) {
       // A slot worker who has stepped inside their workshop is not drawn —
       // their position is pinned within the footprint, and a figure standing
       // motionless at the door reads as loitering, not working. The
-      // inspector's worker row and the labour meter say where they went.
+      // inspector's worker row and the labour meter say where they went. They
+      // gain no swing either: the panel's Worker row is where a staffed
+      // workshop is read (docs/changelog/2026-09-01-slot-workers-step-inside.md).
       if (c.inside) continue;
+      // **Both halves of the gate, and the first is not optional.** `phase` is
+      // meaningful only while a task is held, and nothing resets it when one
+      // ends — `abandonTask`, `abandonForFlight` and `staff()` all clear the
+      // task and leave `phase` where it was (`stepAside` is the exception that
+      // proves it: it goes through `clearWorker`, which does reset it). On
+      // `phase` alone a colonist would swing a tool while fleeing an orc, while
+      // walking to a workshop they were just staffed to, and after any
+      // cancelled designation: all ordinary play.
+      const working = c.task >= 0 && c.phase === Phase.Working;
+      const carried = c.carrying >= 0 || c.dest >= 0;
+      // **The whole figure is reserved, or none of it is drawn.** `put` drops
+      // one box at a time, so a layer that runs out mid-colonist leaves a body
+      // with no head standing on the map — a worse lie than the missing figure
+      // the cap is documented to cost. Stopping here makes the overflow what
+      // `COLONIST_BOXES` says it is: whole folk, from the back of the list.
+      const boxes = working ? COLONIST_BOXES : carried ? 3 : 2;
+      if (this.folk.used + boxes > FOLK_BOXES) break;
       const x = c.px + (c.x - c.px) * alpha;
       const y = c.py + (c.y - c.py) * alpha;
       const base = this.groundY(x, y);
@@ -778,15 +926,55 @@ export class MoverRenderer {
       // have no bake and no dirty machinery, so a garment donned or worn out
       // shows on the next frame with nothing to invalidate.
       const cloth = c.clothes > 0 ? CLOTH[c.id % CLOTH.length] : PROP.drab;
-      put(this.solids, x, base + BODY.y, y, BODY.w, BODY.h, BODY.w, c.heading, cloth);
-      put(this.solids, x, base + HEAD.y, y, HEAD.w, HEAD.h, HEAD.w, c.heading, PROP.linen);
-      // The same box says "carrying something" and "walking in from the
-      // coast": a wanderer has a pack, and a traveller with a bundle on their
-      // shoulder is the whole of what marks them out. No new model, and
-      // nothing in a HUD colour — an arrival is a thing in the world.
-      if (c.carrying >= 0 || c.dest >= 0) {
-        put(this.solids, x, base + CARRY.y, y, CARRY.w, CARRY.h, CARRY.w, c.heading, PROP.crate);
+      const lift = working ? strokeLift(frac(time / STROKE_PERIOD + c.id * STROKE_STAGGER)) : 0;
+      // The whole figure squares into the blow and winds back up on the raise.
+      // Zero rotation off the heading whenever nobody is working, so a walking
+      // colonist is exactly what they were.
+      const rot = c.heading + lift * STROKE_TWIST;
+      put(this.folk, x, base + BODY.y, y, BODY.w, BODY.h, BODY.w, rot, cloth);
+      put(this.folk, x, base + HEAD.y, y, HEAD.w, HEAD.h, HEAD.w, rot, PROP.linen);
+      if (!working) {
+        // The same box says "carrying something" and "walking in from the
+        // coast": a wanderer has a pack, and a traveller with a bundle on their
+        // shoulder is the whole of what marks them out. No new model, and
+        // nothing in a HUD colour — an arrival is a thing in the world.
+        if (carried) {
+          put(this.folk, x, base + CARRY.y, y, CARRY.w, CARRY.h, CARRY.w, rot, PROP.crate);
+        }
+        continue;
       }
+      // **The tool wins and the carried box is suppressed**, which is the
+      // normal case rather than an edge: `actBuildWall` sets `Working` while the
+      // colonist still holds their log, so every palisade, gate and stone
+      // segment in the game is raised by somebody holding the material. A figure
+      // holding a log above their head while swinging an implement reads as
+      // juggling. The cost is understood — wall building loses a signal that the
+      // material reached the segment — and the wall coming up out of the ground
+      // says nearly the same thing for longer.
+      const handY = base + HAND_LOW_Y + (HAND_HIGH_Y - HAND_LOW_Y) * lift;
+      const handZ = HAND_FRONT + (HAND_BACK - HAND_FRONT) * lift;
+      // Local (across, forward) to world, the same mapping `put` spins a box by:
+      // a local (lx, lz) lands at (x + lx·cos + lz·sin, y − lx·sin + lz·cos).
+      // Written out rather than wrapped in a pair of closures, because this is
+      // the per-frame draw of every working figure on the map and the three
+      // points it needs are known here.
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
+      const handX = x + handZ * sin;
+      const handW = y + handZ * cos;
+      const armX = ARM_SPAN * cos;
+      const armW = ARM_SPAN * sin;
+      put(this.folk, handX + armX, handY, handW - armW, ARM_W, ARM_H, ARM_W, rot, cloth);
+      put(this.folk, handX - armX, handY, handW + armW, ARM_W, ARM_H, ARM_W, rot, cloth);
+      // Haft and head share the arms' centre line, so the implement is held
+      // rather than floating: the taller head simply hangs lower off it.
+      const haftZ = handZ + (HAFT_LEN + ARM_W) / 2;
+      const headZ = haftZ + (HAFT_LEN + TOOL_D) / 2;
+      const midY = handY + ARM_H / 2;
+      const haftY = midY - HAFT_T / 2;
+      const headY = midY - TOOL_H / 2;
+      put(this.folk, x + haftZ * sin, haftY, y + haftZ * cos, HAFT_T, HAFT_T, HAFT_LEN, rot, PROP.timber);
+      put(this.folk, x + headZ * sin, headY, y + headZ * cos, TOOL_W, TOOL_H, TOOL_D, rot, PROP.stone);
     }
   }
 
@@ -1034,11 +1222,7 @@ export class MoverRenderer {
   private drawSmoke(b: Building, vent: readonly [number, number, number], time: number): void {
     const base = this.groundY(b.x, b.y);
     for (let i = 0; i < SMOKE_PUFFS; i++) {
-      // `((x % 1) + 1) % 1` rather than a bare modulo: `time` is never negative
-      // today, but a phase that can go negative would drop a puff below the
-      // chimney rather than wrapping it.
-      const raw = time / SMOKE_LIFE + i / SMOKE_PUFFS;
-      const p = ((raw % 1) + 1) % 1;
+      const p = frac(time / SMOKE_LIFE + i / SMOKE_PUFFS);
       const size = SMOKE_SIZE * (1 - p);
       put(
         this.smoke,
@@ -1466,6 +1650,31 @@ function beePoint(who: number, s: number, seed: number): [number, number, number
   const a = hash(who, s, seed ^ BEE_SALT_A) * TAU;
   const r = Math.sqrt(hash(who, s, seed ^ BEE_SALT_B)) * BEE_RANGE;
   return [Math.cos(a) * r, (hash(who, s, seed ^ BEE_SALT_C) - 0.5) * BEE_LIFT, Math.sin(a) * r];
+}
+
+/**
+ * Where the hands are in the stroke: 0 at the bottom of the blow, 1 at the top
+ * of the wind-up.
+ *
+ * The raise smoothsteps and the drive accelerates, over a shorter part of the
+ * period — a stroke that falls slower than it rises reads as lifting rather
+ * than striking. Both ends land on 0, so the cycle is continuous across the
+ * wrap with nothing to match up by hand.
+ */
+function strokeLift(s: number): number {
+  if (s < STROKE_RAISE) {
+    const u = s / STROKE_RAISE;
+    return u * u * (3 - 2 * u);
+  }
+  const u = (s - STROKE_RAISE) / (1 - STROKE_RAISE);
+  return 1 - u * u;
+}
+
+/** `((x % 1) + 1) % 1` rather than a bare modulo, shared by the work swing and
+ *  the smoke column: `time` is never negative today, but a phase that could go
+ *  negative would read off the far end of its cycle instead of wrapping. */
+function frac(v: number): number {
+  return ((v % 1) + 1) % 1;
 }
 
 /** Is this anchor close enough to the camera focus to be worth populating? */

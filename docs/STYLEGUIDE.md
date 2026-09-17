@@ -36,7 +36,7 @@ The game promises calm; the UI must keep it:
 ### Motion
 
 "No animation except what physically moves in the world" is the licence above,
-and everything that moves picks one of **three classes**. A fourth is a design
+and everything that moves picks one of **four classes**. A fifth is a design
 decision, not a detail — pick one of these or write the class down here first.
 
 - **Sway** — baked geometry displaced *in place* by the shader: crop furrows,
@@ -52,8 +52,17 @@ decision, not a detail — pick one of these or write the class down here first.
 - **Fauna** — creatures that walk, bounded to a home radius: the Pasture's
   sheep, the deer of the wilds. They integrate, so they take the frame's
   clamped delta.
+- **Work** — a colonist's tool swing. Closed form off (id, time) like a mote,
+  but it belongs to a figure that does cross the map, and two rules separate it
+  from the three above. It is **gated on sim state**: arms and a tool appear
+  only while somebody is working a stint and go the moment it ends, so a busy
+  colony and a stalled one look different from across the map with no panel
+  open. And it is **not stilled by reduced motion** — it says work is
+  happening, which is information rather than decoration, so it sits with
+  walking and prowling on the game side of the line below. One motion for every
+  job: the place says which job it is.
 
-**The rule between the three: only colonists and monsters cross the map.**
+**The rule between the first three: only colonists and monsters cross the map.**
 Everything ambient is tied to an anchor and stays near it — a sheep does not
 leave its pasture, a deer does not cross the island, a flock does not migrate.
 Reading the map is the player's entire threat toolkit, and translation across

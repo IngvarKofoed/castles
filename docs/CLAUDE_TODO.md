@@ -67,3 +67,13 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   the accept flags (`2026-09-14-stockpile-default-and-clearing`), so the fix is a
   per-frame memo, not a different question. Surfaced by the commit review of
   `2026-09-15-hive-meter-and-panel-staleness`.
+
+- **A colony past 64 folk silently stops drawing some of them** — `MAX_COLONISTS`
+  is a renderer constant and **nothing in `sim/` caps population at it**: beds keep
+  being built and wanderers keep arriving, so it is a number the game can exceed.
+  Until `2026-09-17-work-swing` the overflow was shared with monsters and loose
+  goods; now colonists have their own layer and whole figures are reserved, so
+  past the cap a colonist is dropped — the graceful failure, but still a figure
+  missing from a map the player reads for a living. Wants either a population
+  cap in the sim or a layer
+  that grows. Surfaced by `2026-09-17-work-swing`.

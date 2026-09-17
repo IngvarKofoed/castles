@@ -80,6 +80,19 @@ export type { Building, Colonist, Item, Sim };
 export { BuildingKind, BuildingState, ItemType, Loc, BUILDING_DEFS, defOf, footprint, workTile, canPlace };
 export type { BuildingKindValue, ItemTypeValue } from "../store";
 /**
+ * What a colonist is doing with their claimed task — for the work swing, which
+ * draws a tool only while somebody is actually working a stint
+ * (docs/specs/2026-09-16-folk-at-work.md).
+ *
+ * **Meaningful only while `task >= 0`**, and that half of the test is not
+ * optional: nothing resets `phase` when a task ends, so `abandonTask`,
+ * `abandonForFlight` and `staff()` all leave a stale `Working` on a colonist
+ * who is fleeing an orc, walking to a workshop, or standing where a cancelled
+ * designation used to be. (`stepAside` is the exception that proves it: it
+ * goes through `clearWorker`, which does reset the phase.)
+ */
+export { Phase } from "../store";
+/**
  * The wall predicates the renderer is allowed: what a segment is made of,
  * whether it is a gateway, whether it is still a drawing. Exported so
  * `render/` can pick a model per segment without ever comparing a wall byte to
