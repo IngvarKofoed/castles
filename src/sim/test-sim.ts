@@ -1,4 +1,4 @@
-import { WANDERER_INTERVAL } from "./tuning";
+import { FIRST_STORM, WANDERER_INTERVAL } from "./tuning";
 import { Terrain, type World } from "./world/world";
 import {
   BuildingKind,
@@ -60,23 +60,32 @@ export function flatSim(size = 12, height = 4): Sim {
     wandererTimer: WANDERER_INTERVAL,
     limits: unlimitedLimits(),
     enclosureDirty: 0,
+    // The opening grace, as `createSim` gives it: a test that never touches
+    // this clock never meets a storm, which is what lets the whole suite go on
+    // placing its own monsters by hand.
+    stormTicks: FIRST_STORM,
+    stormStrength: 1,
+    stormLanding: -1,
   };
 }
 
 /**
- * A monster standing at its own lair, prowling, with no circuit — for tests
- * that want a threat in a known place rather than a generated wilderness. Here
- * for the same reason `flatSim` and `testBuilding` are: a hand-written
- * `Monster` literal in a test file goes stale the moment the entity grows a
- * field.
+ * A monster standing on a tile, ashore and dangerous — for tests that want a
+ * threat in a known place rather than a landing of their own. Here for the same
+ * reason `flatSim` and `testBuilding` are: a hand-written `Monster` literal in a
+ * test file goes stale the moment the entity grows a field.
+ *
+ * It lands **where it stands**: `landX`/`landY` default to the monster's own
+ * tile, so a test that never moves it has a withdrawal that ends immediately
+ * and a `depth` big enough that the press is never what stopped it.
  */
 export function testMonster(patch: Partial<Monster> = {}): Monster {
   // The spread below wins for `x`/`y`, so the derived fields are computed from
-  // whichever the caller actually gave: a bare `lairX` centres the monster on
-  // its den, and an explicit `x` keeps `px` in step with it rather than half a
-  // tile away — half of `CATCH_RANGE`, and enough to bias a range assertion.
-  const x = patch.x ?? (patch.lairX ?? 0) + 0.5;
-  const y = patch.y ?? (patch.lairY ?? 0) + 0.5;
+  // whichever the caller actually gave: an explicit `x` keeps `px` in step with
+  // it rather than half a tile away — half of `CATCH_RANGE`, and enough to bias
+  // a range assertion.
+  const x = patch.x ?? 0.5;
+  const y = patch.y ?? 0.5;
   return {
     id: 900,
     kind: MonsterKind.Orc,
@@ -85,14 +94,11 @@ export function testMonster(patch: Partial<Monster> = {}): Monster {
     px: x,
     py: y,
     heading: 0,
-    lairX: Math.floor(x),
-    lairY: Math.floor(y),
-    circuit: [],
-    leg: 0,
-    phase: MonsterPhase.Prowl,
+    landX: Math.floor(x),
+    landY: Math.floor(y),
+    depth: 10_000,
+    phase: MonsterPhase.Ashore,
     phaseTicks: 10_000,
-    restTicks: 1200,
-    prowlTicks: 10_000,
     target: -1,
     targetTile: -1,
     biteTicks: 0,

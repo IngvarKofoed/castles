@@ -35,7 +35,7 @@ import { MIGRATIONS } from "./migrations";
  * the matching entry to `MIGRATIONS` — the fixture test in this folder fails
  * loudly if an old save stops loading, which is the point.
  */
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 /** A save that cannot be read, with a message meant for the menu's note row. */
 export class SaveError extends Error {
@@ -218,6 +218,13 @@ function assertSim(raw: unknown): Sim {
   number(s.nextId);
   number(s.enclosureDirty);
   number(s.wandererTimer);
+  // The forecast, all three of it. `stormLanding` is a tile index or -1, and
+  // `assertSim` checks only that it is a number: a landing site that has gone
+  // out of range is re-picked at the landing rather than refused here, the same
+  // tolerance every derived field gets.
+  number(s.stormTicks);
+  number(s.stormStrength);
+  number(s.stormLanding);
   // One ceiling per good — **exactly as many slots as the build has goods**,
   // sized like the tile layers above rather than merely "an array". A `limits`
   // short of a slot is what a missed append rung looks like (a new good with

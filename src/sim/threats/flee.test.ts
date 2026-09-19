@@ -70,7 +70,7 @@ describe("fleeing", () => {
     // At the very edge of the flee range, which is the head start the numbers
     // actually give: an orc is faster than a colonist, so any less than the
     // full six tiles and this ends in a grave rather than in a gateway.
-    sim.monsters.push(testMonster({ lairX: 9, lairY: 19, x: 9.5, y: 19.5 }));
+    sim.monsters.push(testMonster({x: 9.5, y: 19.5}));
     for (let t = 0; t < 60; t++) {
       stepColonists(sim);
       stepMonsters(sim);
@@ -90,7 +90,7 @@ describe("fleeing", () => {
     const sim = flatSim(24);
     recomputeEnclosure(sim);
     const c = walker(sim, 12, 12);
-    sim.monsters.push(testMonster({ kind: 1, lairX: 12, lairY: 8, x: 12.5, y: 9.5 }));
+    sim.monsters.push(testMonster({kind: 1, x: 12.5, y: 9.5}));
     const before = Math.abs(c.y - 9.5);
     for (let t = 0; t < 40; t++) {
       stepColonists(sim);
@@ -100,22 +100,22 @@ describe("fleeing", () => {
     expect(Math.abs(c.y - sim.monsters[0].y)).toBeGreaterThan(before);
   });
 
-  it("ignores a monster that is resting or on its way home", () => {
-    for (const phase of [MonsterPhase.Rest, MonsterPhase.GoingHome]) {
-      const sim = flatSim(20);
-      recomputeEnclosure(sim);
-      const c = walker(sim, 12, 12);
-      sim.monsters.push(testMonster({ lairX: 12, lairY: 9, x: 12.5, y: 10.5, phase, phaseTicks: 9999 }));
-      for (let t = 0; t < 20; t++) stepColonists(sim);
-      expect([c.x, c.y]).toEqual([12.5, 12.5]);
-    }
+  it("ignores a monster that is already heading for its boat", () => {
+    const sim = flatSim(20);
+    recomputeEnclosure(sim);
+    const c = walker(sim, 12, 12);
+    sim.monsters.push(
+      testMonster({ x: 12.5, y: 10.5, phase: MonsterPhase.Withdrawing, phaseTicks: 9999 }),
+    );
+    for (let t = 0; t < 20; t++) stepColonists(sim);
+    expect([c.x, c.y]).toEqual([12.5, 12.5]);
   });
 
   it("ignores monsters entirely from inside the walls", () => {
     const sim = flatSim(20);
     ring(sim);
     const c = walker(sim, 9, 9);
-    sim.monsters.push(testMonster({ lairX: 9, lairY: 5, x: 9.5, y: 6.5 }));
+    sim.monsters.push(testMonster({x: 9.5, y: 6.5}));
     for (let t = 0; t < 30; t++) {
       stepColonists(sim);
       stepMonsters(sim);
@@ -130,7 +130,7 @@ describe("fleeing", () => {
     for (let y = 0; y < 20; y++) sim.wallMap[at(sim, 10, y)] = WallState.Stone;
     recomputeEnclosure(sim);
     const c = walker(sim, 12, 9);
-    sim.monsters.push(testMonster({ lairX: 6, lairY: 9, x: 8.5, y: 9.5 }));
+    sim.monsters.push(testMonster({x: 8.5, y: 9.5}));
     for (let t = 0; t < 20; t++) stepColonists(sim);
     expect(c.x).not.toBe(12.5);
   });
@@ -162,7 +162,7 @@ describe("the door guard", () => {
     // The work tile is where `leaveBuilding` puts them; the orc stands beside
     // exactly that tile, and nowhere near the building's own footprint.
     const [wx, wy] = workTile(mill);
-    sim.monsters.push(testMonster({ lairX: wx, lairY: wy + 1, id: 901 }));
+    sim.monsters.push(testMonster({x: wx + 0.5, y: wy + 1 + 0.5, id: 901}));
     spawnItem(sim, ItemType.Bread, 3, 3);
     keeper.hunger = MEAL_TICKS;
 
@@ -182,21 +182,21 @@ describe("the door guard", () => {
     expect(prowlerNear(sim, wx + 0.5, wy + 0.5)).not.toBeNull();
   });
 
-  it("lets them out the moment the prowler stops prowling", () => {
+  it("lets them out the moment the monster turns for its boat", () => {
     const sim = flatSim(20);
     recomputeEnclosure(sim);
     const { mill, keeper } = staffedMill(sim);
     const [wx, wy] = workTile(mill);
-    const orc = testMonster({ lairX: wx, lairY: wy + 1, id: 901 });
+    const orc = testMonster({x: wx + 0.5, y: wy + 1 + 0.5, id: 901});
     sim.monsters.push(orc);
     spawnItem(sim, ItemType.Bread, 3, 3);
     keeper.hunger = MEAL_TICKS;
     for (let t = 0; t < 20; t++) advanceTick(sim);
     expect(keeper.inside).toBe(1);
 
-    // Resting and homeward monsters are not threats — the same rule the flee
-    // check has always used — so the errand resumes with nothing else changing.
-    orc.phase = MonsterPhase.Rest;
+    // A withdrawing monster is not a threat — the same rule the flee check has
+    // always used — so the errand resumes with nothing else changing.
+    orc.phase = MonsterPhase.Withdrawing;
     for (let t = 0; t < 40 && keeper.eating !== 1; t++) advanceTick(sim);
     expect(keeper.eating).toBe(1);
     expect(keeper.inside).toBe(0);
@@ -207,7 +207,7 @@ describe("the door guard", () => {
     recomputeEnclosure(sim);
     const { keeper } = staffedMill(sim);
     const [wx, wy] = workTile(sim.buildings[sim.buildings.length - 1]);
-    const orc = testMonster({ lairX: wx, lairY: wy + 1, id: 901 });
+    const orc = testMonster({x: wx + 0.5, y: wy + 1 + 0.5, id: 901});
     sim.monsters.push(orc);
     // Unclothed, with a garment on the ground: the dress errand's whole trigger.
     keeper.clothes = 0;
@@ -217,7 +217,7 @@ describe("the door guard", () => {
       expect(keeper.inside).toBe(1);
       expect(keeper.dressing).toBe(0);
     }
-    orc.phase = MonsterPhase.Rest;
+    orc.phase = MonsterPhase.Withdrawing;
     for (let t = 0; t < 40 && keeper.dressing !== 1; t++) advanceTick(sim);
     expect(keeper.dressing).toBe(1);
   });
@@ -225,7 +225,7 @@ describe("the door guard", () => {
   it("asks about a place, not a person, and still exempts inside ground", () => {
     const sim = flatSim(20);
     ring(sim);
-    sim.monsters.push(testMonster({ lairX: 9, lairY: 13, id: 901 }));
+    sim.monsters.push(testMonster({x: 9 + 0.5, y: 13 + 0.5, id: 901}));
     // Outside ground within range: answered.
     expect(prowlerNear(sim, 9.5, 12.5)?.id).toBe(901);
     // The ring's interior: exempt, whatever stands beside it.
@@ -249,7 +249,7 @@ describe("death", () => {
     log.holder = c.id;
     c.carrying = log.id;
 
-    sim.monsters.push(testMonster({ lairX: 12, lairY: 9, x: 12.5, y: 11.5 }));
+    sim.monsters.push(testMonster({x: 12.5, y: 11.5}));
     for (let t = 0; t < 30 && sim.colonists.length; t++) {
       stepColonists(sim);
       stepMonsters(sim);
@@ -269,7 +269,7 @@ describe("death", () => {
     recomputeEnclosure(sim);
     walker(sim, 12, 12);
     walker(sim, 12, 12);
-    sim.monsters.push(testMonster({ lairX: 12, lairY: 9, x: 12.5, y: 11.5 }));
+    sim.monsters.push(testMonster({x: 12.5, y: 11.5}));
     for (let t = 0; t < 40 && sim.colonists.length; t++) {
       stepColonists(sim);
       stepMonsters(sim);
@@ -343,7 +343,7 @@ describe("repair", () => {
     sim.wallDamageMap[wall] = 20;
     recomputeEnclosure(sim);
     const c = walker(sim, 10, 13);
-    sim.monsters.push(testMonster({ lairX: 10, lairY: 6, x: 10.5, y: 9.5 }));
+    sim.monsters.push(testMonster({x: 10.5, y: 9.5}));
 
     for (let t = 0; t < 60; t++) advanceTick(sim);
     // They never got to work: the repairer is running, not repairing, and the

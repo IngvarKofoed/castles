@@ -27,16 +27,17 @@ function scriptedRun(ticks: number): Store {
 
 /**
  * The full run, computed once and shared by every assertion that only *reads*
- * it. The run is by far the expensive part of this file, and it got dearer
- * again when the world gained two dozen monsters to step — a run per test was
- * affordable before and is not now. Anything that mutates its store, or that
- * needs a second independent run to compare against, still builds its own.
+ * it. The run is by far the expensive part of this file, and it got dearer once
+ * when the world gained two dozen monsters to step — a run per test was
+ * affordable before that and is not now, even though the wilds have since
+ * emptied. Anything that mutates its store, or that needs a second independent
+ * run to compare against, still builds its own.
  */
 let cached: Store | null = null;
 const scripted = (): Store => (cached ??= scriptedRun(1500));
 
 /** The pinned hash of that run. Named so the move history above can cite it. */
-const GOLDEN_V11 = "e9599a0f";
+const GOLDEN_V12 = "4b5d8f93";
 
 /**
  * Designate a handful of trees, place a stockpile, place a sawmill, staff it.
@@ -396,7 +397,17 @@ describe("determinism", () => {
     // so no mead exists, `cellarSet` is false on every tick and the wanderer
     // countdown decrements by one as it always did, `batchTicks` answers
     // `recipe.ticks` for every kind here, and `drinkCup` finds nothing.
-    expect(hashSim(scripted())).toBe(GOLDEN_V11);
+    //
+    // GOLDEN_V11 → GOLDEN_V12 with incursions (SAVE_VERSION 12,
+    // docs/specs/2026-09-17-incursions-from-the-sea.md). **This run is still
+    // wholly peaceful** — it covers 2.5 game-days and the opening grace is six,
+    // which is the floor that constant exists to hold. What moved is ids and
+    // shape: `createSim` no longer mints two dozen monsters before the opening
+    // five, so every entity in this colony is numbered lower, and the store
+    // gained three forecast fields — one of which (`stormLanding`) resolves to
+    // a real tile on the first tick, off a bearing derived from the world seed.
+    // Every assertion in this file is unchanged and still passes.
+    expect(hashSim(scripted())).toBe(GOLDEN_V12);
   });
 
   it("survives structuredClone unchanged — the shape persistence will freeze", () => {

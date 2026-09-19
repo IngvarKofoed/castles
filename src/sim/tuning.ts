@@ -254,55 +254,81 @@ export const SPAWN_CLEAR_RADIUS = 8;
 
 // ------------------------------------------------------------------ threats
 //
-// The Wilds' numbers (docs/specs/2026-09-04-monsters.md). Two rules shape all
-// of them: danger is a *when* as much as a *where* — a monster is only ever
-// dangerous while prowling — and the orc/troll split is stats alone, so
-// everything below comes in pairs rather than in kind-specific behaviour.
+// The Wilds' numbers (docs/specs/2026-09-17-incursions-from-the-sea.md). Two
+// rules shape all of them: danger is a *when* as much as a *where* — nothing
+// is on the map at all between incursions — and the orc/troll split is stats
+// alone, so everything below comes in pairs rather than in kind-specific
+// behaviour.
 
 /**
- * How dense the wilds are. The lair pass places ~`LAIR_TARGET` dens on the
- * default map, no nearer to each other than `LAIR_SPACING`, with the chance of
- * any one tile taking a lair rising by radius — **there is no protected radius
- * around the start** (a deliberate call: the gradient is the only mercy, and a
- * rare hard start is part of the game). `LAIR_CLEAR_RADIUS` excludes the spawn
- * clearing itself, which is spawn sanity rather than safety.
+ * The forecast, and the storm it counts toward.
+ *
+ * `STORM_INTERVAL` ± `STORM_JITTER` is the peace between incursions, drawn from
+ * the store PRNG when the previous one ends — so the schedule is as replayable
+ * as everything else, and a wall push has a window whose length is knowable
+ * rather than guessed.
+ *
+ * **`FIRST_STORM` has a test-shaped floor under it and that is worth stating,
+ * because it is invisible from inside the game.** The opening grace must outlast
+ * the longest scripted run in the suite — `tick.test.ts` pins the labour loop
+ * over 2.5 game-days and `threats/encounter.test.ts` runs four — or a landing
+ * inside one of those turns a labour golden into a massacre. The encounter
+ * schedules its own incursion deliberately instead of waiting for this clock.
  */
-export const LAIR_TARGET = 25;
-export const LAIR_SPACING = 10;
-export const LAIR_CLEAR_RADIUS = 10;
-/** How much of a centre tile's chance survives the radial gradient. Not zero:
- *  "rare but possible" is the promise, and zero would make it impossible. */
-export const LAIR_INNER_WEIGHT = 0.05;
-/** Weighted draws the pass may spend reaching `LAIR_TARGET`. Bounded so the
- *  pass always terminates, generously enough that spacing rejections near the
- *  outer band never cost the map its lairs. */
-export const LAIR_ATTEMPTS = LAIR_TARGET * 12;
-/** Chance a lair's monster is a troll, inside and outside the outer third.
- *  Orcs anywhere; trolls weighted outward, so the deep map hits harder. */
-export const TROLL_CHANCE_INNER = 0.15;
-export const TROLL_CHANCE_OUTER = 0.6;
-/** Where the "outer band" starts, as a fraction of the island's half-width.
- *  Trolls and the prowl-share multiplier both key off it. */
-export const OUTER_BAND = 2 / 3;
+export const FIRST_STORM = 6 * DAY_TICKS;
+export const STORM_INTERVAL = 4 * DAY_TICKS;
+export const STORM_JITTER = DAY_TICKS;
 
 /**
- * A monster's hours. `restTicks` is drawn from two game-days ± `PERIOD_SPREAD`,
- * `prowlTicks` from half a day ± the same — per monster, at spawn, so no two
- * lairs tick in unison and each one's window is learnable on its own. The
- * outward gradient multiplies the prowl share: a monster at the island's edge
- * prowls up to twice as long as one near the middle.
+ * How long an incursion stays ashore before the storm passes and it turns for
+ * the boats, and how long a monster that cannot reach them has before it is
+ * removed wherever it stands.
+ *
+ * The backstop is the second clock, and it exists because the way home can be
+ * walled off behind a monster: without it a badly timed wall leaves a permanent
+ * resident inside the colony — the den problem reborn, indoors. It is
+ * deliberately *longer* than the incursion, so a monster blinking out mid-map
+ * is never the first thing a player sees.
  */
-export const REST_BASE = 2 * DAY_TICKS;
-export const PROWL_BASE = DAY_TICKS / 2;
-export const PERIOD_SPREAD = 0.5;
+export const INCURSION_TICKS = DAY_TICKS;
+export const WITHDRAW_BACKSTOP = 2 * DAY_TICKS;
 
-/** Waypoints a prowl circuit visits, and how far from the lair they may sit. */
-export const CIRCUIT_WAYPOINTS = 4;
-export const ROAM_RADIUS = 12;
-/** Draws a single waypoint may spend looking for standable ground before it
- *  falls back to the lair tile. Bounded, so the pass cannot hang on a den
- *  ringed by water. */
-export const WAYPOINT_TRIES = 6;
+/**
+ * Strength: **how much land the colony has enclosed**, and nothing else
+ * (docs/CONCEPT.md, pillar 2 — expansion is the risk). `INCURSION_BASE`
+ * monsters land on a colony that has walled nothing; one more joins them per
+ * `LAND_PER_MONSTER` tiles of enclosed land, up to `INCURSION_MAX`.
+ *
+ * `STORM_SEVERITY` is the seeded wobble either side of that, drawn with the
+ * countdown when the previous incursion ends. The acreage itself is read at the
+ * **landing**, never at the end of the previous storm: a monster sealed inside
+ * a wall collapses the enclosure fill to zero (see `walls/enclosure`), so a
+ * reading taken then would price the next storm off an exploit.
+ */
+export const INCURSION_BASE = 1;
+export const LAND_PER_MONSTER = 250;
+export const INCURSION_MAX = 8;
+export const STORM_SEVERITY = 0.35;
+
+/** The troll share of an incursion, at zero strength and at `INCURSION_MAX`.
+ *  Trolls weight toward the bigger storms, so a grown colony meets the threat
+ *  to the *race* rather than only the threat to the crew. */
+export const TROLL_SHARE_MIN = 0.1;
+export const TROLL_SHARE_MAX = 0.55;
+
+/**
+ * The margin on how far inland an incursion presses.
+ *
+ * The depth itself is the walk from the beach to the colony **plus the colony's
+ * own reach** — the furthest enclosed tile from its centre — so an incursion
+ * always arrives, and a colony that has walled more ground is walked further
+ * across. That second term is why **depth still costs something**: without it a
+ * single global strength dial would make a tile a hundred out exactly as
+ * dangerous as one ten out, which quietly deletes CONCEPT's "danger scales
+ * outward … the deep map is earned". This constant is only the slack on top,
+ * covering the outskirts of a colony that has enclosed nothing yet.
+ */
+export const INCURSION_DEPTH = 24;
 
 /**
  * How far a prowling monster notices, in tiles, Chebyshev. An acquired target
@@ -354,32 +380,38 @@ export const FLEE_DEPTH = 48;
 export const CATCH_RANGE = 1;
 
 /**
- * The threat meter. It tracks the colony's most relevant monster within
- * `THREAT_RANGE` of the colony anchor, and shows it in `THREAT_BUCKETS`
- * segments — coarse on purpose. `RHYTHM_FUZZ` is the per-monster seeded error
- * on every rhythm estimate the player is shown: CONCEPT's rule is that
- * schedules show *approximately* and precision is buildable, so the base game
- * is honest about the rhythm and never exact about the minute. Watchtowers
- * narrow this and nothing else (4b).
+ * The forecast meter. One bar on one clock, shown in `THREAT_BUCKETS` segments
+ * — coarse on purpose, and never a digit.
+ *
+ * `FORECAST_HORIZON` is how far ahead the colony reads the weather unaided: a
+ * storm further off than this is simply "far off", with no bar to fill. CONCEPT's
+ * rule is that schedules show *approximately* and precision is buildable, so
+ * what a manned Watchtower buys is `WATCH_HORIZON` — sight of a landing on
+ * covered coast from twice as far out — and `WATCH_BUCKETS` under it.
+ *
+ * **The two are paired with their bucket counts on purpose.** A horizon divided
+ * by its buckets is the width of the finest thing the meter can say, and
+ * `know.when` only reaches "any moment now" under about a third of a game-day —
+ * so 1.5 days in fifths and 3 days in tenths both land at 0.3, and both can
+ * therefore say it. Widen a horizon without moving its buckets and the meter
+ * quietly loses its sharpest phrase.
  */
-export const THREAT_RANGE = 40;
 export const THREAT_BUCKETS = 5;
-export const RHYTHM_FUZZ = 0.1;
+export const FORECAST_HORIZON = 1.5 * DAY_TICKS;
+export const WATCH_HORIZON = 3 * DAY_TICKS;
 
 /**
- * The Watchtower's two numbers — the whole of 4b's sim surface
- * (docs/specs/2026-09-09-watchtowers.md).
+ * The Watchtower's two numbers.
  *
- * `WATCH_RANGE` is measured **from the tower tile to a monster's lair**,
- * Chebyshev, because a schedule is a property of the den: watching a
- * creature's rounds is watching where it lives, so a prowler wandering past
- * the tower sharpens nothing. At `LAIR_SPACING` 10 that covers the three or
- * four dens around one expansion front, which is what makes siting a tower
- * the question *which dens do I want to understand?*
+ * `WATCH_RANGE` is measured **from the tower tile to a stretch of coast**,
+ * Chebyshev — a tower watches the sea, so siting one is the question *which
+ * shore do I want warning of?* It was lair-anchored until the wilds stopped
+ * living on the map (docs/specs/2026-09-17-incursions-from-the-sea.md,
+ * docs/changelog/2026-09-09-watchtowers.md).
  *
- * `WATCH_BUCKETS` replaces `THREAT_BUCKETS` for a watched monster, and the
- * seeded error drops to zero with it. The bar gets finer; it never gets a
- * digit — tenths of a phase in words and segments is the ceiling.
+ * `WATCH_BUCKETS` replaces `THREAT_BUCKETS` on a forecast whose landing sits on
+ * covered coast, and `WATCH_HORIZON` replaces `FORECAST_HORIZON` with it. The
+ * bar gets finer and arrives sooner; it never gets a digit.
  */
 export const WATCH_RANGE = 24;
 export const WATCH_BUCKETS = 10;

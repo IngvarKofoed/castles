@@ -21,7 +21,6 @@ import {
   Loc,
   MonsterKind,
   MonsterPhase,
-  findMonster,
   type Building,
   type Colonist,
   type Item,
@@ -30,30 +29,29 @@ import {
 } from "../store";
 import { hungry } from "../labour/hunger";
 import { canRehome } from "../labour/tasks";
-import { cellarSet, populationCap, settled, tableSet } from "../settlers";
+import { cellarSet, coastal, populationCap, settled, tableSet } from "../settlers";
 import { defOfMonster, monsterAt } from "../threats";
 import {
   BUILD_TICKS,
   DAY_TICKS,
   HIVE_FIELDS_MAX,
   HIVE_REACH,
+  FORECAST_HORIZON,
   LIMIT_MAX,
   LIMIT_STEP,
-  RHYTHM_FUZZ,
   STARTING_COLONISTS,
   STOCKPILE_PER_TILE,
   THREAT_BUCKETS,
-  THREAT_RANGE,
   UNLIMITED,
   WALL_ITEM_COST,
   WATCH_BUCKETS,
+  WATCH_HORIZON,
   WATCH_RANGE,
 } from "../tuning";
 import {
   WallState,
   canPlaceWall,
   damageTier,
-  isDamageable,
   isGateway,
   isStoneWall,
   razeMarked,
@@ -61,8 +59,7 @@ import {
   wallItem,
 } from "../walls";
 import { enclosedLand } from "../walls/enclosure";
-import { hash } from "../world/noise";
-import { tileIndex } from "../world/world";
+import { Terrain, tileIndex } from "../world/world";
 
 /**
  * What the player is allowed to know.
@@ -447,14 +444,18 @@ export interface Inspection {
    */
   cellarStocked: boolean;
   /**
-   * For a Watchtower: **how many dens are within `WATCH_RANGE` of it**,
-   * counted whether or not anybody is standing in it. `-1` for everything
+   * For a Watchtower: **how many tiles of coast are within `WATCH_RANGE` of
+   * it**, counted whether or not anybody is standing in it. `-1` for everything
    * else, which is how the panel tells a tower from a workshop.
    *
-   * Deliberately staffing-blind, so an unstaffed tower's panel can honestly
-   * say what it *would* watch — "3 dens in reach — no watcher" — while
-   * `rhythm()` sharpens nothing until a watcher is inside. The panel's wording
-   * is what carries the difference, off `worker` (docs/specs/2026-09-09-watchtowers.md).
+   * Dens until `docs/specs/2026-09-17-incursions-from-the-sea.md` — a tower now
+   * watches the sea, because that is where the Wilds come from
+   * (docs/changelog/2026-09-09-watchtowers.md).
+   *
+   * Deliberately staffing-blind, so an unstaffed tower's panel can honestly say
+   * what it *would* watch — "40 tiles of shore in reach — no watcher" — while
+   * the forecast sharpens nothing until a watcher is inside. The panel's
+   * wording is what carries the difference, off `worker`.
    */
   watching: number;
   /**
@@ -551,7 +552,7 @@ export function inspect(sim: Sim, id: number): Inspection | null {
       settled(sim) < populationCap(sim) &&
       tableSet(sim) &&
       cellarSet(sim),
-    watching: b.kind === BuildingKind.Watchtower ? densInReach(sim, b) : -1,
+    watching: b.kind === BuildingKind.Watchtower ? coastInReach(sim, b) : -1,
     fields: b.kind === BuildingKind.Hive ? fieldsInReach(sim, b) : -1,
   };
 }
@@ -587,13 +588,14 @@ export function groundItems(sim: Sim, x: number, y: number): Item[] {
 //
 // The one place in the game where truth and knowledge genuinely differ.
 //
-// A monster's *position* is not hidden — CONCEPT says threats roam "in plain
-// sight", and reading the map is the player's entire toolkit. What is hidden is
-// the exact clock: schedules show **approximately**, and precision is
-// buildable. So `rhythm` below is deliberately coarse and deliberately wrong by
-// a little, and the exact timers, the circuit and the notice radii never leave
-// `sim/`. Watchtowers (4b) narrow the fuzz and change nothing else — that is
-// the whole product boundary, and it is one function wide on purpose.
+// A monster's *position* is not hidden — CONCEPT says threats are visible in
+// plain sight, and reading the map is the player's entire toolkit. What is
+// hidden is **the weather**: when the next incursion lands, and from which
+// coast. Schedules show approximately and precision is buildable, so `forecast`
+// below is deliberately coarse, goes blank past a horizon, and never shows a
+// digit. Watchtowers widen the horizon and halve the bucket, and change nothing
+// else — that is the whole product boundary, and it is one function wide on
+// purpose (docs/specs/2026-09-17-incursions-from-the-sea.md).
 
 /** What the renderer may know about a monster. */
 export interface MonsterView {
@@ -605,12 +607,11 @@ export interface MonsterView {
   py: number;
   heading: number;
   /**
-   * Two stances, because two is what the eye can tell apart: asleep at the den,
-   * or up and about. A monster on its way home reads as `out`, which is honest
-   * — it is visibly out there — and the rhythm below is where the player learns
-   * that it is leaving.
+   * Two states, because two is what a monster has: ashore and dangerous, or
+   * turned for its boat and already harmless. There is no third thing to tell
+   * apart — nothing sleeps here any more, so nothing is drawn asleep.
    */
-  stance: "dormant" | "out";
+  doing: "ashore" | "withdrawing";
 }
 
 export function monsters(sim: Sim): MonsterView[] {
@@ -626,7 +627,7 @@ function view(m: Monster): MonsterView {
     px: m.px,
     py: m.py,
     heading: m.heading,
-    stance: m.phase === MonsterPhase.Rest ? "dormant" : "out",
+    doing: m.phase === MonsterPhase.Withdrawing ? "withdrawing" : "ashore",
   };
 }
 
@@ -637,10 +638,25 @@ export function monsterAtTile(sim: Sim, x: number, y: number): MonsterView | nul
   return m ? view(m) : null;
 }
 
-/** Every den on the map, for the mesher to bake. A lair is a landmark, not a
- *  secret: you can see where a thing lives. */
-export function lairs(sim: Sim): { x: number; y: number }[] {
-  return sim.monsters.map((m) => ({ x: m.lairX, y: m.lairY }));
+/**
+ * The boats on the sand, for the mesher to bake — one per incursion, at the
+ * beach everything ashore came in on and will leave from.
+ *
+ * A landmark rather than a secret: the hull is the thing that makes *they came
+ * from there* readable at a glance, which is the whole reason an incursion has
+ * one landing site instead of several. Empty in peace, which is most of the
+ * game. It replaced `lairs()` when the wilds stopped living on the map.
+ */
+export function boats(sim: Sim): { x: number; y: number }[] {
+  const seen = new Set<number>();
+  const out: { x: number; y: number }[] = [];
+  for (const m of sim.monsters) {
+    const key = m.landY * 65536 + m.landX;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ x: m.landX, y: m.landY });
+  }
+  return out;
 }
 
 export function monsterName(kind: number): string {
@@ -648,297 +664,114 @@ export function monsterName(kind: number): string {
 }
 
 /**
- * How far through its current phase a monster is — **coarse, and off by a
- * little on purpose**, unless somebody is paid to watch.
+ * The colony's weather: **one bar on one clock**.
  *
- * The true timer is bucketed into fifths and shifted by a per-monster error of
- * up to `RHYTHM_FUZZ`, derived here from the monster's id and the world seed
- * and stored nowhere: it is a property of what the player can *work out*, not
- * of the world. So the display is honest about the rhythm — watch a troll and
- * you learn its hours — and never exact about the minute.
+ * It counts toward the next landing and then reports that one is ashore. It is
+ * the colony's weather rather than any monster's hours, so it never re-targets
+ * and cannot flicker between clocks — which is what the meter it replaced did,
+ * and the thing that prompted the change
+ * (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
  *
- * **A watched monster drops the error and buckets in tenths** (`isWatched`).
- * That is the whole of the watchtower's product and the whole of its sim
- * surface: this one function, and everything downstream sharpens by itself
- * because `threat()` and `when()` already read `buckets` from here
- * (docs/specs/2026-09-09-watchtowers.md). It buys resolution, never
- * arithmetic — tenths of a phase in words and segments, and never a digit.
+ * **Coarse by construction.** Past `FORECAST_HORIZON` there is no bar at all and
+ * the caption says only that a storm is far off: the colony genuinely cannot see
+ * that far, and an unaided forecast that ran to the horizon of the *sim* would
+ * spend the watchtower's whole product before it exists. Inside the horizon the
+ * remaining time is bucketed into fifths and told in words — never digits,
+ * because the estimate is a fifth of a horizon wide and a figure invites
+ * arithmetic it cannot support.
  *
- * The output is quantized after the shift, so it is never sharper than its own
- * bucket whatever the error happened to be.
+ * **A manned Watchtower covering the coast the storm is due on buys two things
+ * and only two**: `WATCH_HORIZON` instead of `FORECAST_HORIZON`, so the storm is
+ * sighted earlier, and `WATCH_BUCKETS` instead of `THREAT_BUCKETS`, so what it
+ * says is finer. Same trade as ever — information bought with a pair of hands.
  */
-export interface Rhythm {
-  phase: "resting" | "prowling" | "homeward";
-  /** 0 .. `buckets` − 1, how much of the phase is spent. */
-  bucket: number;
-  buckets: number;
-  /**
-   * Is a manned Watchtower reading this den's hours right now?
-   *
-   * Carried as a fact rather than left for a consumer to infer from
-   * `buckets === WATCH_BUCKETS`, so the panel's wording keys off *why* the bar
-   * is fine instead of off how many segments it happens to have — and so the
-   * homeward branch below can report it honestly while keeping its own fixed
-   * shape.
-   */
-  watched: boolean;
-}
-
-const RHYTHM_SALT = 0x2545f491;
-
-export function rhythm(sim: Sim, id: number): Rhythm | null {
-  const m = findMonster(sim, id);
-  if (!m) return null;
-  const watched = isWatched(sim, m);
-  if (m.phase === MonsterPhase.GoingHome) {
-    // Untouched by the tower on purpose: `GoingHome` ends on arrival and not
-    // on a clock, so there is no timer for anybody to read more finely — a
-    // watcher cannot sharpen a phase that has none. The flag still reports
-    // honestly, so the inspector's note stays true beside a fixed-shape bar.
-    return { phase: "homeward", bucket: THREAT_BUCKETS - 1, buckets: THREAT_BUCKETS, watched };
-  }
-  const resting = m.phase === MonsterPhase.Rest;
-  const length = Math.max(1, resting ? m.restTicks : m.prowlTicks);
-  const spent = 1 - Math.min(1, Math.max(0, m.phaseTicks / length));
-  const buckets = watched ? WATCH_BUCKETS : THREAT_BUCKETS;
-  const error = watched ? 0 : (hash(m.id, RHYTHM_SALT, sim.world.seed) - 0.5) * 2 * RHYTHM_FUZZ;
-  const bucket = Math.min(buckets - 1, Math.max(0, Math.floor((spent + error) * buckets)));
-  return { phase: resting ? "resting" : "prowling", bucket, buckets, watched };
-}
-
-/**
- * Every building of a kind, whatever state it is in.
- *
- * Exported for the reach overlay, which draws a boundary for a tower or a hive
- * the player has only just placed as well as for a finished one — the coverage
- * you are siting the next one against includes the site you just committed, and
- * a boundary that vanished the instant the ghost became a blueprint would be
- * the overlay flinching at the one moment it is being used.
- */
-export function reachBuildings(sim: Sim, kind: number): readonly Building[] {
-  return sim.buildings.filter((b) => b.kind === kind);
-}
-
-/**
- * Is any manned Watchtower reading this monster's den?
- *
- * **Lair-anchored**, Chebyshev, at `WATCH_RANGE` — a schedule is a property of
- * the den, so a prowler wandering past a tower changes nothing and placement
- * becomes the question the game wants asked: which dens do I want to
- * understand? The square is also exactly the shape the overlay draws, so the
- * picture can never deny knowledge the player has.
- *
- * **Manned or nothing**, gated the same way production is — the slot filled,
- * the worker still bound to this building, and *inside* it. So an unstaffed
- * tower sharpens nothing, unstaffing blurs the picture back the same frame,
- * and the watcher's lunch coarsens it for the walk: knowledge is rented with
- * hands and never banked.
- */
-function isWatched(sim: Sim, m: Monster): boolean {
-  for (const b of sim.buildings) {
-    if (b.kind !== BuildingKind.Watchtower || b.state !== BuildingState.Active) continue;
-    // Range before staffing: the Chebyshev test is two subtractions, while
-    // `manned` walks the colonist array. Asked the other way round this scans
-    // every colonist once per tower per monster, for towers that were never in
-    // reach of this den in the first place.
-    if (Math.max(Math.abs(m.lairX - b.x), Math.abs(m.lairY - b.y)) > WATCH_RANGE) continue;
-    if (manned(sim, b)) return true;
-  }
-  return false;
-}
-
-/** Is this building's slot worker actually in it? `stepWorkshop`'s gate,
- *  asked of a building that makes knowledge instead of goods. */
-function manned(sim: Sim, b: Building): boolean {
-  if (b.worker < 0) return false;
-  const worker = sim.colonists.find((c) => c.id === b.worker);
-  return worker !== undefined && worker.slot === b.id && worker.inside === 1;
-}
-
-/** How many dens a Watchtower on this tile could read, staffed or not. */
-function densInReach(sim: Sim, b: Building): number {
-  let n = 0;
-  for (const m of sim.monsters) {
-    if (Math.max(Math.abs(m.lairX - b.x), Math.abs(m.lairY - b.y)) <= WATCH_RANGE) n++;
-  }
-  return n;
-}
-
-/** What the ribbon's threat meter shows. */
-export interface Threat {
-  /** The monster the meter is tracking, or -1 when nothing is near. */
-  monster: number;
-  kind: number;
-  /** Segments lit, 0 .. `buckets`. Fills toward a waking, drains toward a
-   *  leaving. Empty only on a map with no monsters at all. */
+export interface Forecast {
+  /** Segments lit, 0 .. `buckets`. Fills toward the landing and stands full
+   *  while anything is ashore. Zero past the horizon. */
   lit: number;
   buckets: number;
   /**
-   * One quiet line: the kind, and a **coarse verbal time** off the same fuzzed
-   * bucket the bar shows — "troll wakes in a day or two", "orc prowling, gone
-   * within the day". Words rather than digits, because the estimate is a fifth
-   * of a phase wide by design and a minutes-and-seconds readout would spend
-   * 4b's whole product before it exists. Prefixed "far wilds:" when the den
-   * being tracked is beyond `THREAT_RANGE`, which is the meter saying *this is
-   * the wilderness, not your doorstep*. Never an alarm.
+   * One quiet line: where the storm is coming from and roughly when, in words —
+   * "storm from the north, before nightfall". Past the horizon it is only "a
+   * storm is far off", because direction is not something you can see from
+   * there either. Never an alarm, never a digit.
    */
   caption: string;
+  /** Is a manned Watchtower reading the coast this storm is due on? Carried as
+   *  a fact rather than left for a consumer to infer from the bucket count, so
+   *  a panel can key its wording off *why* the bar is fine. */
+  watched: boolean;
 }
 
-/** Nothing to track: no monsters at all, or no colony to anchor on. */
-const QUIET: Threat = { monster: -1, kind: -1, lit: 0, buckets: THREAT_BUCKETS, caption: "wilds quiet" };
-
-/**
- * The colony's most relevant monster, and how much of its clock is left.
- *
- * The pick, in order: one **currently biting the colony's walls**, because
- * nothing is more relevant than that; else the nearest prowler within
- * `THREAT_RANGE` of the colony anchor; else the soonest-waking den within that
- * same range; else **the nearest den on the map, however far**. The anchor is
- * the centroid of the buildings, or of the colonists while there are no
- * buildings yet — a colony is where its things are.
- *
- * That last rung is what keeps the bar from ever going blank while a monster
- * exists: "time to monsters" was the whole point, and a colony that has walked
- * somewhere quiet still wants to know how long quiet lasts. It is deliberately
- * the **nearest** den rather than the soonest-waking one anywhere — with two
- * dozen staggered rhythms something is always about to wake, so a
- * soonest-waking fallback would sit permanently full and mean nothing.
- *
- * `held` is the monster the caller was shown last, and it **wins as long as it
- * is still out**. That is what stops the bar flickering between two clocks
- * mid-siege. It is passed in rather than remembered here because `know/` reads
- * the store and never writes it, and which monster a *particular* meter is
- * watching is a property of that meter, not of the world.
- */
-export function threat(sim: Sim, held = -1): Threat {
-  if (!sim.monsters.length) return QUIET;
-  const anchor = colonyAnchor(sim);
-  if (!anchor) return QUIET;
-
-  // The hold is a tie-break, not an override. A monster with its teeth in the
-  // colony's walls outranks whatever the meter was watching a frame ago —
-  // otherwise the bar reports some distant prowler's clock through the one
-  // event it exists to report, which is the opposite of not flickering.
-  const fresh = choose(sim, anchor);
-  const keep = held >= 0 ? findMonster(sim, held) : null;
-  const picked =
-    fresh && biting(sim, fresh) ? fresh
-    : keep && keep.phase !== MonsterPhase.Rest ? keep
-    : fresh;
-  if (!picked) return QUIET;
-  const r = rhythm(sim, picked.id);
-  if (!r) return QUIET;
-
-  const name = defOfMonster(picked.kind).name.toLowerCase();
-  // Measured on the *den*, not on where the monster has wandered to: the prefix
-  // says which wilderness this is, and a den is where a wilderness is.
-  const far = lairDistance(picked, anchor) > THREAT_RANGE;
-  const say = (line: string): string => (far ? `far wilds: ${line}` : line);
-
-  if (r.phase === "resting") {
-    // Filling toward a waking: "time to monsters".
+export function forecast(sim: Sim): Forecast {
+  const watched = landingWatched(sim);
+  const buckets = watched ? WATCH_BUCKETS : THREAT_BUCKETS;
+  if (sim.monsters.length) {
+    const leaving = sim.monsters.every((m) => m.phase === MonsterPhase.Withdrawing);
     return {
-      monster: picked.id,
-      kind: picked.kind,
-      lit: r.bucket + 1,
-      buckets: r.buckets,
-      caption: say(`${name} wakes ${when(r, picked.restTicks)}`),
+      lit: buckets,
+      buckets,
+      caption: leaving ? "the wilds are leaving" : "the wilds are ashore",
+      watched,
     };
   }
-  if (r.phase === "homeward") {
-    return {
-      monster: picked.id,
-      kind: picked.kind,
-      lit: 0,
-      buckets: r.buckets,
-      caption: say(`${name} heading home`),
-    };
+  const horizon = watched ? WATCH_HORIZON : FORECAST_HORIZON;
+  if (sim.stormTicks > horizon) {
+    return { lit: 0, buckets, caption: "a storm is far off", watched };
   }
-  // Draining toward a going-home: "time until it's gone".
-  return {
-    monster: picked.id,
-    kind: picked.kind,
-    lit: r.buckets - r.bucket,
-    buckets: r.buckets,
-    caption: say(`${name} prowling, gone ${when(r, picked.prowlTicks)}`),
-  };
+  // Bucketed *after* the division, so the phrase below can never be sharper
+  // than the bar beside it.
+  const spent = 1 - Math.min(1, Math.max(0, sim.stormTicks / Math.max(1, horizon)));
+  const bucket = Math.min(buckets - 1, Math.max(0, Math.floor(spent * buckets)));
+  const left = ((buckets - bucket) / buckets) * horizon;
+  return { lit: bucket + 1, buckets, caption: `${from(sim)}, ${when(left)}`, watched };
 }
 
 /**
- * How long is left of a phase, in words.
- *
- * Built from the **bucketed** estimate rather than the true timer, so the
- * phrase inherits exactly the fuzz the bar shows and cannot be sharper than it:
- * a fifth of a phase is the resolution the base game sells, and 4b's towers
- * narrow that one number without touching anything here. Words rather than
- * digits for the same reason — a figure invites arithmetic the estimate cannot
- * support.
- *
- * The bands are in game-days because that is the clock the ribbon already keeps
- * beside it, and a monster's hours run from a quarter of a day to three.
+ * How long is left, in words, off the **bucketed** estimate rather than the true
+ * clock — so the phrase inherits exactly the coarseness the bar shows. The bands
+ * are in game-days because that is the clock the ribbon already keeps beside it.
  */
-function when(r: Rhythm, phaseTicks: number): string {
-  const left = ((r.buckets - r.bucket) / r.buckets) * phaseTicks;
+function when(left: number): string {
   const days = left / DAY_TICKS;
   if (days <= 0.35) return "any moment now";
+  if (days <= 0.7) return "before nightfall";
   if (days <= 1) return "within the day";
   if (days <= 2) return "in a day or two";
   return "in a few days";
 }
 
-/** Chebyshev tiles from the colony anchor to a monster's den. */
-function lairDistance(m: Monster, [ax, ay]: [number, number]): number {
-  return Math.max(Math.abs(m.lairX + 0.5 - ax), Math.abs(m.lairY + 0.5 - ay));
+/** Which way the storm is coming from, as one of eight compass words — or a
+ *  bare "a storm" when no coast has been picked yet, which is a colony with
+ *  nothing left to aim a bearing at. */
+function from(sim: Sim): string {
+  const size = sim.world.size;
+  if (sim.stormLanding < 0 || sim.stormLanding >= size * size) return "a storm";
+  const anchor = weatherAnchor(sim);
+  if (!anchor) return "a storm";
+  const x = sim.stormLanding % size;
+  const y = (sim.stormLanding - x) / size;
+  return `storm from the ${COMPASS[octant(x + 0.5 - anchor[0], y + 0.5 - anchor[1])]}`;
 }
 
-/** Is this monster's teeth in a wall right now? */
-function biting(sim: Sim, m: Monster): boolean {
-  return m.phase === MonsterPhase.Prowl && m.targetTile >= 0 && isDamageable(sim.wallMap[m.targetTile]);
+/** Screen-space y grows south, and so does the tile grid, so the table runs
+ *  clockwise from due east. */
+const COMPASS = ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"] as const;
+
+function octant(dx: number, dy: number): number {
+  const turns = Math.atan2(dy, dx) / (Math.PI * 2);
+  return ((Math.round(turns * 8) % 8) + 8) % 8;
 }
 
-function choose(sim: Sim, anchor: [number, number]): Monster | null {
-  const [ax, ay] = anchor;
-  let chewing: Monster | null = null;
-  let nearest: Monster | null = null;
-  let nearestD = Infinity;
-  let waking: Monster | null = null;
-  let wakingIn = Infinity;
-  let anywhere: Monster | null = null;
-  let anywhereD = Infinity;
-
-  for (const m of sim.monsters) {
-    const lairD = lairDistance(m, anchor);
-    // The last rung, gathered for every monster whatever it is doing: the
-    // nearest den on the map, so the ladder always lands somewhere.
-    if (lairD < anywhereD || (lairD === anywhereD && anywhere !== null && m.id < anywhere.id)) {
-      anywhere = m;
-      anywhereD = lairD;
-    }
-    if (m.phase === MonsterPhase.Rest) {
-      if (lairD <= THREAT_RANGE && m.phaseTicks < wakingIn) {
-        waking = m;
-        wakingIn = m.phaseTicks;
-      }
-      continue;
-    }
-    if (m.phase !== MonsterPhase.Prowl) continue;
-    // Ties break by id everywhere here, so the pick never depends on array
-    // order — which is what makes the meter reproducible in a replay.
-    if (biting(sim, m) && (!chewing || m.id < chewing.id)) chewing = m;
-    const d = Math.max(Math.abs(m.x - ax), Math.abs(m.y - ay));
-    if (d <= THREAT_RANGE && (d < nearestD || (d === nearestD && nearest !== null && m.id < nearest.id))) {
-      nearest = m;
-      nearestD = d;
-    }
-  }
-  return chewing ?? nearest ?? waking ?? anywhere;
-}
-
-/** Where the colony *is*: the centroid of its buildings, or of its folk while
- *  it has not built anything yet. Null for a colony with neither, which is a
- *  colony that has been wiped out. */
-function colonyAnchor(sim: Sim): [number, number] | null {
+/**
+ * Where the colony is, for the compass word alone — the centroid of its
+ * buildings, else of its folk.
+ *
+ * Deliberately *not* `threats/incursion`'s anchor, which prefers enclosed
+ * ground: this one only has to say which side of the settlement a beach is on,
+ * and a colony with no wall yet still has a side.
+ */
+function weatherAnchor(sim: Sim): [number, number] | null {
   if (sim.buildings.length) {
     let x = 0;
     let y = 0;
@@ -956,6 +789,83 @@ function colonyAnchor(sim: Sim): [number, number] | null {
     y += c.y;
   }
   return [x / sim.colonists.length, y / sim.colonists.length];
+}
+
+/**
+ * Every building of a kind, whatever state it is in.
+ *
+ * Exported for the reach overlay, which draws a boundary for a tower or a hive
+ * the player has only just placed as well as for a finished one — the coverage
+ * you are siting the next one against includes the site you just committed, and
+ * a boundary that vanished the instant the ghost became a blueprint would be
+ * the overlay flinching at the one moment it is being used.
+ */
+export function reachBuildings(sim: Sim, kind: number): readonly Building[] {
+  return sim.buildings.filter((b) => b.kind === kind);
+}
+
+/**
+ * Is any manned Watchtower reading the coast the next storm is due on?
+ *
+ * **Coast-anchored**, Chebyshev, at `WATCH_RANGE` — the weather comes off the
+ * sea, so siting a tower is the question *which shore do I want warning of?*
+ * The square is also exactly the shape the overlay draws, so the picture can
+ * never deny knowledge the player has paid for. It was lair-anchored until the
+ * wilds stopped living on the map (docs/changelog/2026-09-09-watchtowers.md).
+ *
+ * **Manned or nothing**, gated the same way production is — the slot filled,
+ * the worker still bound to this building, and *inside* it. So an unstaffed
+ * tower sharpens nothing, unstaffing blurs the picture back the same frame, and
+ * the watcher's lunch coarsens it for the walk: knowledge is rented with hands
+ * and never banked.
+ *
+ * While an incursion is ashore the subject is the beach it landed on, which is
+ * the same field — so a tower watching the coast a storm came in on keeps
+ * reading finely for as long as it is there.
+ */
+function landingWatched(sim: Sim): boolean {
+  const size = sim.world.size;
+  const tile = sim.stormLanding;
+  if (tile < 0 || tile >= size * size) return false;
+  const lx = tile % size;
+  const ly = (tile - lx) / size;
+  for (const b of sim.buildings) {
+    if (b.kind !== BuildingKind.Watchtower || b.state !== BuildingState.Active) continue;
+    // Range before staffing: the Chebyshev test is two subtractions, while
+    // `manned` walks the colonist array.
+    if (Math.max(Math.abs(lx - b.x), Math.abs(ly - b.y)) > WATCH_RANGE) continue;
+    if (manned(sim, b)) return true;
+  }
+  return false;
+}
+
+/** Is this building's slot worker actually in it? `stepWorkshop`'s gate,
+ *  asked of a building that makes knowledge instead of goods. */
+function manned(sim: Sim, b: Building): boolean {
+  if (b.worker < 0) return false;
+  const worker = sim.colonists.find((c) => c.id === b.worker);
+  return worker !== undefined && worker.slot === b.id && worker.inside === 1;
+}
+
+/**
+ * How much shore a Watchtower on this tile could read, staffed or not — tiles
+ * of sand standing beside open water inside its `WATCH_RANGE` square.
+ *
+ * The square is walked rather than the whole map, so the cost is the overlay's
+ * own 49 × 49 and does not grow with the island.
+ */
+function coastInReach(sim: Sim, b: Building): number {
+  const size = sim.world.size;
+  let n = 0;
+  for (let y = b.y - WATCH_RANGE; y <= b.y + WATCH_RANGE; y++) {
+    if (y < 0 || y >= size) continue;
+    for (let x = b.x - WATCH_RANGE; x <= b.x + WATCH_RANGE; x++) {
+      if (x < 0 || x >= size) continue;
+      if (sim.world.tmap[tileIndex(x, y, size)] !== Terrain.Sand) continue;
+      if (coastal(sim, x, y)) n++;
+    }
+  }
+  return n;
 }
 
 /**

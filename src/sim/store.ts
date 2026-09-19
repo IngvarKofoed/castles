@@ -1,5 +1,4 @@
-import { spawnLairs } from "./threats/lairs";
-import { PROVISION_BREAD, STARTING_COLONISTS, UNLIMITED, WANDERER_INTERVAL } from "./tuning";
+import { FIRST_STORM, PROVISION_BREAD, STARTING_COLONISTS, UNLIMITED, WANDERER_INTERVAL } from "./tuning";
 import { generate, tileIndex, Terrain, type World } from "./world/world";
 
 /**
@@ -186,21 +185,33 @@ export const MonsterKind = { Orc: 0, Troll: 1 } as const;
 export type MonsterKindValue = (typeof MonsterKind)[keyof typeof MonsterKind];
 
 /**
- * A monster's rhythm — the *when* of danger (docs/specs/2026-09-04-monsters.md).
+ * What a landed monster is doing — the *when* of danger
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md).
  *
- * `Rest` notices nothing, chases nothing and bites nothing; all danger lives in
- * `Prowl`; `GoingHome` is already harmless, which is what makes CONCEPT's "hold
- * until it leaves" safe to trust. An attack ends only when the prowl clock
- * does — nothing the player does drives a monster off.
+ * Two values, because a monster exists only for the length of an incursion:
+ * `Ashore` is the dangerous one, and `Withdrawing` is already harmless, which
+ * is what keeps CONCEPT's "an attack ends only when the monster leaves" true
+ * word for word. Nothing the player does drives one off; the storm's own clock
+ * does.
+ *
+ * **The numbers are the old `Prowl` and `GoingHome`**, kept where they were out
+ * of habit rather than necessity — the rung that landed this spec drops every
+ * monster from every save, so no file in the world carries one. `Rest` (0) is
+ * gone with the dens and the number is simply unused
+ * (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
  */
-export const MonsterPhase = { Rest: 0, Prowl: 1, GoingHome: 2 } as const;
+export const MonsterPhase = { Ashore: 1, Withdrawing: 2 } as const;
 export type MonsterPhaseValue = (typeof MonsterPhase)[keyof typeof MonsterPhase];
 
 /**
- * One monster. Plain store data like everything else, and **everything it will
- * ever do is seeded at spawn**: the periods, the phase offset and the circuit
- * are drawn once from a stream derived from the world seed, so the tick loop
- * needs no runtime randomness at all and a monster keeps learnable hours.
+ * One monster. Plain store data like everything else, and it exists **only for
+ * the length of an incursion**: created at a landing, removed when it
+ * withdraws. Between incursions `sim.monsters` is empty, which is what makes
+ * the land outside the wall genuinely safe and a wall push possible.
+ *
+ * Everything it will ever do is fixed at the landing — where it came ashore,
+ * how far inland it presses — so the tick loop needs no runtime randomness at
+ * all.
  */
 export interface Monster {
   id: number;
@@ -213,22 +224,22 @@ export interface Monster {
   px: number;
   py: number;
   heading: number;
-  /** Home tile: where it rests, and the one tile of ground that can never
-   *  read as "inside" however much stone surrounds it (see walls/enclosure). */
-  lairX: number;
-  lairY: number;
-  /** Waypoint tile indices, walked in order while prowling. */
-  circuit: number[];
-  /** Index into `circuit`. */
-  leg: number;
+  /** The beach it landed on, and the tile it walks back to when the storm
+   *  passes. The boat sits here for as long as the incursion lasts. */
+  landX: number;
+  landY: number;
+  /** How far from `land` this monster will press inland, Chebyshev — the
+   *  colony's own reach plus `INCURSION_DEPTH`, so the deep map is still
+   *  earned. It bounds the *press* and nothing else: a chase already under way
+   *  may carry it further. */
+  depth: number;
   /** One of `MonsterPhase.*`. */
   phase: number;
-  /** Ticks left in this phase. Meaningless while `GoingHome`, which ends on
-   *  arrival rather than on a clock. */
+  /** While `Withdrawing`, ticks left on the backstop clock — a monster whose
+   *  way to the coast has been walled off is removed when it runs out. Zero
+   *  and meaningless while `Ashore`, whose end is the incursion's own clock
+   *  (`sim.stormTicks`) rather than anything per-monster. */
   phaseTicks: number;
-  /** This monster's own seeded period lengths — its hours. */
-  restTicks: number;
-  prowlTicks: number;
   /** Colonist being chased, or -1. */
   target: number;
   /** Wall tile index being bitten, or -1. */
@@ -464,9 +475,12 @@ export interface Sim {
   buildings: Building[];
   tasks: Task[];
   /**
-   * The Wilds' inhabitants. One per lair, placed at generation and never
-   * killed — CONCEPT's avoidance-only law means this array only ever changes
-   * length when a migration runs the lair pass over an old colony.
+   * The Wilds, while they are ashore. **Empty between incursions** — there are
+   * no dens and nothing roams, which is what makes the land outside the wall
+   * genuinely safe and a wall push something a player can finish
+   * (docs/specs/2026-09-17-incursions-from-the-sea.md). Monsters are created at
+   * a landing and removed when they withdraw; nothing ever kills one, because
+   * nothing can.
    */
   monsters: Monster[];
   /** 1 where the player has marked a tree for chopping. Player intent, so it
@@ -549,6 +563,38 @@ export interface Sim {
    * a save can never carry a pending one.
    */
   enclosureDirty: number;
+  /**
+   * The forecast clock, in ticks, and it means two different things depending
+   * on whether anything is ashore — `sim.monsters.length` is the discriminator
+   * and there is deliberately no second flag to disagree with it.
+   *
+   * With the wilds empty it counts down to the **next landing**; at zero the
+   * incursion lands and the same field is reloaded with `INCURSION_TICKS`,
+   * after which it counts down to the **withdrawal**. It runs on the tick like
+   * everything else, so ×0 stops it: a pause is a pause, never a way to lose
+   * time you could not watch passing.
+   */
+  stormTicks: number;
+  /**
+   * The seeded severity of the coming incursion — the random half of its
+   * strength, drawn with `stormTicks` when the previous storm ends. The other
+   * half is the colony's enclosed acreage, and that is read at the **landing**
+   * rather than stored here: a monster sealed inside a wall collapses the
+   * enclosure fill, so an acreage taken at the end of a storm would price the
+   * next one off an exploit (docs/specs/2026-09-17-incursions-from-the-sea.md).
+   */
+  stormStrength: number;
+  /**
+   * The beach the next incursion is expected on, as a tile index, or -1 when
+   * no shore qualified when the clock was set.
+   *
+   * Chosen with the countdown rather than at the landing, because a forecast
+   * has to have a *direction* to be worth reading — which side of the colony is
+   * the wrong side to stand on. It is re-checked at zero and re-drawn if the
+   * coast has changed since, so this is the forecast's subject and never a
+   * promise.
+   */
+  stormLanding: number;
 }
 
 /**
@@ -590,22 +636,29 @@ export function findMonster(sim: Sim, id: number): Monster | null {
 }
 
 /**
- * The monster whose lair stands on this tile, or null.
+ * The monster standing on this tile, or null — the pickers' tile→monster
+ * resolution, beside `buildingAt`, and the reason a footprint cannot be placed
+ * on top of one (`canPlace`).
  *
- * A plain field scan over an array of a couple of dozen, and it lives *here*
- * rather than in `sim/threats/` on purpose: `walls/` and `buildings/` both have
- * to refuse a lair tile, and either of them importing the threats folder — which
- * reads the wall predicates — would close a cycle around `WALL_DEFS`, whose
- * table is built in a module body.
+ * A plain field scan over an array that is empty most of the game, and it lives
+ * *here* rather than in `sim/threats/` on purpose: `buildings.ts` has to ask
+ * it, and importing the threats folder — which reads the wall predicates —
+ * would close a cycle around `WALL_DEFS`, whose table is built in a module
+ * body. `sim/threats` re-exports it so the rest of that folder keeps its own
+ * front door.
  */
-export function lairAt(sim: Sim, x: number, y: number): Monster | null {
-  for (const m of sim.monsters) if (m.lairX === x && m.lairY === y) return m;
+export function monsterAt(sim: Sim, x: number, y: number): Monster | null {
+  for (const m of sim.monsters) {
+    if (Math.floor(m.x) === x && Math.floor(m.y) === y) return m;
+  }
   return null;
 }
 
 /**
  * Build the opening colony: a generated world plus STARTING_COLONISTS folk
- * standing in the clearing at its centre.
+ * standing in the clearing at its centre — and **an empty wilderness**, because
+ * monsters arrive by sea rather than living here
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md).
  *
  * Spawn tiles come from a deterministic outward ring walk, not the PRNG, so
  * the opening is identical for a seed no matter what else changes.
@@ -643,13 +696,16 @@ export function createSim(seed: number): Sim {
     // needs `BuildingKind` from this file, and the resulting cycle would fail
     // or not depending purely on which module a bundler happened to load first.
     enclosureDirty: 1,
+    // The opening grace, at full length and with **no draw** — `createSim`
+    // makes none, and the rung that drops an old save's dens has to be able to
+    // hand it the same value. A fresh colony therefore gets exactly the same
+    // quiet opening however it was arrived at.
+    stormTicks: FIRST_STORM,
+    stormStrength: 1,
+    // No coast picked yet: the first forecast resolves one the first time the
+    // clock is read, off an `insideMap` that has actually been settled.
+    stormLanding: -1,
   };
-
-  // The Wilds get their inhabitants before the colony gets its people, so the
-  // opening is *already* a dangerous world rather than one danger arrives in.
-  // The pass draws from its own seed-derived stream, never `rngState`, which is
-  // what lets the v4 migration reproduce it exactly over an old save.
-  spawnLairs(sim);
 
   const centre = Math.floor(world.size / 2);
   const opening = spawnTiles(world, centre, STARTING_COLONISTS);

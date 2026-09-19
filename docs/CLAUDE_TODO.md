@@ -77,3 +77,14 @@ is not a record of anything; `docs/changelog/` is. A line you add here is read a
   missing from a map the player reads for a living. Wants either a population
   cap in the sim or a layer
   that grows. Surfaced by `2026-09-17-work-swing`.
+
+- **The enclosure fill now runs on nearly every tick of an incursion, and the
+  measurement that said a region-incremental re-flood was unnecessary no longer
+  applies** — a monster seeds the flood, so `stepMonsters` marks it stale
+  whenever one changes tile, which with several ashore is most ticks.
+  `2026-09-02-palisade-walls` deferred incremental re-flooding on the strength of
+  a fill that ran on wall events alone; measured now at 256² it is 0.84 ms with
+  its scratch reused (0.89 ms without) against a 0.99 ms incursion tick, so a
+  catch-up frame of five ticks pays ~4 ms of a 16 ms budget. Affordable, not
+  free, and the deferral's reasoning is stale rather than wrong. Surfaced by
+  `2026-09-17-incursions-from-the-sea`.

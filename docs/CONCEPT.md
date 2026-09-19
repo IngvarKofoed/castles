@@ -1,38 +1,49 @@
 # Castles — Concept
 
-*Last updated 2026-09-09.*
+*Last updated 2026-09-17.*
 
 A voxel colony builder about claiming land from a dangerous wilderness. Inside
-your walls, nothing can ever hurt you. Outside, threats roam in plain sight.
-The game is the push outward: reading the map, picking your moment, sending
-workers beyond the wall to grab the next bite of land — and getting them home.
+your walls, nothing can ever hurt you. Outside, the Wilds come by sea — and
+between their visits the land is empty. The game is the push outward: reading
+the forecast, picking your moment, sending workers beyond the wall to grab the
+next bite of land — and getting them home before the boats land.
 
 The feeling to protect: **risk is never imposed, only chosen.** The colony
 behind its wall is unconditionally safe — you can leave the game running and
 nothing will have gone wrong when you return. Danger exists only where you
-deliberately put people: outside. The interesting decisions are about
-placement, when to spend, and when to dare — never about reacting fast to
-something the game did to you.
+deliberately put people: outside, during a storm. The interesting decisions are
+about placement, when to spend, and when to dare — never about reacting fast to
+something the game did to you. The choice is now *when* as well as *where*, and
+the forecast is a curfew rather than a siege: the wall it cannot pass is the
+same absolute wall it always was.
 
 ## Pillars
 
-**1. The wall is absolute.** It never breaches. There are no sieges, no waves,
-no horde — the wall doesn't fight, it simply *is* safety. A closed gate counts
-as wall. The only way danger gets in is a gap the player made themselves, and
-then it pours in until the gap is sealed: devastating, but recoverable, and
-always self-inflicted.
+**1. The wall is absolute.** It never breaches. An incursion cannot touch
+anyone behind a closed wall and cannot get into one — the wall doesn't fight,
+it simply *is* safety. A closed gate counts as wall. The only way danger gets
+in is a gap the player made themselves, and then it pours in until the gap is
+sealed: devastating, but recoverable, and always self-inflicted. What the
+Wilds landing on your coast changes is where it is worth standing on a given
+day, never whether your colony is safe.
 
-**2. Expansion is the game — and the risk.** Threats roam the wilds in plain
-sight; safety outside is a local, readable fact, not a timer. Expanding means
-sending a crew out during a window you judged yourself: throw up a wood
-palisade to claim the ground, build the stone wall behind it, then tear down
-the now-inner old wall. The palisade buys time, not safety — threats can
-damage it and unfinished stone — so every push is a race to close the real
-wall while the palisade holds. Workers caught outside can die. The old wall
-stands until the new one is finished: a failed expansion means retreat and
-lost materials, never a lost colony. Land is grabbed bite by bite, in whatever
-direction you choose — the wall's final shape is the history of your
-decisions.
+**2. Expansion is the game — and the risk.** Between incursions the ground
+outside is genuinely empty, so safety outside is a **window you can see the end
+of**: the forecast tells you roughly when the next storm lands and which coast
+it is coming in on. Expanding means sending a crew out inside that window:
+throw up a wood palisade to claim the ground, build the stone wall behind it,
+then tear down the now-inner old wall. The palisade buys time, not safety —
+a landed monster can damage it and unfinished stone — so every push is a race
+to close the real wall before the boats arrive. Workers caught outside can die.
+The old wall stands until the new one is finished: a failed expansion means
+retreat and lost materials, never a lost colony. Land is grabbed bite by bite,
+in whatever direction you choose — the wall's final shape is the history of
+your decisions.
+
+And the risk grows with what you have taken: **an incursion's strength is
+measured off the land you have enclosed**, so a bigger colony meets a bigger
+storm. Expansion buys the risk, exactly as it always did — what changed is the
+mechanism, not the bargain.
 
 **3. Chains vary in depth, and depth pulls outward.** Most production lines
 are one or two steps (log → plank, rock → block). Some run longer — and the
@@ -85,58 +96,74 @@ terraforming is an occasional convenience, not a standing tax.
 
 ## The threat model
 
-The Wilds are home to foul monsters — orcs and trolls — visible and roaming,
-never waves sent against the colony. Whether it is safe to work a patch of ground outside
-is something you read off the map: no monster near here, right now. That keeps
-the risk decision perceptual — you look, you don't react. Danger never
-accumulates against the colony itself; it only matters where the player has
-put people or unfinished wall.
+The Wilds are home to foul monsters — orcs and trolls — and **they do not live
+here**. Between incursions there are none on the map at all: the land outside
+the wall is genuinely empty, which is what makes a wall push something you can
+finish. When the forecast runs out they **land from boats on one coast**, press
+inland as far as your colony has reached, attack whatever is unfinished and
+whoever is outside, and leave by sea when the storm passes.
+
+Whether it is safe to work a patch of ground outside is therefore two readings
+rather than one: *is anything ashore right now*, which you see at a glance, and
+*how long until the next lot arrive*, which the forecast tells you in words.
+Both are perceptual — you look, you don't react. Danger never accumulates
+against the colony itself; it only matters where the player has put people or
+unfinished wall.
+
+**One landing site, and the boats are the announcement.** However large an
+incursion, it comes ashore in one place, and the hulls stay on the sand for as
+long as it lasts. That is deliberate: what the boats buy is a single readable
+direction — which side of the colony is the wrong side to stand on today — and
+several landings would dilute exactly that.
 
 **Orcs are fast and hit light; trolls are slow and hit hard.** Both kinds read
 at a glance. Speed is what catches a fleeing worker, so orcs are the people-
 threat: they arrive with little warning, but a repaired palisade can outlast
 their gnawing. Trolls telegraph their approach from far away — nobody gets
 caught by a troll who was paying attention — but when one reaches a palisade
-it goes through it fast. Orcs threaten the crew; trolls threaten the race.
+it goes through it fast. Orcs threaten the crew; trolls threaten the race. The
+bigger the storm the more trolls in it.
 
 **You never fight them.** There is no military, no hunting, no clearing —
 threats can only be avoided, and the wall is the only technology that turns
 unsafe ground into safe ground. A threat is less an enemy than weather with
 legs: something you plan around, not something you solve. That puts all the
-design weight on threat behaviour being *readable* — territories, circuits,
-speed, visible range — because reading them is the player's entire toolkit.
+design weight on threat behaviour being *readable* — where they landed, how
+fast they move, how far they see — because reading them is the player's entire
+toolkit.
 
-**They can wreck what isn't finished — and they will.** Threats are
-aggressive: a palisade or unfinished wall that a threat notices gets attacked,
-not merely bumped into. Finished stone cannot be touched. The counterplay is
-labour, not force: repair the palisade, build faster, or abandon the push and
-fall back behind the old wall. The read before a push is therefore not "whose
-ground is this" but "how long until something notices" — distance to the
-nearest threats is the price tag on every bite of land. A side effect that
-resolves itself: you can never permanently wall a threat in, because anything
-that would hold it isn't finished yet — it smashes back out through the
-palisade.
+**They can wreck what isn't finished — and they will.** A landed monster is
+aggressive: a palisade or unfinished wall it notices gets attacked, not merely
+bumped into. Finished stone cannot be touched. The counterplay is labour, not
+force: repair the palisade, build faster, or abandon the push and fall back
+behind the old wall. The read before a push is therefore not "whose ground is
+this" but "how long until the next storm" — the forecast is the price tag on
+every bite of land.
 
-**An attack ends only when the monster leaves.** Monsters run on schedules —
-rhythms of roaming, lingering, and moving on — and nothing the player does
-drives one away. A noticed palisade is attacked until the schedule pulls the
-monster elsewhere, so a contested push is about outlasting: repair faster than
-it wrecks, and hold until it goes. Watch a monster's rounds long enough and
-you know when it will come and when it will leave — the schedule is what makes
-an enemy you can't fight fair.
+**An attack ends only when the monster leaves.** An incursion runs on the
+storm's own clock, and nothing the player does drives one off or keeps one past
+it. A noticed palisade is attacked until the storm passes, so a contested push
+is about outlasting: repair faster than it wrecks, and hold until the boats go.
+A monster whose way back to the coast has been walled off behind it walks as
+far as it can and is gone soon after the rest — **no incursion ever leaves a
+permanent resident**, which is what stops a badly timed wall becoming a wound
+that never closes.
 
-**Schedules show approximately; precision is buildable.** The map reveals a
-monster's rhythm to some extent — enough to plan a cautious push — but not
-exactly. Watchtowers and alarm systems sharpen the picture: more exact
-schedules, earlier warning, a head start for fleeing workers. Both are
-manned — the watcher is a slot, a pair of hands taken from the pool like any
-workshop worker. Information is infrastructure, and it is bought with the
-scarcest currency in the game: people.
+**The forecast shows approximately; precision is buildable.** It says roughly
+when and roughly from where, in words and never in figures — enough to plan a
+cautious push, never enough to cut it fine. Watchtowers sharpen the picture:
+a tower **watches the coast**, and a storm due on shore a watcher covers is
+sighted from further out and reported more finely. The watcher is a slot, a
+pair of hands taken from the pool like any workshop worker. Information is
+infrastructure, and it is bought with the scarcest currency in the game:
+people. (Alarm systems are still intended and still unbuilt.)
 
-**Danger scales outward.** The further from the starting ground, the denser
-and faster the threats and the bigger their ranges. Since there are no fights,
-"harder" never means tougher enemies — it means tighter windows and shorter
-warning. Early bites are calm; the deep map is earned.
+**Danger scales outward.** Strength rises with the land you have enclosed, and
+**how far inland an incursion presses rises with how far your colony has
+reached** — so an outpost far from the centre is reachable where a tight
+colony's near edge is all that ever gets touched. Since there are no fights,
+"harder" never means tougher enemies — it means tighter windows and more of
+them arriving at once. Early bites are calm; the deep map is earned.
 
 **Workers run, but can be caught.** A worker flees when a threat closes in and
 dies only if actually caught — inattention alone is not a death sentence, but
@@ -178,8 +205,8 @@ excerpts were readable), and the patch notes.
 None at concept level — the pillars, the labour model, and the threat model
 are settled, all point at the same promise, and all have shipped. The
 tuning and spec work this section once deferred now exists: walls,
-terraforming, monsters and their schedules, housing, the bread economy,
-production control and watchtowers each have a spec in `docs/specs/` and a
+terraforming, monsters, housing, the bread economy, production control,
+watchtowers and seaborne incursions each have a spec in `docs/specs/` and a
 record in `docs/changelog/`. Of this document's promises, only the *alarm
 systems* half of the watchtower sentence and the belts-and-carts automation
 tier remain unbuilt — both still intended, neither yet specced.
@@ -187,8 +214,12 @@ tier remain unbuilt — both still intended, neither yet specced.
 ## Not in scope
 
 No combat of any kind — colonists never fight, threats can never be killed.
-No sieges or base-defense waves. No fail states that arrive faster than the
-player can read them.
+**No sieges**: an incursion cannot enter a closed wall, cannot touch anyone
+behind one, and is a curfew on working outside rather than an assault on the
+colony. No fail states that arrive faster than the player can read them — the
+forecast is what makes the arrival something you saw coming. No sea combat, no
+boats the player interacts with, and no shoreline mechanic beyond where a
+landing may happen.
 
 *Note: `mockup.html` and `mockup3d.html` predate this rewrite — they show the
 old concentric-ring, gentle-Wilds reading of the game.*

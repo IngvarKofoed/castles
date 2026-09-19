@@ -96,10 +96,22 @@ export const PROP = {
    *  Darker and browner than the grass it sits in, so a farm reads as a plot. */
   soil: 0x6b5433,
   crop: 0x7f9a3c,
-  /** A den: a dark mound of earth with bones showing. */
-  den: 0x3f3a2c,
-  denMouth: 0x241f18,
-  bone: 0xcfc4a8,
+  /** A doorway, or anything else that has to read as an opening rather than as
+   *  a shadow: the darkest thing in the world palette. */
+  doorway: 0x241f18,
+  /**
+   * A beached longship: a tarred hull, a pale trim along its sheer and a furled
+   * sail on the mast.
+   *
+   * It is the one thing on the map that says *they came from there*, so it is
+   * read by silhouette and by contrast against pale sand — dark hull, tall mast,
+   * nothing else on a beach that shape. Deliberately not rust or red: a boat is
+   * a thing in the world, not a warning, and the HUD's colour law owns the
+   * alarm (docs/STYLEGUIDE.md).
+   */
+  hull: 0x33291f,
+  hullTrim: 0x8a6f45,
+  sail: 0xc9b997,
   /** A grave marker: weathered board and turned earth. */
   graveBoard: 0x7d6b4e,
   graveEarth: 0x4a4231,

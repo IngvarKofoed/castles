@@ -9,7 +9,7 @@ import {
   WallLink,
   buildingBoxes,
   graveBoxes,
-  lairBoxes,
+  boatBoxes,
   propJitter,
   treeBoxes,
   wallBoxes,
@@ -62,9 +62,10 @@ export interface Scene {
   /** 1 where a colonist was caught. A marker, baked like a tree because it
    *  never moves and never does anything. */
   readonly graveMap: Uint8Array;
-  /** Where the monsters live. A den is a landmark you can see, so it bakes
-   *  with the world rather than hiding behind knowledge. */
-  readonly lairs: readonly { x: number; y: number }[];
+  /** The boats an incursion came ashore in — empty in peace. A hull is a
+   *  landmark you can see, so it bakes with the world rather than hiding behind
+   *  knowledge. */
+  readonly boats: readonly { x: number; y: number }[];
 }
 
 /**
@@ -250,12 +251,13 @@ export function meshChunk(scene: Scene, cx: number, cy: number): ChunkGeometry {
       );
     }
   }
-  // Dens, emitted by the chunk their tile falls in — the buildings rule, for
-  // the same reason: a lair is one prop on one tile and there are two dozen of
-  // them on a whole map, so filtering the list beats indexing 65k tiles.
-  for (const lair of scene.lairs) {
-    if (lair.x < x0 || lair.x >= x1 || lair.y < y0 || lair.y >= y1) continue;
-    lairBoxes(lair.x, lair.y, world.hmap[tileIndex(lair.x, lair.y, size)], world.seed, boxes);
+  // Boats, emitted by the chunk their tile falls in — the buildings rule, for
+  // the same reason: a hull is one prop on one tile and there is at most one on
+  // a whole map, so filtering the list beats indexing 65k tiles.
+  for (const boat of scene.boats) {
+    if (boat.x < x0 || boat.x >= x1 || boat.y < y0 || boat.y >= y1) continue;
+    const i = tileIndex(boat.x, boat.y, size);
+    boatBoxes(boat.x, boat.y, world.hmap[i], shoreAngle(world, boat.x, boat.y), boxes);
   }
   // A building is emitted whole by the chunk owning its origin tile, so a
   // footprint straddling a seam is never drawn twice or half-drawn. Every
@@ -383,4 +385,30 @@ export function meshWaterChunk(scene: Scene, cx: number, cy: number): WaterGeome
     normals: new Float32Array(normals),
     indices: new Uint32Array(indices),
   };
+}
+
+/**
+ * Which way a beached hull lies: **along the shore**, so it reads as something
+ * that came in off the water rather than as a crate dropped at an angle.
+ *
+ * The water's direction is read off the four orthogonal neighbours — the same
+ * neighbourhood `coastal` uses in the sim, so the renderer and the landing rule
+ * agree about which tiles are shore. A quarter turn at a time, because nothing
+ * in this renderer leans (src/render/CLAUDE.md), and the default faces a hull
+ * east–west on the rare tile that answers nothing.
+ */
+function shoreAngle(world: World, x: number, y: number): number {
+  const size = world.size;
+  const wet = (dx: number, dy: number): boolean => {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= size || ny >= size) return false;
+    return world.tmap[tileIndex(nx, ny, size)] === Terrain.Water;
+  };
+  // Water to the north or south means the shoreline runs east–west, and the
+  // hull with it. Checked first, so a corner tile picks one answer rather than
+  // depending on evaluation order twice over.
+  if (wet(0, -1) || wet(0, 1)) return 0;
+  if (wet(-1, 0) || wet(1, 0)) return Math.PI / 2;
+  return 0;
 }

@@ -4,7 +4,7 @@ import {
   BuildingState,
   ItemType,
   Loc,
-  lairAt,
+  monsterAt,
   type Building,
   type BuildingKindValue,
   type ItemTypeValue,
@@ -576,10 +576,16 @@ export function outputFull(sim: Sim, b: Building): boolean {
  *
  * Flat (one height across the whole footprint), on grass or sand, no trees,
  * no water, no overlap with another building, no ground items underneath, and
- * no lair anywhere in it — a den cannot be built over, or a monster could be
- * permanently shut away. Colonists deliberately do *not* block placement — the
- * footprint turns impassable and anyone standing in it walks out (see
- * commands.ts).
+ * **no monster standing in it**. Colonists deliberately do *not* block
+ * placement — the footprint turns impassable and anyone standing in it walks
+ * out (`evictFromFootprint` in commands.ts) — but nothing evicts a monster, and
+ * `passable` would then refuse the tile it is stuck on. Refusing the footprint
+ * is the simpler of the two answers and it costs nothing: a monster is leaving
+ * anyway (docs/specs/2026-09-17-incursions-from-the-sea.md).
+ *
+ * Until that spec this refused a **lair** tile instead, so a den could never be
+ * built over. There are no dens now, so there is nothing to protect
+ * (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
  */
 export function canPlace(sim: Sim, kind: BuildingKindValue, x: number, y: number): boolean {
   const def = BUILDING_DEFS[kind];
@@ -593,7 +599,7 @@ export function canPlace(sim: Sim, kind: BuildingKindValue, x: number, y: number
     if (tmap[i] !== Terrain.Grass && tmap[i] !== Terrain.Sand) return false;
     if (treeMap[i]) return false;
     if (buildingAt(sim, tx, ty)) return false;
-    if (lairAt(sim, tx, ty)) return false;
+    if (monsterAt(sim, tx, ty)) return false;
   }
   for (const it of sim.items) {
     if (it.loc === Loc.Ground && coversTile({ x, y, w: def.w, h: def.h }, it.x, it.y)) return false;

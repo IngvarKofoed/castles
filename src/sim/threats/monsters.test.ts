@@ -8,6 +8,7 @@ import {
   TICK_HZ,
   TROLL_BITE,
   TROLL_BITE_TICKS,
+  WITHDRAW_BACKSTOP,
 } from "../tuning";
 import { WallState, damageTier } from "../walls";
 import { recomputeEnclosure } from "../walls/enclosure";
@@ -17,8 +18,13 @@ import { stepMonsters } from "./monsters";
 /**
  * The rules a monster runs on, pinned one at a time on flat ground with a
  * hand-placed monster — so each assertion is about the rule rather than about
- * whatever a generated map happened to put in the way. The whole tier working
- * together is `encounter.test.ts`'s job.
+ * whatever a landing happened to put in the way. The landing itself is
+ * `incursion.test.ts`'s job, and the whole tier working together is
+ * `encounter.test.ts`'s.
+ *
+ * Every monster here is placed by hand rather than landed, and `flatSim` opens
+ * with the full opening grace on its clock — so nothing below ever meets a storm
+ * it did not ask for.
  */
 
 const at = (sim: Sim, x: number, y: number): number => tileIndex(x, y, sim.world.size);
@@ -34,30 +40,30 @@ function steps(sim: Sim, n: number): void {
   for (let i = 0; i < n; i++) stepMonsters(sim);
 }
 
-describe("the rhythm", () => {
-  it("wakes at the end of a rest, and the prowl is what makes it dangerous", () => {
+describe("the storm's clock", () => {
+  it("is dangerous ashore and harmless withdrawing", () => {
     const sim = flatSim(16);
     sim.wallMap[at(sim, 8, 4)] = WallState.Palisade;
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4, phase: MonsterPhase.Rest, phaseTicks: 3, prowlTicks: 500 }));
+    sim.monsters.push(
+      testMonster({ x: 4.5, y: 4.5, phase: MonsterPhase.Withdrawing, phaseTicks: WITHDRAW_BACKSTOP, landX: 4, landY: 12 }),
+    );
 
-    // Resting: it notices nothing, and nothing it might notice is touched.
-    steps(sim, 2);
-    expect(sim.monsters[0].phase).toBe(MonsterPhase.Rest);
+    // Withdrawing: it notices nothing, and nothing it walks past is touched.
+    steps(sim, 20);
     expect(sim.monsters[0].targetTile).toBe(-1);
     expect(sim.wallDamageMap[at(sim, 8, 4)]).toBe(0);
-
-    steps(sim, 1);
-    expect(sim.monsters[0].phase).toBe(MonsterPhase.Prowl);
-    expect(sim.monsters[0].phaseTicks).toBe(500);
   });
 
-  it("disengages mid-bite when the prowl clock runs out, and walks home", () => {
+  it("disengages mid-bite when the storm clock runs out, and turns for the boats", () => {
     // CONCEPT's "an attack ends only when the monster leaves", made literal:
-    // the clock is the law, and it is what makes outlasting a real plan.
+    // the clock is the law, and it is what makes outlasting a real plan. The
+    // clock is now the colony's weather rather than the monster's own hours, so
+    // every monster ashore turns on the same tick.
     const sim = flatSim(16);
     const wall = at(sim, 6, 4);
     sim.wallMap[wall] = WallState.Palisade;
-    sim.monsters.push(testMonster({ lairX: 2, lairY: 4, phase: MonsterPhase.Prowl, phaseTicks: 200, prowlTicks: 200 }));
+    sim.stormTicks = 200;
+    sim.monsters.push(testMonster({ x: 2.5, y: 4.5, landX: 2, landY: 14 }));
 
     steps(sim, 199);
     const bitten = sim.wallDamageMap[wall];
@@ -65,53 +71,72 @@ describe("the rhythm", () => {
     expect(bitten).toBeLessThan(PALISADE_HP);
 
     steps(sim, 1);
-    expect(sim.monsters[0].phase).toBe(MonsterPhase.GoingHome);
+    expect(sim.monsters[0].phase).toBe(MonsterPhase.Withdrawing);
     expect(sim.monsters[0].targetTile).toBe(-1);
     steps(sim, 20);
-    // Left standing, with its wounds — the segment survived because the hours
-    // ran out, not because anybody drove the monster off.
+    // Left standing, with its wounds — the segment survived because the storm
+    // passed, not because anybody drove the monster off.
     expect(sim.wallMap[wall]).toBe(WallState.Palisade);
     expect(sim.wallDamageMap[wall]).toBe(bitten);
-
-    steps(sim, 60);
-    expect(sim.monsters[0].phase).toBe(MonsterPhase.Rest);
-    expect(Math.floor(sim.monsters[0].x)).toBe(2);
   });
 
-  it("notices nothing on the way home", () => {
+  it("is gone the moment it reaches its boat", () => {
     const sim = flatSim(16);
     const wall = at(sim, 6, 4);
     sim.wallMap[wall] = WallState.Palisade;
-    sim.monsters.push(testMonster({ lairX: 12, lairY: 4, x: 7.5, y: 4.5, phase: MonsterPhase.GoingHome, phaseTicks: 0 }));
-    steps(sim, 40);
+    sim.monsters.push(
+      testMonster({ x: 7.5, y: 4.5, phase: MonsterPhase.Withdrawing, phaseTicks: WITHDRAW_BACKSTOP, landX: 2, landY: 4 }),
+    );
+    steps(sim, 60);
     expect(sim.wallDamageMap[wall]).toBe(0);
-    expect(sim.monsters[0].phase).toBe(MonsterPhase.Rest);
+    expect(sim.monsters).toHaveLength(0);
+    // Removing one changes the enclosure's seed set, so the fill is flagged.
+    expect(sim.enclosureDirty).toBe(1);
   });
 
-  it("detours round a wall raised across its way home instead of bedding down where it stands", () => {
+  it("is removed on the backstop clock when its way to the boats is walled off", () => {
+    // Without this a player who closed a ring at the wrong moment keeps a
+    // permanent resident — the den problem reborn, and indoors this time.
+    const sim = flatSim(20);
+    for (const [x, y] of [[3, 3], [4, 3], [5, 3], [5, 4], [5, 5], [4, 5], [3, 5], [3, 4]]) {
+      sim.wallMap[at(sim, x, y)] = WallState.Stone;
+    }
+    sim.monsters.push(
+      testMonster({ x: 4.5, y: 4.5, phase: MonsterPhase.Withdrawing, phaseTicks: 40, landX: 15, landY: 15 }),
+    );
+    recomputeEnclosure(sim);
+    // Sealed in stone with nowhere to go and nothing to chew: it stays until
+    // the clock says otherwise, and then it is simply not there.
+    steps(sim, 39);
+    expect(sim.monsters).toHaveLength(1);
+    steps(sim, 1);
+    expect(sim.monsters).toHaveLength(0);
+  });
+
+  it("detours round a wall raised across its way to the boats", () => {
     // `move` throws a stored route away when one of its steps stops being legal
     // — a segment finished across it, ground raised into a cliff — and an empty
     // route is otherwise indistinguishable from a finished one. Read as
-    // "arrived", it put the monster to sleep in the open field, a whole rest
-    // period from its den, with its lair still seeding the enclosure fill.
+    // "arrived", it would take a monster off the map nowhere near its boat.
     const sim = flatSim(16);
     sim.monsters.push(
-      testMonster({ lairX: 2, lairY: 8, x: 12.5, y: 8.5, phase: MonsterPhase.GoingHome, phaseTicks: 0 }),
+      testMonster({ x: 12.5, y: 8.5, phase: MonsterPhase.Withdrawing, phaseTicks: WITHDRAW_BACKSTOP, landX: 2, landY: 8 }),
     );
     const m = sim.monsters[0];
     steps(sim, 4);
     expect(m.path.length).toBeGreaterThan(m.step);
+    expect(sim.monsters).toHaveLength(1);
 
     // Stone across the very next tile of the stored route: finished stone is
     // not damageable, so there is nothing to chew and a detour is the only
     // answer available.
     sim.wallMap[m.path[m.step]] = WallState.Stone;
     steps(sim, 1);
-    expect(m.phase).toBe(MonsterPhase.GoingHome);
+    expect(m.phase).toBe(MonsterPhase.Withdrawing);
+    expect(sim.monsters).toHaveLength(1);
 
-    steps(sim, 60);
-    expect(m.phase).toBe(MonsterPhase.Rest);
-    expect([Math.floor(m.x), Math.floor(m.y)]).toEqual([2, 8]);
+    steps(sim, 120);
+    expect(sim.monsters).toHaveLength(0);
   });
 });
 
@@ -122,7 +147,7 @@ describe("notice and the hold", () => {
     const far = at(sim, 9, 4);
     sim.wallMap[near] = WallState.Palisade;
     sim.wallMap[far] = WallState.Palisade;
-    sim.monsters.push(testMonster({ lairX: 2, lairY: 4 }));
+    sim.monsters.push(testMonster({x: 2 + 0.5, y: 4 + 0.5}));
 
     steps(sim, 30);
     expect(sim.monsters[0].targetTile).toBe(near);
@@ -143,7 +168,7 @@ describe("notice and the hold", () => {
     recomputeEnclosure(sim);
     expect(sim.insideMap[at(sim, 9, 9)]).toBe(1);
     const safe = walker(sim, 9, 9);
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 9, x: 6.5, y: 9.5 }));
+    sim.monsters.push(testMonster({x: 6.5, y: 9.5}));
 
     steps(sim, 20);
     expect(sim.monsters[0].target).toBe(-1);
@@ -154,7 +179,7 @@ describe("notice and the hold", () => {
     const sim = flatSim(16);
     sim.buildings.push(testBuilding({ x: 6, y: 4 }));
     walker(sim, 6, 4, { inside: 1, slot: 99 });
-    sim.monsters.push(testMonster({ lairX: 2, lairY: 4 }));
+    sim.monsters.push(testMonster({x: 2 + 0.5, y: 4 + 0.5}));
     steps(sim, 40);
     expect(sim.monsters[0].target).toBe(-1);
     expect(sim.colonists).toHaveLength(1);
@@ -166,7 +191,7 @@ describe("the bite", () => {
     const sim = flatSim(16);
     const timber = at(sim, 6, 4);
     sim.wallMap[timber] = WallState.Palisade;
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4 }));
+    sim.monsters.push(testMonster({x: 4 + 0.5, y: 4 + 0.5}));
     // Walk over, then exactly one bite interval of contact.
     steps(sim, 20);
     const before = sim.wallDamageMap[timber];
@@ -175,7 +200,7 @@ describe("the bite", () => {
 
     const stone = flatSim(16);
     stone.wallMap[at(stone, 6, 4)] = WallState.Stone;
-    stone.monsters.push(testMonster({ lairX: 4, lairY: 4 }));
+    stone.monsters.push(testMonster({x: 4 + 0.5, y: 4 + 0.5}));
     steps(stone, 100);
     expect(stone.wallDamageMap[at(stone, 6, 4)]).toBe(0);
     expect(stone.wallMap[at(stone, 6, 4)]).toBe(WallState.Stone);
@@ -187,7 +212,7 @@ describe("the bite", () => {
     const ruin = (kind: number): number => {
       const sim = flatSim(20);
       sim.wallMap[at(sim, 6, 4)] = WallState.Palisade;
-      sim.monsters.push(testMonster({ kind, lairX: 4, lairY: 4, x: 5.5, y: 4.5 }));
+      sim.monsters.push(testMonster({kind, x: 5.5, y: 4.5}));
       for (let t = 0; t < 2000; t++) {
         stepMonsters(sim);
         if (sim.wallMap[at(sim, 6, 4)] === WallState.None) return t;
@@ -208,7 +233,7 @@ describe("the bite", () => {
     const sim = flatSim(16);
     const bp = at(sim, 6, 4);
     sim.wallMap[bp] = WallState.PalisadeBp;
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4 }));
+    sim.monsters.push(testMonster({x: 4 + 0.5, y: 4 + 0.5}));
     steps(sim, 20 + ORC_BITE_TICKS);
     expect(sim.wallMap[bp]).toBe(WallState.None);
     expect(sim.wallDamageMap[bp]).toBe(0);
@@ -224,7 +249,7 @@ describe("the bite", () => {
     const weak = at(sim, 8, 9);
     sim.wallMap[weak] = WallState.Palisade;
     sim.wallDamageMap[weak] = PALISADE_HP - 1;
-    sim.monsters.push(testMonster({ lairX: 5, lairY: 9, x: 6.5, y: 9.5 }));
+    sim.monsters.push(testMonster({x: 6.5, y: 9.5}));
     recomputeEnclosure(sim);
     expect(sim.insideMap[at(sim, 9, 9)]).toBe(1);
 
@@ -245,7 +270,7 @@ describe("the bite", () => {
     const wall = at(sim, 6, 4);
     sim.wallMap[wall] = WallState.Palisade;
     // A troll's bite is four points, so the crossings are countable.
-    sim.monsters.push(testMonster({ kind: 1, lairX: 4, lairY: 4, x: 5.5, y: 4.5 }));
+    sim.monsters.push(testMonster({kind: 1, x: 5.5, y: 4.5}));
     let versions = sim.world.chunkVersion[0];
     let bumps = 0;
     let tiers = 0;
@@ -276,7 +301,7 @@ describe("where a monster may go", () => {
     for (let y = 0; y < 16; y++) sim.wallMap[at(sim, 8, y)] = WallState.Stone;
     sim.wallMap[at(sim, 8, 4)] = WallState.Gate;
     const behind = walker(sim, 12, 4);
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4, x: 6.5, y: 4.5 }));
+    sim.monsters.push(testMonster({x: 6.5, y: 4.5}));
     recomputeEnclosure(sim);
 
     steps(sim, 200);
@@ -295,7 +320,7 @@ describe("where a monster may go", () => {
     const sim = flatSim(16);
     for (let y = 0; y < 16; y++) sim.wallMap[at(sim, 8, y)] = WallState.PalisadeBp;
     const beyond = walker(sim, 10, 4);
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4, x: 6.5, y: 4.5 }));
+    sim.monsters.push(testMonster({x: 6.5, y: 4.5}));
     steps(sim, 400);
     expect(sim.colonists).not.toContain(beyond);
   });
@@ -306,7 +331,7 @@ describe("where a monster may go", () => {
       sim.wallMap[at(sim, x, y)] = WallState.Palisade;
     }
     recomputeEnclosure(sim);
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4, circuit: [at(sim, 15, 15)] }));
+    sim.monsters.push(testMonster({ x: 4.5, y: 4.5 }));
     steps(sim, 600);
     const standing = [...sim.wallMap].filter((v) => v === WallState.Palisade).length;
     expect(standing).toBeLessThan(8);
@@ -317,13 +342,13 @@ describe("where a monster may go", () => {
     for (const [x, y] of [[3, 3], [4, 3], [5, 3], [5, 4], [5, 5], [4, 5], [3, 5], [3, 4]]) {
       sim.wallMap[at(sim, x, y)] = WallState.Stone;
     }
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 4, circuit: [at(sim, 15, 15)], prowlTicks: 100, phaseTicks: 100 }));
-    // The fill runs *after* the monster exists, because a lair is one of its
+    sim.monsters.push(testMonster({ x: 4.5, y: 4.5 }));
+    // The fill runs *after* the monster exists, because a monster is one of its
     // seeds — which is the whole point of the assertion below.
     recomputeEnclosure(sim);
     steps(sim, 300);
-    // Contained, unhurt, and still keeping its hours — and the pen it is in is
-    // *not* calm ground, which is what stops this being a way to win.
+    // Contained and unhurt — and the pen it is in is *not* calm ground, which is
+    // what stops this being a way to win.
     expect([...sim.wallMap].filter((v) => v === WallState.Stone)).toHaveLength(8);
     expect(sim.insideMap[at(sim, 4, 4)]).toBe(0);
   });

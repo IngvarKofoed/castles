@@ -18,11 +18,8 @@
  */
 import { spawnItem } from "../items";
 import { occupancy } from "../path";
-import { spawnLairs } from "../threats/lairs";
 import { ItemType, type Building, type Sim } from "../store";
-import { PROVISION_BREAD, WANDERER_INTERVAL } from "../tuning";
-import { recomputeEnclosure } from "../walls/enclosure";
-import { WORLD_SIZE, generate } from "../world/world";
+import { FIRST_STORM, PROVISION_BREAD, WANDERER_INTERVAL } from "../tuning";
 
 export type Migration = (state: unknown) => unknown;
 
@@ -87,72 +84,29 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
 
   /**
    * 3 → 4: monsters. Two zero-filled layers — nothing has been bitten and
-   * nobody has died in a colony that never had anything to fear — **and the
-   * lair pass run over the save's own world**, so an old colony wakes up in a
-   * wilderness that has always been there. Resting, at first: the pass seeds
-   * each monster's phase from its own periods, so most of them are asleep on
-   * the tick the save resumes.
+   * nobody has died in a colony that never had anything to fear — and an empty
+   * `monsters` array.
    *
-   * Running the pass rather than shipping an empty `monsters` array is the
-   * whole point of this rung. Its draws come from a stream derived from the
-   * world seed alone — never `rngState`, never the colony — which is what
-   * makes a migrated v3 save and a fresh game on the same seed wake **the same
-   * monsters at the same lairs on the same rhythms**. The ids differ, because
-   * they come off the save's own counter; nothing else does.
-   *
-   * The colony enters in exactly one place, and only as a veto: **ground the
-   * save has already claimed — enclosed ground, and every tile carrying a
-   * wall — is refused a den** (`enclosedBefore`, which explains why both
-   * halves are needed). Lair ground is never "inside" (see `walls/enclosure`),
-   * so a den waking within an old ring would turn that colony's whole interior
-   * to open country on load, which the player never chose and cannot undo.
-   *
-   * **The equality above holds exactly while the veto never fires**, which is
-   * the ordinary case: a v3 ring is small and `LAIR_SPACING` keeps dens off it.
-   * When it *does* fire, the wilderness is a near-miss rather than a match, and
-   * that is unavoidable rather than an oversight — a rejected draw spends the
-   * tile draw but not the monster's own (its kind, hours and four waypoints,
-   * a variable number of values), and the rejection also changes what `placed`
-   * holds and therefore which later draws the spacing rule refuses. So dens
-   * before the rejection are identical, the ones after it are drawn from the
-   * same gradient but not the same values. Filtering the candidate list instead
-   * would shift *every* draw including the first, which is strictly worse.
-   *
-   * The pass mints ids through `nextId`, so this rung hands it the real store
-   * shape rather than a partial one. `assertSim` still has the last word on
-   * whether what comes out is a save at all.
+   * **This rung was rewritten rather than extended**, which the append-only
+   * rule would normally forbid, and the reason is that it could not be left
+   * alone: it ran the lair pass (`spawnLairs`), and
+   * `docs/specs/2026-09-17-incursions-from-the-sea.md` deletes that file, so
+   * the rung stopped compiling. What it used to do — wake two dozen dens on a
+   * world regenerated from the save's seed, refusing any ground the colony had
+   * already claimed — now has nothing to write to: there are no dens
+   * (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md). A v3 save
+   * therefore arrives at rung 11 with no monsters, which is exactly where that
+   * rung would have put it anyway.
    */
   3: (state) => {
     const s = object(state);
     const tiles = tileCount(s);
-    const next: Record<string, unknown> = {
+    return {
       ...s,
       monsters: [],
       wallDamageMap: new Uint8Array(tiles),
       graveMap: new Uint8Array(tiles),
     };
-    // The pass reads a world **regenerated from the save's seed**, not the
-    // save's own layers: those have been chopped and quarried, and the pass
-    // filters on exactly those two layers, so reading them would hand a played
-    // colony a different wilderness than a fresh game on its seed. Regenerating
-    // is what makes "the same seed is the same world" survive the rung.
-    //
-    // Guarded, because a rung may be handed anything: `spawnLairs` is live sim
-    // code and would throw a raw TypeError on a malformed world, which would
-    // escape `decode` as something other than a `SaveError` and put a stack
-    // trace in the menu's note row. A save that fails these checks passes
-    // through with no monsters and `assertSim` refuses it properly.
-    //
-    // The size check is part of that guard rather than pedantry: `generate`
-    // always builds at this build's `WORLD_SIZE`, and the pass writes circuit
-    // *tile indices*, so a save from a differently sized world would get a
-    // wilderness indexed against the wrong grid. No such save exists; skipping
-    // is the safe answer if one ever does.
-    const world = object(s.world);
-    if (tiles > 0 && typeof next.nextId === "number" && typeof world.seed === "number" && world.size === WORLD_SIZE) {
-      spawnLairs(next as unknown as Sim, generate(world.seed), enclosedBefore(next, tiles));
-    }
-    return next;
   },
 
   /**
@@ -402,6 +356,42 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
       limits: Array.isArray(s.limits) ? [...s.limits, -1, -1] : s.limits,
     };
   },
+
+  /**
+   * 11 → 12: incursions. **The one rung in this ladder that destroys data**, and
+   * deliberately (docs/specs/2026-09-17-incursions-from-the-sea.md).
+   *
+   * Every monster in the save is dropped and a fresh forecast is set. There is
+   * no honest way to convert a resting den into an incursion: a v11 monster
+   * carries a lair, a circuit and a pair of periods, and this world has none of
+   * those things in it any more. Carrying dead den records forward for a
+   * version to keep a rollback path would be real complexity bought for a
+   * pre-1.0 game whose own policy says not to — docs/ARCHITECTURE.md: "Pre-1.0
+   * the escape hatch is allowed — breaking saves is fine, but it bumps the
+   * version and fails loudly, never loads garbage." So an old colony loads into
+   * an empty wilderness with a storm on the way, which is the truthful reading
+   * of *this world no longer has dens in it*.
+   *
+   * `assertSim` accepts the result without an edit: it checks only that
+   * `monsters` is an array of objects, and `[]` passes.
+   *
+   * The forecast gets the opening grace rather than a short fuse, and **no
+   * draw**: a migrating save must not consume `rngState`, or a colony reloaded
+   * from an old file would diverge from the same colony saved and reloaded
+   * from a new one. `stormLanding` is -1 because a landing site is a fact about
+   * the coast and `decode` has not recomputed `insideMap` yet; the first tick
+   * that reads the clock resolves one.
+   */
+  11: (state) => {
+    const s = object(state);
+    return {
+      ...s,
+      monsters: [],
+      stormTicks: FIRST_STORM,
+      stormStrength: 1,
+      stormLanding: -1,
+    };
+  },
 };
 
 /**
@@ -451,51 +441,6 @@ function grantProvisions(next: Record<string, unknown>, tiles: number): void {
   const ay = anchor ? anchor.y : centre;
   const occ = occupancy(sim);
   for (let n = 0; n < PROVISION_BREAD * mouths; n++) spawnItem(sim, ItemType.Bread, ax, ay, occ);
-}
-
-/**
- * Ground this save's colony has already claimed, as a per-tile mask: everything
- * it had enclosed, **plus every tile carrying a wall**.
- *
- * The enclosure half is computed here rather than trusted from the file:
- * `insideMap` is derived, a migrating save's copy may be stale or hand-edited,
- * and `decode` recomputes it after every rung anyway. So the layer is replaced
- * with a fresh one of the right length and the real fill runs over the save's
- * own `wallMap` — with `monsters` still empty, so it seeds from the map edge
- * alone and answers exactly the question being asked: *what was inside before
- * any den existed?* The write is deliberate and harmless: `decode`'s own
- * recompute overwrites it a moment later, that time with the new dens seeding
- * it too.
- *
- * **The wall half is not belt-and-braces, it is the same failure by a different
- * door.** A wall tile is never "inside" (the enclosure excludes the ground
- * under a segment), so masking enclosed tiles alone still lets a den land *on*
- * the ring — and since a lair seeds the flood unconditionally, one den on a
- * segment floods the interior behind it and the colony loses its enclosure
- * exactly as if the den had been placed in the middle. Refusing wall tiles also
- * makes the rung agree with the live rule: `canPlaceWall` refuses a lair tile,
- * so a den under a standing segment is a state the game never otherwise
- * produces.
- *
- * Guarded on the wall layer for the same reason the rung guards the world: this
- * is live sim code, and a save missing or mis-sizing `wallMap` would throw a
- * raw TypeError straight out of `decode`, which promises a `SaveError` or a
- * whole store and nothing else. A save that fails the check claims nothing as
- * far as this pass is concerned, and `assertSim` refuses it a moment later.
- */
-function enclosedBefore(next: Record<string, unknown>, tiles: number): Uint8Array {
-  const claimed = new Uint8Array(tiles);
-  const wall = next.wallMap;
-  if (!(wall instanceof Uint8Array) || wall.length !== tiles) return claimed;
-
-  const inside = new Uint8Array(tiles);
-  next.insideMap = inside;
-  recomputeEnclosure(next as unknown as Sim);
-  // Copied out rather than OR-ed in place, so what stays on the state is a
-  // truthful `insideMap` rather than a mask wearing its name — even though
-  // `decode` is about to recompute it anyway.
-  for (let i = 0; i < tiles; i++) claimed[i] = inside[i] || wall[i] !== 0 ? 1 : 0;
-  return claimed;
 }
 
 function object(state: unknown): Record<string, unknown> {

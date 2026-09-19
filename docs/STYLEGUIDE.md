@@ -222,60 +222,56 @@ recipe; none is an alarm.
 - **Resource icons**: 9px squares rotated 45°, filled with the resource's
   color.
 
-### The threat meter, and the rhythm bar
+### The forecast meter
 
-Two widgets, one recipe, both **rust segments in a `line-soft` trough**, 2px
-gaps, 6px tall — the labour meter's anatomy, at whichever segment count the
-estimate is honest to (five, or ten under a watcher; see below). Unlit
-segments are the trough, not a dimmer rust: a meter that is never fully off
-would read as a permanent low alarm.
+One widget, **rust segments in a `line-soft` trough**, 2px gaps, 6px tall —
+the labour meter's anatomy, at whichever segment count the estimate is honest
+to (five, or ten under a watcher; see below). Unlit segments are the trough,
+not a dimmer rust: a meter that is never fully off would read as a permanent
+low alarm.
 
-- **Threat meter** — in the ribbon, after the enclosed count, with a faint
-  caps caption beside it in the resource-label style. It tracks the colony's
-  most relevant monster: while that monster rests the meter **fills** toward
-  its waking (*time to monsters*), while it prowls the meter **drains** toward
-  its going-home (*time until it is gone*).
+It sits in the ribbon, after the enclosed count, with a faint caps caption
+beside it in the resource-label style. **It is the colony's weather, not any
+one monster's hours**: one bar on one clock, filling toward the next landing
+and standing full while anything is ashore. It never re-targets, which is what
+it did before monsters started arriving by sea
+(`docs/changelog/2026-09-17-incursions-from-the-sea.md`).
 
-  **The caption is the kind plus a coarse time in words** — `TROLL WAKES IN A
-  DAY OR TWO`, `ORC PROWLING, GONE WITHIN THE DAY`, `ORC HEADING HOME` —
-  prefixed `FAR WILDS:` when the den being tracked is beyond the meter's own
-  range, which is how the bar says *this is the wilderness, not your
-  doorstep*. **The meter is never blank while a monster exists**: with nothing
-  near, it tracks the nearest den on the map rather than emptying, because
-  *time to monsters* is the thing it is for. `WILDS QUIET` at `ink-faint`, bar
-  empty, is reserved for a map with no monsters at all.
-- **Rhythm bar** — the same five segments inside a monster's inspector panel,
-  showing how far through its current phase that one monster is. This is what
-  "watching a monster's rounds" looks like as a widget.
+**The caption is where the storm is coming from plus a coarse time in words** —
+`STORM FROM THE NORTH, BEFORE NIGHTFALL`, `STORM FROM THE EAST, ANY MOMENT
+NOW`. Past the forecast's horizon there is **no bar at all** and the caption is
+only `A STORM IS FAR OFF`: the colony genuinely cannot see that far, and a
+picture that pretended otherwise would spend the watchtower's product before it
+exists. While an incursion is ashore the bar stands full and the caption says
+`THE WILDS ARE ASHORE`, or `THE WILDS ARE LEAVING` once every monster has
+turned for its boats.
 
-**Both are coarse on purpose, and neither ever shows a number** — not on the
-bar and not in the caption, which is why the time is a phrase and not a
-figure. CONCEPT's rule is that schedules show *approximately* and precision is
-buildable, so fifths is the resolution the base game sells and a per-monster
-error is baked into the estimate. A minutes-and-seconds readout here would
-spend the watchtower's whole product, and a digit invites arithmetic the
-estimate cannot support. Fifths is also why there is no transition: the bar
-steps, and a step is not animation. It is also why a long phase never reads
-*any moment now* — a fifth of a three-day rest is well over a day, and the
-estimate honestly does not know.
+**A landed monster's inspector has no bar at all.** It carried a five-segment
+rhythm bar until the wilds stopped living on the map; there is no per-monster
+clock left to bucket, because the clock is the colony's weather and the ribbon
+already shows it. The panel says what the monster is doing — `ashore`, or
+`heading for the boats` — and a line in the house voice beneath it.
 
-**Under a watcher, both meters go to ten segments** — same rust, same trough,
-same 2px gaps, twice as many of them, and **still not a digit anywhere**. A
-monster whose den sits within a manned Watchtower's reach reads in exact
-tenths: the seeded error is gone and the segment count doubles, so the bar is
-finer *and* honest where the base game's is neither. Everything downstream
-follows from that one change — the ribbon's meter, a monster's rhythm bar and
-the verbal captions all keep their exact recipe and vocabulary, and a phrase
-narrows because its bucket did, never because a new phrase was written. The
-tower buys **resolution, not arithmetic**; the no-number law above is what it
-must never buy past.
+**The meter is coarse on purpose, and never shows a number** — not on the bar
+and not in the caption, which is why the time is a phrase and not a figure.
+CONCEPT's rule is that schedules show *approximately* and precision is
+buildable, so fifths of a horizon is the resolution the base game sells. A
+minutes-and-seconds readout here would spend the watchtower's whole product,
+and a digit invites arithmetic the estimate cannot support. Fifths is also why
+there is no transition: the bar steps, and a step is not animation.
 
-The segment count is data, so nothing about either widget hard-codes five. The
+**Under a watcher the meter goes to ten segments *and sees twice as far*** —
+same rust, same trough, same 2px gaps, twice as many of them, and **still not a
+digit anywhere**. A storm due on coast a manned Watchtower covers is sighted
+from twice the distance out and read in tenths, so the bar is finer *and*
+arrives sooner where the base game's does neither. The verbal captions keep
+their exact recipe and vocabulary, and a phrase narrows because its bucket did,
+never because a new phrase was written. The tower buys **resolution and
+warning, not arithmetic**; the no-number law above is what it must never buy
+past.
+
+The segment count is data, so nothing about the widget hard-codes five. The
 ribbon absorbs the ~55px a ten-segment bar adds and stays one line at 1280px.
-A monster's inspector says which world it is in beneath the bar, in the house
-voice: `its hours are read off the map, never exactly`, or **`a watcher knows
-its hours`**. A *watcher*, not a tower — the price is the pair of hands, and
-the sentence goes back the frame they step out.
 
 **No alarm anywhere else.** A monster at the wall produces no banner, no
 toast, no colour change on any other element, and no sound. The meter moving,
@@ -380,10 +376,12 @@ Drawn by `src/render/`, same vocabulary as the panels:
   follows the terrain.
 
   **A square, not a circle, because a square is what the rule tests.**
-  Coverage is Chebyshev distance from the tower to a monster's *den*, so a
-  circle of radius 24 would exclude covered diagonal dens — the picture
+  Coverage is Chebyshev distance from the tower to the coast a storm is due on,
+  so a circle of radius 24 would exclude a covered diagonal beach — the picture
   denying knowledge the player has already paid a pair of hands for. The
-  overlay and the predicate are the same shape or the overlay is a lie.
+  overlay and the predicate are the same shape or the overlay is a lie. (It was
+  the distance to a monster's *den* until the wilds started arriving by sea,
+  `docs/changelog/2026-09-17-incursions-from-the-sea.md`.)
 
   **Outline only.** The enclosure's faint interior fill earns its place by
   saying which side of a line the colony's ground is on; a square 49 tiles
@@ -506,16 +504,16 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
 
 - **Ribbon** — full-width top bar, and **colony facts only**: brand, the folk
   count (with its hungry suffix), idle, a `line-soft` divider, the enclosed
-  count, another divider, the threat meter and its caption, then the
+  count, another divider, the forecast meter and its caption, then the
   right-aligned clock group — speed buttons (pause, ×1, ×2, ×4 — active gets
   the gold treatment), the day caption and Menu, keeping their `margin-left:
   auto`.
 
   **It is one line at every supported width, and it does not grow with the
   economy.** Goods live in the Stores panel, so the only variable-width element
-  is the threat caption; the worst case ("far wilds:" plus the longest phrase)
-  is still inside the 1280px budget. `flex-wrap` stays as a safety net and
-  should never fire.
+  is the forecast caption; the worst case (a compass word plus the longest
+  phrase — `storm from the south-west, in a day or two`) is still inside the
+  1280px budget. `flex-wrap` stays as a safety net and should never fire.
 
   **The folk readout carries the game's one hunger signal**: a `· 2 hungry`
   suffix in **ink-dim**, shown only while somebody is actually *slowed* — not
@@ -599,9 +597,10 @@ of them were measured against real terrain (`2026-09-01-tick-and-labour`):
 - **Inspector** — right edge, 246px, below the ribbon; a second panel may
   sit above the bottom edge. It has **two shapes**: a building, and a
   monster — display-20px kind as the title, an `ORC` / `TROLL` tag in the
-  rust tag style, a stance row (`resting` / `out`), and the rhythm bar. No
-  action button: there is nothing a player may do to a monster, and an
-  inspector with no button is the honest way to say so.
+  rust tag style, a doing row (`ashore` / `heading for the boats`), and one
+  note in the house voice. **No bar**, since a monster has no clock of its own
+  any more, and no action button: there is nothing a player may do to a
+  monster, and an inspector with no button is the honest way to say so.
 
 ## Dialed defaults
 

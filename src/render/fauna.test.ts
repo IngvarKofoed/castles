@@ -147,7 +147,7 @@ describe("fauna and the Wilds", () => {
 
     const prowled = wilds();
     const herd = wild(new Fauna(prowled).step(0, 80, 80, 80, 80, 80))[0];
-    prowled.monsters.push(testMonster({ x: herd.hx, y: herd.hz, lairX: Math.floor(herd.hx), lairY: Math.floor(herd.hz) }));
+    prowled.monsters.push(testMonster({ x: herd.hx, y: herd.hz }));
     const prowledHerd = wild(run(new Fauna(prowled), prowled, 20, 80, 80))[0];
 
     // The wander itself is random, so what is pinned is that the herd is still

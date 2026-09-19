@@ -129,11 +129,8 @@ export function adjacentTo(m: Monster, tx: number, ty: number): boolean {
   return Math.max(Math.abs(Math.floor(m.x) - tx), Math.abs(Math.floor(m.y) - ty)) <= CATCH_RANGE;
 }
 
-/** The monster standing on this tile, or null — the pickers' tile→monster
- *  resolution, beside `buildingAt`. */
-export function monsterAt(sim: Sim, x: number, y: number): Monster | null {
-  for (const m of sim.monsters) {
-    if (Math.floor(m.x) === x && Math.floor(m.y) === y) return m;
-  }
-  return null;
-}
+/** The monster standing on this tile, or null. Defined in `store.ts`, because
+ *  `buildings.ts` has to ask it and cannot import this folder without closing a
+ *  cycle; re-exported here so the rest of the sim keeps one front door onto the
+ *  Wilds. */
+export { monsterAt } from "../store";

@@ -5,7 +5,7 @@ import {
   chopLayer,
   damageLayer,
   graveLayer,
-  lairs,
+  boats,
   mineLayer,
   razeLayer,
   wallLayer,
@@ -95,7 +95,7 @@ export class ChunkRenderer {
       razeMap: razeLayer(this.sim),
       damageMap: damageLayer(this.sim),
       graveMap: graveLayer(this.sim),
-      lairs: lairs(this.sim),
+      boats: boats(this.sim),
     };
 
     const terrainGeom = toGeometry(meshChunk(input, cx, cy));

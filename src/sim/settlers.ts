@@ -301,31 +301,49 @@ function landing(sim: Sim, home: Building): number {
 }
 
 /**
- * Can somebody step off a boat here? The tile index if so, else -1.
+ * Can anything step off a boat here? The tile index if so, else -1.
  *
- * Sand, beside water, standable, **outside any enclosure**, and outside every
- * prowling monster's notice radius right now. The last one is what makes an
- * arrival a scene rather than a coin flip: nobody lands in front of an orc.
+ * Sand, beside water, standable, **outside any enclosure** — the geometry of a
+ * landing and nothing about who is doing it. **Exported**, because the two
+ * things that arrive by sea in this game arrive the same way: an incursion
+ * lands by exactly this predicate (`threats/incursion.ts`), minus nothing and
+ * plus nothing (docs/specs/2026-09-17-incursions-from-the-sea.md).
  *
  * The enclosure check is nearly vacuous — the flood flows in through the sea
  * from the map edge, so only the shore of a walled-in pond can read as inside —
  * and it stays anyway, because it is one array read and correctness by
  * accident is how regressions start.
  */
-function eligible(sim: Sim, occ: Occupancy, x: number, y: number): number {
+export function beachAt(sim: Sim, occ: Occupancy, x: number, y: number): number {
   const size = sim.world.size;
   if (x < 0 || y < 0 || x >= size || y >= size) return -1;
   const i = tileIndex(x, y, size);
   if (sim.world.tmap[i] !== Terrain.Sand) return -1;
   if (sim.insideMap[i]) return -1;
   if (!passable(sim.world, sim.wallMap, occ, x, y)) return -1;
-  if (!coastal(sim, x, y)) return -1;
+  return coastal(sim, x, y) ? i : -1;
+}
+
+/**
+ * Where a *wanderer* may land: a beach, and no monster ashore near enough to
+ * notice somebody standing on it.
+ *
+ * The second half is what makes an arrival a scene rather than a coin flip —
+ * nobody walks off a boat in front of an orc — and it is exactly the check a
+ * hostile landing must not have, which is why `beachAt` above is the half that
+ * is shared.
+ */
+function eligible(sim: Sim, occ: Occupancy, x: number, y: number): number {
+  const i = beachAt(sim, occ, x, y);
+  if (i < 0) return -1;
   return watched(sim, x, y) ? -1 : i;
 }
 
 /** Beside open water, orthogonally — the pathfinder's neighbourhood, so "on
- *  the shore" means the same thing walking as it does landing. */
-function coastal(sim: Sim, x: number, y: number): boolean {
+ *  the shore" means the same thing walking as it does landing. Exported for the
+ *  Watchtower, whose subject is the shore itself rather than any one landing
+ *  spot on it (`know.coastInReach`). */
+export function coastal(sim: Sim, x: number, y: number): boolean {
   const size = sim.world.size;
   for (const [dx, dy] of [
     [0, -1],
@@ -341,11 +359,11 @@ function coastal(sim: Sim, x: number, y: number): boolean {
   return false;
 }
 
-/** Is a prowling monster near enough to notice somebody standing here? Resting
- *  and homeward monsters notice nothing, so they do not close a shore. */
+/** Is a landed monster near enough to notice somebody standing here? A
+ *  withdrawing one notices nothing, so it does not close a shore. */
 function watched(sim: Sim, x: number, y: number): boolean {
   for (const m of sim.monsters) {
-    if (m.phase !== MonsterPhase.Prowl) continue;
+    if (m.phase !== MonsterPhase.Ashore) continue;
     if (reach(m, x + 0.5, y + 0.5) <= defOfMonster(m.kind).notice) return true;
   }
   return false;

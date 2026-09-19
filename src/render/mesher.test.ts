@@ -24,7 +24,7 @@ function makeWorld(size: number, heights: number[], terrain?: TerrainValue[]): S
     razeMap: new Uint8Array(size * size),
     damageMap: new Uint8Array(size * size),
     graveMap: new Uint8Array(size * size),
-    lairs: [],
+    boats: [],
   };
 }
 
@@ -558,24 +558,22 @@ describe("walls bake into the chunk", () => {
 describe("the threat tier bakes into the chunk", () => {
   const flat = (size: number): Scene => makeWorld(size, new Array(size * size).fill(3));
 
-  it("puts a den where a monster lives, and only there", () => {
+  it("beaches a boat where an incursion landed, and only there", () => {
     const bare = meshChunk(flat(16), 0, 0);
-    const withDen = flat(16);
-    const denned = meshChunk({ ...withDen, lairs: [{ x: 5, y: 5 }] }, 0, 0);
-    expect(denned.positions.length).toBeGreaterThan(bare.positions.length);
-    // The den is a landmark on *its* tile, not a marker spilling across its
-    // neighbours: nothing it adds stands up more than a hair outside the tile.
-    // A hair rather than nothing, because a bone lying at the mound's corner
-    // overhangs the edge by a few hundredths — as a tree's canopy does.
-    const spill = 0.1;
-    for (const v of verticesWhere(
-      denned,
-      (px, _py, pz) => px < 5 - spill || px > 6 + spill || pz < 5 - spill || pz > 6 + spill,
-    )) {
-      expect(denned.positions[v * 3 + 1]).toBeLessThanOrEqual(3 * BH + 1e-6);
+    const shore = flat(16);
+    const landed = meshChunk({ ...shore, boats: [{ x: 5, y: 5 }] }, 0, 0);
+    expect(landed.positions.length).toBeGreaterThan(bare.positions.length);
+    // **Nothing at all outside its own tile**, which is stricter than the den
+    // this replaced — that one let a bone overhang by a hair. A hull lands on
+    // open sand where the nearest thing to click is more sand, but geometry
+    // proud of a footprint costs that footprint clickable area whatever is
+    // under it (src/render/CLAUDE.md), and the mast is where the height comes
+    // from instead.
+    for (const v of verticesWhere(landed, (px, _py, pz) => px < 5 || px > 6 || pz < 5 || pz > 6)) {
+      expect(landed.positions[v * 3 + 1]).toBeLessThanOrEqual(3 * BH + 1e-6);
     }
     // And it belongs to the chunk holding its tile, like a building does.
-    expect(meshChunk({ ...withDen, lairs: [{ x: 20, y: 5 }] }, 0, 0).positions).toEqual(bare.positions);
+    expect(meshChunk({ ...shore, boats: [{ x: 20, y: 5 }] }, 0, 0).positions).toEqual(bare.positions);
   });
 
   it("puts a grave where somebody died", () => {

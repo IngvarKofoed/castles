@@ -48,7 +48,7 @@ const SIZE = 256;
 const TICKS = 2400;
 
 /** The pinned hash of the run. Named so a move history can cite it. */
-const PINNED = "2e74c71c";
+const PINNED = "bc976ea5";
 
 function trees(sim: Sim, count: number): number[] {
   const out: number[] = [];
@@ -211,6 +211,14 @@ describe("the scripted bread chain", () => {
     // so no mead exists, so `cellarSet` is false on every tick and the
     // countdown decrements by one as it always did, `batchTicks` answers
     // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
+    //
+    // 2e74c71c → PINNED with incursions (SAVE_VERSION 12,
+    // docs/specs/2026-09-17-incursions-from-the-sea.md). **Shape and ids, and
+    // the run is still wholly peaceful**: the opening grace outlasts it, so
+    // nothing lands. `createSim` no longer mints two dozen monsters before the
+    // opening five, so every entity here is numbered lower, and the store
+    // gained three forecast fields — one of which (`stormLanding`) resolves to
+    // a real tile on the first tick, off a bearing derived from the world seed.
     expect(hashSim(colony())).toBe(PINNED);
   });
 

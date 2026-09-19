@@ -241,24 +241,26 @@ export function v3Script(sim: Sim): Command[] {
 }
 
 /**
- * v4: the threat tier, on a seed whose nearest den sits fourteen tiles from the
- * colony — the same seed `threats/encounter.test.ts` picks, and for the same
- * reason: the default fixture seed's wilds are forty tiles out and would never
- * touch the colony inside a fixture's lifetime.
+ * v4: the threat tier, on the seed `threats/encounter.test.ts` picks — chosen
+ * when it was recorded because its nearest den sat fourteen tiles from the
+ * colony, close enough to bite the line this script raises.
  *
- * What it carries: two dozen monsters mid-rhythm with their routes and phase
- * clocks in flight, and a standing palisade still carrying its **bite damage**
- * with a live repair task queued against it — plus the walls, items, tasks and
- * reservations the older fixtures prove.
+ * What **the committed file** carries: two dozen monsters mid-rhythm with their
+ * routes and phase clocks in flight, and a standing palisade still carrying its
+ * **bite damage** with a live repair task queued against it — plus the walls,
+ * items, tasks and reservations the older fixtures prove. Caught at 1100, in
+ * the gap between the first prowl walking home and the repairer finishing: no
+ * tick on that seed held damage, a repair task *and* a grave at once.
  *
- * Caught at 1100, in the gap between the first prowl walking home and the
- * repairer finishing, rather than later: no tick on this seed holds damage, a
- * repair task *and* a grave at once, because the damage is mended before the
- * prowl that kills anybody arrives. The damage layer and a live `Repair` task
- * are the states nothing else in the format exercises, so they win the tie;
- * `graveMap` rides along as zeros, which the codec treats exactly as it treats
- * the eight layers beside it, and graves themselves are pinned in
- * `threats/flee.test.ts` and the encounter run.
+ * **Re-running the recipe today reproduces none of the threat half**, and that
+ * is expected rather than broken. There are no dens
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md) and `replay` parks the
+ * forecast, so the line goes up unmolested and the store comes back with no
+ * monsters, no damage and no `Repair`. The file is frozen and never
+ * re-recorded, and the shape test compares **key sets** rather than contents —
+ * so what this script still has to produce is one entity of each kind it is
+ * asked about, which it does. The `monsters` kind came out of that list with
+ * the dens.
  */
 export const FIXTURE_SEED_V4 = 20260981;
 export const V4_TICKS = 1100;
@@ -271,8 +273,9 @@ export function v4Script(sim: Sim): Command[] {
       return [{ kind: "place", building: 0, x: 126, y: 126 }];
     case 6:
       return openPile(sim);
-    // Standing before the den's first full prowl, so it is bitten rather than
-    // eaten as sticks — which is the whole of what this fixture is for.
+    // Late enough that the line was standing — not a row of blueprints — when
+    // the den's first full prowl reached it, which is what got the committed
+    // file its bite damage rather than a chewed-up building site.
     case 400:
       return [{ kind: "placeWall", tiles: denRun(sim, 0), material: "timber" }];
     default:
@@ -626,17 +629,23 @@ function chainPlace(sim: Sim, kind: 0 | 1 | 2 | 4 | 5 | 6 | 8 | 9 | 10 | 11 | 12
   return [];
 }
 
-/** A seven-tile run partway between the colony and the nearest den. Derived
- *  from the store, like every other site in this file. */
+/**
+ * A seven-tile palisade run a few tiles out from the colony.
+ *
+ * **It used to be sited off the nearest den**, which is how `v4.castles` was
+ * actually recorded: the run went partway between the colony and a lair, so the
+ * monster that lived there came out and bit it. There are no dens to aim at any
+ * more (docs/specs/2026-09-17-incursions-from-the-sea.md), so the site is a
+ * fixed offset from the centre instead. The frozen file is unaffected — it is
+ * never re-recorded — and nothing downstream reads this run's *position*: the
+ * shape tests compare store and entity key sets, and walls are a layer rather
+ * than an entity.
+ */
 function denRun(sim: Sim, offset: number): number[] {
   const size = sim.world.size;
   const centre = Math.floor(size / 2);
-  if (!sim.monsters.length) return [];
-  const m = sim.monsters.reduce((a, b) =>
-    Math.hypot(a.lairX - centre, a.lairY - centre) <= Math.hypot(b.lairX - centre, b.lairY - centre) ? a : b,
-  );
-  const cx = Math.round(centre + (m.lairX - centre) * 0.55);
-  const cy = Math.round(centre + (m.lairY - centre) * 0.55) + offset;
+  const cx = centre + 8;
+  const cy = centre + 8 + offset;
   const out: number[] = [];
   for (let k = -3; out.length < 7 && k < 7; k++) {
     if (canPlaceWall(sim, cx + k, cy)) out.push(tileIndex(cx + k, cy, size));
@@ -647,23 +656,24 @@ function denRun(sim: Sim, offset: number): number[] {
 /**
  * Rebuild a fixture's colony with whatever the store looks like today.
  *
- * `peaceful` empties the wilds before the first tick, and the three pre-v4
- * recipes use it. They were written for a world with no monsters in it, and
- * replaying them in one is not what they were ever meant to demonstrate: on a
- * seed with a den near the colony the whole colony can be caught and killed
- * inside a fixture's lifetime, which leaves the shape comparison with no
- * colonist to read a key set off. The shape test asks "does this build's store
- * have the fields the file has" — the wilderness is a confound in that
- * question, not a signal.
+ * **Every replay is peaceful, and the clock is parked to make it so.** A fresh
+ * colony opens with an empty wilderness (docs/specs/2026-09-17-incursions-from-the-sea.md),
+ * but the opening grace is *not* longer than every recipe here — `V10_TICKS` is
+ * 4250 against a `FIRST_STORM` of 3600, so a replay that let the clock run met
+ * an incursion, lost a colonist to it and finished with a monster still ashore.
+ * The weather is a confound in the question this function exists to ask — *does
+ * this build's store have the fields the file has* — exactly as the wilderness
+ * was for the three pre-v4 recipes the old `peaceful` flag served. So the
+ * forecast is pushed past the end of the run rather than each recipe being
+ * re-tuned around it (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
+ *
+ * It parks rather than empties: `stormTicks` is a plain countdown, so setting
+ * it beyond the run is the whole of "no storm", and nothing else in the store
+ * has to be touched.
  */
-export function replay(
-  script: (sim: Sim) => Command[],
-  ticks: number,
-  seed = FIXTURE_SEED,
-  peaceful = false,
-): Sim {
+export function replay(script: (sim: Sim) => Command[], ticks: number, seed = FIXTURE_SEED): Sim {
   const sim = createSim(seed);
-  if (peaceful) sim.monsters = [];
+  sim.stormTicks = ticks + 1;
   for (let t = 0; t < ticks; t++) advanceTick(sim, script(sim));
   return sim;
 }

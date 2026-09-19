@@ -38,15 +38,30 @@ import { Terrain, tileIndex } from "./world/world";
 
 const SETTLING = 20260908;
 /**
- * The death-en-route seed, **re-picked at the bread step**: on 20260912 the
- * wanderer now walks in unharmed, because meals move everybody's timings by a
- * few seconds and an interception is decided in seconds
- * (docs/specs/2026-09-08-bread-economy.md). 20260918 is the same scenario found
- * the same way — by seed selection rather than by staging a spawn — and it is a
- * better one: the orc catches this one early, and the replacement is on the
- * road before the run ends.
+ * The death-en-route seed.
+ *
+ * **20260913, and the run now schedules its own storm.** The wilds stopped
+ * living on the map with `docs/specs/2026-09-17-incursions-from-the-sea.md`, so
+ * no seed has a den whose orc happens to be out when a wanderer walks in. Seed
+ * selection still does the work, but it selects for something new: a world
+ * whose **opening bearing puts the landing on the same coast the wanderer walks
+ * up from**, so the two meet. A sweep of forty-one seeds at three storm ticks
+ * found exactly one that does it without also costing the colony somebody at
+ * home — which is the difference between this run and a colony being eaten.
+ * A tick is chosen too, because a run that waited out the opening grace would
+ * need six game-days of ticks to see a monster at all.
  */
-const CAUGHT = 20260918;
+const CAUGHT = 20260913;
+/**
+ * When the caught run calls its storm in.
+ *
+ * Late enough that the House is up and the first wanderer is already on the
+ * road, so what the landing meets is a lone figure walking the wilds rather
+ * than a colony at home: **earlier ticks, on this seed and others, killed
+ * colonists too**, which would make this the run where a colony is eaten and
+ * not the run where somebody does not arrive.
+ */
+const STORM_AT = 1400;
 /** Long enough for the first wanderer to settle **and** the second to be on
  *  the road, which is what makes "a second follows while beds remain" an
  *  observable rather than a promise. */
@@ -54,6 +69,10 @@ const SETTLING_TICKS = 2400;
 /** Long enough for the death and for the countdown to restart after it — the
  *  recovery loop is the whole point of the step, so it sits inside the pin. */
 const CAUGHT_TICKS = 1950;
+
+/** The two pinned hashes, named so the move histories above can cite them. */
+const SETTLING_HASH = "65021f45";
+const CAUGHT_HASH = "f49b4a0d";
 
 const CENTRE = 128;
 const SIZE = 256;
@@ -165,12 +184,20 @@ interface Trace {
   arrivals: number;
 }
 
-function run(seed: number, ticks: number): Trace {
+/**
+ * `stormAt` calls an incursion in at that tick by zeroing the forecast clock,
+ * the way `threats/encounter.test.ts` does — a scripted run cannot wait out the
+ * opening grace, which is deliberately longer than any run in this suite
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md). -1 leaves the run
+ * peaceful, which is what the settling run wants.
+ */
+function run(seed: number, ticks: number, stormAt = -1): Trace {
   const sim = createSim(seed);
   const out: Trace = { sim, landing: null, spawnedAt: -1, settledAt: -1, arrivals: 0 };
   const seen = new Set<number>();
   let folk = settled(sim);
   for (let t = 0; t < ticks; t++) {
+    if (t === stormAt) sim.stormTicks = 0;
     // Topped up on a fixed cadence rather than every tick, so the run pays for
     // one scan a game-minute instead of one a tick.
     // `settled + 2` is the floor rather than a courtesy: the gate wants
@@ -207,7 +234,7 @@ let caughtRun: Trace | null = null;
 const settling = (): Sim => (settlingWatched().sim);
 const caught = (): Sim => (caughtWatched().sim);
 const settlingWatched = (): Trace => (settlingRun ??= run(SETTLING, SETTLING_TICKS));
-const caughtWatched = (): Trace => (caughtRun ??= run(CAUGHT, CAUGHT_TICKS));
+const caughtWatched = (): Trace => (caughtRun ??= run(CAUGHT, CAUGHT_TICKS, STORM_AT));
 
 const graves = (sim: Sim): number => [...sim.graveMap].filter(Boolean).length;
 const house = (sim: Sim) => sim.buildings.find((b) => b.kind === BuildingKind.House);
@@ -256,7 +283,16 @@ describe("the scripted settling", () => {
     // so no mead exists, so `cellarSet` is false on every tick and the
     // countdown decrements by one as it always did, `batchTicks` answers
     // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
-    expect(hashSim(settling())).toBe("ebb40f13");
+    //
+    // ebb40f13 → SETTLING_HASH with incursions (SAVE_VERSION 12,
+    // docs/specs/2026-09-17-incursions-from-the-sea.md). This run is still
+    // wholly peaceful — the opening grace outlasts it and nothing lands — so
+    // what moved is **ids and shape**: `createSim` no longer mints two dozen
+    // monsters before the opening five, so every colonist, item and building in
+    // this colony is numbered two dozen lower, and the store carries three new
+    // forecast fields, one of which (`stormLanding`) resolves to a real tile on
+    // the first tick. Every assertion below is unchanged and still passes.
+    expect(hashSim(settling())).toBe(SETTLING_HASH);
   });
 
   it("builds a House out of planks, which is what planks are for", () => {
@@ -323,7 +359,7 @@ describe("the scripted settling", () => {
 
 describe("the scripted death en route", () => {
   it("replays byte-identically", () => {
-    expect(hashSim(caught())).toBe(hashSim(run(CAUGHT, CAUGHT_TICKS).sim));
+    expect(hashSim(caught())).toBe(hashSim(run(CAUGHT, CAUGHT_TICKS, STORM_AT).sim));
   });
 
   it("holds its golden hash", () => {
@@ -351,10 +387,18 @@ describe("the scripted death en route", () => {
     // so no mead exists, so `cellarSet` is false on every tick and the
     // countdown decrements by one as it always did, `batchTicks` answers
     // `recipe.ticks` for every kind present, and `drinkCup` finds nothing.
-    expect(hashSim(caught())).toBe("711457ba");
+    //
+    // 711457ba → CAUGHT_HASH with incursions (SAVE_VERSION 12,
+    // docs/specs/2026-09-17-incursions-from-the-sea.md). **A different colony**,
+    // like the bread step before it: the seed moved to 20260913 and the run
+    // calls its own storm in at `STORM_AT`, because no seed has a den any more.
+    // Every assertion below is the same claim about the same scenario — a
+    // wanderer caught out on the walk, buried like anyone, and the countdown
+    // restarting behind them.
+    expect(hashSim(caught())).toBe(CAUGHT_HASH);
   });
 
-  it("loses the wanderer to an orc, and buries them like anyone", () => {
+  it("loses the wanderer to a landed monster, and buries them like anyone", () => {
     const { sim, landing } = caughtWatched();
     expect(sim.world.tmap[tileIndex(landing?.[0] ?? 0, landing?.[1] ?? 0, SIZE)]).toBe(Terrain.Sand);
     // The colony itself never grew and never shrank: the grave is the
@@ -592,13 +636,15 @@ describe("arrivals", () => {
     expect(sim.world.tmap[tileIndex(Math.floor(arrival?.x ?? 0), Math.floor(arrival?.y ?? 0), 24)]).toBe(Terrain.Sand);
   });
 
-  it("never land on a shore a prowling monster is watching", () => {
+  it("never land on a shore a landed monster is watching", () => {
     const sim = coastSim();
     homeAt(sim, 10, 10);
-    // Three orcs awake on the sand, spaced so their notice radii cover the
-    // whole strip: there is nowhere calm to put anybody down.
+    // Three orcs ashore on the sand, spaced so their notice radii cover the
+    // whole strip: there is nowhere calm to put anybody down. `depth: 0` holds
+    // them on their own beach — the claim here is about a watched shore, and a
+    // monster that pressed inland would open the strip and prove nothing.
     for (let k = 0; k < 3; k++) {
-      sim.monsters.push(testMonster({ id: 900 + k, lairX: 2, lairY: 4 + k * 8 }));
+      sim.monsters.push(testMonster({ x: 2.5, y: 4 + k * 8 + 0.5, id: 900 + k, depth: 0 }));
     }
     for (let t = 0; t < 600; t++) advanceTick(sim);
     expect(wanderer(sim)).toBeNull();
@@ -607,11 +653,11 @@ describe("arrivals", () => {
     expect(sim.wandererTimer).toBe(0);
 
     for (const m of sim.monsters) {
-      m.phase = MonsterPhase.Rest;
+      m.phase = MonsterPhase.Withdrawing;
       m.phaseTicks = 10_000;
     }
     advanceTick(sim);
-    // A resting monster notices nothing, so it closes no shore.
+    // A withdrawing monster notices nothing, so it closes no shore.
     expect(wanderer(sim)).not.toBeNull();
   });
 
@@ -669,16 +715,16 @@ describe("arrivals", () => {
     // A prowler on the far side of the wall: near enough to run from — flee
     // knows about enclosure and nothing else, so a wall between them changes
     // nothing — and unable to reach them, so this is a flee and not a death.
-    sim.monsters.push(testMonster({ lairX: 5, lairY: Math.floor(walking?.y ?? 12) }));
+    sim.monsters.push(testMonster({x: 5 + 0.5, y: Math.floor(walking?.y ?? 12) + 0.5}));
     for (let t = 0; t < 20; t++) advanceTick(sim);
     expect(wanderer(sim)).not.toBeNull();
     expect(walking?.patience).toBe(waited);
     expect(walking?.work).toBe(0);
 
-    // It beds down, and the wait picks up where it left off rather than
-    // starting over: what is left of two game-days, not two more of them.
+    // It turns for its boat, and the wait picks up where it left off rather
+    // than starting over: what is left of two game-days, not two more of them.
     for (const m of sim.monsters) {
-      m.phase = MonsterPhase.Rest;
+      m.phase = MonsterPhase.Withdrawing;
       m.phaseTicks = 100_000;
     }
     let ran = 0;

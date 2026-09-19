@@ -1,6 +1,6 @@
 # Castles — Architecture
 
-*Last updated 2026-09-09. The first half of this document is the
+*Last updated 2026-09-17. The first half of this document is the
 architecture **as built** — every system below has shipped (the record is
 `docs/changelog/`, the designs `docs/specs/`); the second half is the record
 of the two visual mockups that came first.*
@@ -52,10 +52,12 @@ use.
 
 ## Truth and knowledge
 
-The concept requires the sim to know things the player has not earned:
-monsters run exact schedules, but the player sees approximations until
-manned watchtowers sharpen them. So the sim keeps two models — **truth** and
-**knowledge** — and the renderer and HUD may only read knowledge.
+The concept requires the sim to know things the player has not earned: the
+sim knows to the tick when the next incursion lands and on which beach, while
+the player sees a coarse forecast in words that goes blank past a horizon —
+and a manned watchtower covering that coast widens the horizon and halves the
+bucket. So the sim keeps two models — **truth** and **knowledge** — and the
+renderer and HUD may only read knowledge.
 
 This is the easiest architectural mistake available in this game: draw the
 sim's truth once, "temporarily", and information-as-infrastructure quietly
@@ -72,7 +74,7 @@ src/
     economy/      filtered storage, recipes, hauling
     walls/        the wall grid layer and its predicates, wall lifecycle
                   (palisade → stone → finished → teardown), the enclosure test
-    threats/      orcs, trolls, schedules, notice / attack / flee
+    threats/      orcs, trolls, the incursion clock, notice / attack / flee
     know/         the knowledge model — what the player may see
     save/         snapshot, versioning, migrations
   render/         three.js — chunked meshing, materials, shaders
@@ -101,21 +103,27 @@ consumes them by anything but the table shape.
   rock as features rather than topography, an island with no land edge.
 - **Enclosure is computed, not prescribed.** There are no rings — the player
   chooses where to expand. "Inside" is derived from the wall graph:
-  flood-fill **from the map edge and from every monster lair**, and anything
-  unreached is enclosed; a gate counts as wall. This test is the load-bearing
-  primitive — safety, buildable ground, and the gap-in-the-wall failure all
-  hang off it — so it must never run per-frame or per-consumer. It is
-  **event-driven**: the whole fill runs at most once per tick, batching every
-  segment that completed or fell that tick, and not at all on a quiet tick.
-  That is what "incremental" bought, and at 256² a full BFS is sub-millisecond,
-  so a region-incremental re-flood was measured as unnecessary and deferred
-  behind the same API (`docs/specs/2026-09-02-palisade-walls.md`). Seeding from
-  lairs is what stops a stone box round a den reading as calm ground: a monster
-  may be **contained** — by stone, or by digging its den into a pit — and only
-  never killed, removed, or made safe to stand beside. Nothing may be *built*
-  on a lair tile, which is what keeps that seed unblockable; levelling one is
-  left legal on purpose, as siegecraft priced in labour
-  (`docs/specs/2026-09-04-monsters.md`).
+  flood-fill **from the map edge and from every monster on the map**, and
+  anything unreached is enclosed; a gate counts as wall. This test is the
+  load-bearing primitive — safety, buildable ground, and the gap-in-the-wall
+  failure all hang off it — so it must never run per-frame or per-consumer. It
+  is **event-driven**: the whole fill runs at most once per tick, batching every
+  segment that completed or fell *and every monster that changed tile*, and not
+  at all on a quiet tick. That is what "incremental" bought, and at 256² a full
+  BFS is sub-millisecond, so a region-incremental re-flood was measured as
+  unnecessary and deferred behind the same API
+  (`docs/specs/2026-09-02-palisade-walls.md`). In peace `sim.monsters` is empty
+  and the fill is the map-edge flood alone — cheaper than it has ever been.
+
+  **Seeding from monsters is what stops a stone box round one reading as calm
+  ground**, and the consequence is colony-wide and intended: close a wall around
+  a landed monster and the *whole* enclosure reads as outside, because a monster
+  inside your walls can walk anywhere in them. A monster may be **contained**
+  and only never killed, removed, or made safe to stand beside. The seed was
+  anchored on a **lair** until `docs/specs/2026-09-17-incursions-from-the-sea.md`
+  deleted dens; with them went the rule that nothing could be built on a lair
+  tile, since a landed monster is leaving and there is no seed to protect
+  forever (`docs/specs/2026-09-04-monsters.md`).
 - Walls are a **grid layer** (`sim.wallMap`, one state per tile) rather than
   per-segment entities: a castle is hundreds of segments, and the flood-fill,
   the mesher and the pathfinder all read grids. Consumers go through
@@ -169,10 +177,12 @@ then kept extending the same way. The shipped sequence:
    (`2026-09-02-palisade-walls`, `2026-09-02-stone-and-terraform`).
 4. **Persistence** — pulled *earlier* than planned, exactly for the stated
    reason (`2026-09-02-versioned-save-snapshots`).
-5. **Threats + knowledge** — schedules, notice/attack/flee, the fuzzed
-   rhythm display (`2026-09-05-monsters-and-the-hours-they-keep`); the
-   watchtowers that sharpen it came as 4b
-   (`2026-09-09-watchtowers`).
+5. **Threats + knowledge** — notice/attack/flee and a coarse display of when
+   danger is due (`2026-09-05-monsters-and-the-hours-they-keep`); the
+   watchtowers that sharpen it came as 4b (`2026-09-09-watchtowers`). Both
+   were built around **dens with rhythms**; the wilds now arrive by sea
+   instead, and a tower reads the coast rather than a schedule
+   (`2026-09-17-incursions-from-the-sea`).
 6. **Population and food** — housing and sea-borne wanderers (5a), then
    the bread economy with hunger-that-slows and the tightened gate (5b),
    with production ceilings and stockpile filter UI landing between them
@@ -180,6 +190,10 @@ then kept extending the same way. The shipped sequence:
    `2026-09-07-production-limits-and-filters`, `2026-09-08-bread-economy`).
 7. **The HUD refit** — slim ribbon, Stores panel, icon rail
    (`2026-09-08-stores-panel-and-icon-rail`).
+8. **Incursions from the sea** — dens out, a forecast clock in, boats on one
+   coast, and a watchtower that reads the shore
+   (`2026-09-17-incursions-from-the-sea`, `2026-09-17-forecast-readouts`,
+   `2026-09-17-beached-longships`).
 
 ---
 

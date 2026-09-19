@@ -4,19 +4,19 @@ import { applyCommands } from "../commands";
 import { hashSim } from "../hash";
 import { batchTicks, fieldsInReach } from "../economy/workshop";
 import { countItems } from "../items";
-import { inspect, rhythm } from "../know";
+import { forecast, inspect } from "../know";
 import { cellarSet, populationCap, settled } from "../settlers";
 import { testBuilding } from "../test-sim";
 import { BUILDING_DEFS, recipeOf } from "../buildings";
 import { BuildingKind, BuildingState, ItemType, TaskKind, type Sim } from "../store";
 import {
   CLOTHES_WEAR_TICKS,
+  FIRST_STORM,
   HIVE_FIELDS_MAX,
   HIVE_TICKS_BY_FIELDS,
   PROVISION_BREAD,
   THREAT_BUCKETS,
   WATCH_BUCKETS,
-  WATCH_RANGE,
 } from "../tuning";
 import { advanceTick } from "../tick";
 import { WallState, canPlaceWall, isStoneWall } from "../walls";
@@ -146,9 +146,10 @@ type EntityKind = "colonists" | "items" | "buildings" | "tasks" | "monsters";
 /**
  * What `v7.castles` decodes to. Native when it was written; from SAVE_VERSION 8
  * it walks the bread rung like every other old file, which is what moved this
- * number off `0ca62ff1`, and from 10 the sheep rung as well.
+ * number off `0ca62ff1`, from 10 the sheep rung as well, and from 12 the rung
+ * that drops its monsters (docs/specs/2026-09-17-incursions-from-the-sea.md).
  */
-const V7_HASH = "a1539258";
+const V7_HASH = "17f2479b";
 
 /** The entity kinds a pre-threat recipe can still be asked about. Monsters are
  *  excluded because those three recipes replay in an empty wilderness — see
@@ -232,7 +233,13 @@ describe("the committed v1 save", () => {
     // loaves per settled colonist** so a loaded colony has the same three-day
     // runway a fresh one does (docs/changelog/2026-09-08-bread-economy.md).
     const sim = await decode(readFileSync(V1));
-    expect(hashSim(sim)).toBe("fd6e06a5");
+    // → b2feb0ed at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("b2feb0ed");
     expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
     // The grant, and the flags that would otherwise refuse it a home forever.
     expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 5);
@@ -243,8 +250,11 @@ describe("the committed v1 save", () => {
     for (const b of sim.buildings) {
       expect([b.acceptGrain, b.acceptFlour, b.acceptBread]).toEqual([1, 1, 1]);
     }
-    // A v1 colony wakes up in a wilderness rather than in an empty world.
-    expect(sim.monsters.length).toBeGreaterThan(0);
+    // A v1 colony wakes up in an **empty** wilderness with a storm on the way:
+    // the 3 → 4 rung used to wake two dozen dens over it, and the 11 → 12 rung
+    // drops them again (docs/specs/2026-09-17-incursions-from-the-sea.md).
+    expect(sim.monsters).toHaveLength(0);
+    expect(sim.stormTicks).toBe(FIRST_STORM);
     // The half of that rung nothing else would catch: a pre-v3 stockpile that
     // came through with the flags missing would refuse rock and blocks for the
     // rest of its life, and no test but this one would notice.
@@ -334,7 +344,13 @@ describe("the committed v2 save", () => {
     // `limits` slots and fifteen granted loaves
     // (docs/changelog/2026-09-08-bread-economy.md).
     const sim = await decode(readFileSync(V2));
-    expect(hashSim(sim)).toBe("d6358846");
+    // → a71ca4ca at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("a71ca4ca");
     for (const b of sim.buildings) {
       expect(b.acceptRock).toBe(1);
       expect(b.acceptBlock).toBe(1);
@@ -385,11 +401,19 @@ describe("the committed v3 save", () => {
     // 9935f38b → 8c8cb6fc at 6 for the `patience` one, 8c8cb6fc → 30f9a9a0
     // at 7 for the `limits` one, and 30f9a9a0 → e8452d51 at 8 for the bread one.
     const sim = await decode(readFileSync(V3));
-    expect(hashSim(sim)).toBe("85e11905");
-    // The half of that rung nothing else would catch: a migrated colony that
-    // came through with an empty `monsters` array would be a save of a game
-    // that has no threats in it at all, and nothing would ever say so.
-    expect(sim.monsters.length).toBeGreaterThan(0);
+    // → 729385d2 at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("729385d2");
+    // Empty wilds and a fresh forecast, which is now what a migrated colony
+    // is owed: the 3 → 4 rung's lair pass is gone with the dens it made, and
+    // this file arrives at the 11 → 12 rung with nothing for it to drop.
+    expect(sim.monsters).toHaveLength(0);
+    expect(sim.stormTicks).toBe(FIRST_STORM);
+    expect(sim.stormLanding).toBe(-1);
     expect(sim.wallDamageMap.some((v) => v !== 0)).toBe(false);
     expect(sim.graveMap.some((v) => v !== 0)).toBe(false);
   });
@@ -410,24 +434,24 @@ describe("the committed v3 save", () => {
 });
 
 describe("the committed v4 save", () => {
-  it("still loads, with its wilds mid-rhythm and its wall still wounded", async () => {
+  it("still loads, with its wilds dropped and its wall still wounded", async () => {
     const sim = await decode(readFileSync(V4));
     expect(sim.tick).toBe(V4_TICKS);
     expect(sim.world.seed).toBe(FIXTURE_SEED_V4);
 
-    // A full wilderness, every monster carrying its own hours and its own
-    // route — the state a save would most plausibly lose.
-    expect(sim.monsters.length).toBeGreaterThan(0);
-    expect(new Set(sim.monsters.map((m) => m.restTicks)).size).toBeGreaterThan(1);
-    for (const m of sim.monsters) {
-      expect(m.phaseTicks).toBeGreaterThanOrEqual(0);
-      expect(m.circuit.length).toBeGreaterThan(0);
-    }
-    // Routes in flight, which is the other thing a save could quietly lose.
-    expect(sim.monsters.some((m) => m.path.length > 0)).toBe(true);
+    // **The wilderness is gone, and that is the rung working.** This file was
+    // frozen mid-siege with two dozen dens on its map; the 11 → 12 rung drops
+    // every one of them, because there is no honest way to turn a resting den
+    // into an incursion (docs/specs/2026-09-17-incursions-from-the-sea.md). What
+    // it loads into is an empty wilderness with a storm on the way, which is
+    // the truthful reading of *this world no longer has dens in it*.
+    expect(sim.monsters).toHaveLength(0);
+    expect(sim.stormTicks).toBe(FIRST_STORM);
+    expect(sim.stormLanding).toBe(-1);
 
-    // A wounded segment the monster has walked away from, and somebody queued
-    // to mend it — the state between a prowl ending and the repair landing.
+    // A wounded segment the monster walked away from, and somebody queued to
+    // mend it — the state the rung does *not* touch, and the reason this file
+    // still earns its place.
     expect([...sim.wallDamageMap].filter((v) => v > 0).length).toBeGreaterThan(0);
     expect(sim.tasks.some((t) => t.kind === TaskKind.Repair)).toBe(true);
     // The grave layer rides along empty — see `fixtures/recipe.ts` for why this
@@ -445,7 +469,13 @@ describe("the committed v4 save", () => {
     // give-up clock its own field, aee29fc7 → 65b5106b at 7 for `limits`, and
     // 65b5106b → 87af28e4 at 8 for the bread rung.
     const sim = await decode(readFileSync(V4));
-    expect(hashSim(sim)).toBe("b6afcd30");
+    // → 46fb9317 at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("46fb9317");
     // The half of that rung nothing else would catch: a colonist that came
     // through without `dest` would be a store carrying `undefined`, which the
     // plain-data rule forbids and no other test looks for.
@@ -477,16 +507,20 @@ describe("the committed v4 save", () => {
     expect(arrived).toBe(true);
   });
 
-  it("keeps running from where it was saved, and the siege resolves", async () => {
+  it("keeps running from where it was saved, and the damage gets mended", async () => {
     const sim = await decode(readFileSync(V4));
     const wounded = [...sim.wallDamageMap].findIndex((v) => v > 0);
     const was = sim.wallDamageMap[wounded];
     for (let t = 0; t < 600; t++) advanceTick(sim);
     expect(sim.tick).toBe(V4_TICKS + 600);
-    // The clocks kept running and the labour loop picked the siege back up:
-    // the wounded segment is mended or gone, not frozen where the save left it.
-    expect(sim.monsters.some((m) => m.phaseTicks !== m.restTicks && m.phaseTicks !== m.prowlTicks)).toBe(true);
+    // The labour loop picked the repair back up, and with the wilds empty
+    // nothing interrupted it: the wounded segment is mended, not frozen where
+    // the save left it.
     expect(sim.wallDamageMap[wounded]).not.toBe(was);
+    // The forecast clock ran with everything else, and no storm arrived inside
+    // the opening grace.
+    expect(sim.stormTicks).toBe(FIRST_STORM - 600);
+    expect(sim.monsters).toHaveLength(0);
   });
 });
 
@@ -526,7 +560,13 @@ describe("the committed v5 save", () => {
     // **settled** five and not the wanderer this file was caught carrying,
     // because a colonist still walking in neither eats nor hungers.
     const sim = await decode(readFileSync(V5));
-    expect(hashSim(sim)).toBe("b3c15c23");
+    // → 480525c9 at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("480525c9");
     expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 5);
     for (const c of sim.colonists) expect(c.patience).toBe(0);
     // The wanderer it was caught carrying is still walking, clock and all.
@@ -580,7 +620,13 @@ describe("the committed v6 save", () => {
     // four slots to seven, and → a71f09d4 at 10 for the sheep rung, which grows
     // them to thirteen — the append ritual, one rung at a time.
     const sim = await decode(readFileSync(V6));
-    expect(hashSim(sim)).toBe("fe2019bc");
+    // → d7412c48 at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("d7412c48");
     expect(sim.limits).toEqual([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
     // Six settled folk by now, so six heads' worth of provisions.
     expect(sim.items.filter((it) => it.type === ItemType.Bread)).toHaveLength(PROVISION_BREAD * 6);
@@ -698,7 +744,13 @@ describe("the committed v8 save", () => {
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V8));
-    expect(hashSim(sim)).toBe("a4634c50");
+    // → 21daa846 at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("21daa846");
   });
 
   it("keeps running from where it was saved, and the meal finishes", async () => {
@@ -739,39 +791,42 @@ describe("the committed v9 save", () => {
     expect(watcher.slot).toBe(tower.id);
     expect(watcher.inside).toBe(1);
 
-    // The reloaded colony's picture is sharp, off the file alone: one den in
-    // reach, reading in exact tenths rather than fuzzy fifths.
-    expect(inspect(sim, tower.id)?.watching).toBe(1);
-    const covered = sim.monsters.filter(
-      (m) => Math.max(Math.abs(m.lairX - tower.x), Math.abs(m.lairY - tower.y)) <= WATCH_RANGE,
-    );
-    expect(covered).toHaveLength(1);
-    expect(rhythm(sim, covered[0].id)?.buckets).toBe(WATCH_BUCKETS);
-    expect(rhythm(sim, covered[0].id)?.watched).toBe(true);
+    // The reloaded colony's picture is whatever its *coast* says, off the file
+    // alone. This tower was sited to cover a den, and dens are gone — so what
+    // it is asked now is how much shore it can see, which for an inland tower
+    // is honestly none (docs/specs/2026-09-17-incursions-from-the-sea.md).
+    // The panel's wording for that is `hud.test.ts`'s to pin; what the save
+    // owes is the number.
+    expect(inspect(sim, tower.id)?.watching).toBe(0);
   });
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V9));
-    expect(hashSim(sim)).toBe("56c5e989");
+    // → e585b94c at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("e585b94c");
   });
 
   it("keeps watching from where it was saved, and blurs the frame it is unstaffed", async () => {
     const sim = await decode(readFileSync(V9));
     const tower = sim.buildings.find((b) => b.kind === BuildingKind.Watchtower)!;
-    const den = sim.monsters.find(
-      (m) => Math.max(Math.abs(m.lairX - tower.x), Math.abs(m.lairY - tower.y)) <= WATCH_RANGE,
-    )!;
-    // Coverage is derived per read, not stored, so it survives a load by
-    // being recomputed rather than by having been saved.
+    // Coverage is derived per read, not stored, so it survives a load by being
+    // recomputed rather than by having been saved. Put the coming storm on the
+    // tower's own doorstep and the picture is sharp.
+    sim.stormLanding = tileIndex(tower.x, tower.y, sim.world.size);
     for (let t = 0; t < 200; t++) advanceTick(sim);
     expect(sim.tick).toBe(V9_TICKS + 200);
-    expect(rhythm(sim, den.id)?.buckets).toBe(WATCH_BUCKETS);
+    expect(forecast(sim).buckets).toBe(WATCH_BUCKETS);
 
     // The running price, on a loaded colony: pull the watcher and the picture
     // is coarse on the very next read, with nothing banked.
     applyCommands(sim, [{ kind: "unstaff", building: tower.id }]);
-    expect(rhythm(sim, den.id)?.buckets).toBe(THREAT_BUCKETS);
-    expect(rhythm(sim, den.id)?.watched).toBe(false);
+    expect(forecast(sim).buckets).toBe(THREAT_BUCKETS);
+    expect(forecast(sim).watched).toBe(false);
   });
 });
 
@@ -823,12 +878,20 @@ describe("the committed v10 save", () => {
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V10));
-    expect(hashSim(sim)).toBe("2b8186a7");
+    // → 38bb3d98 at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("38bb3d98");
   });
 
   it("keeps running from where it was saved, and both fittings finish", async () => {
     const sim = await decode(readFileSync(V10));
-    const fitting = sim.colonists.filter((c) => c.dressing === 1).map((c) => c.id);
+    const fitting = sim.colonists
+      .filter((c) => c.dressing === 1)
+      .map((c) => c.id);
     const worn = new Map(sim.colonists.map((c) => [c.id, c.clothes]));
     for (let t = 0; t < 600; t++) advanceTick(sim);
     expect(sim.tick).toBe(V10_TICKS + 600);
@@ -886,7 +949,13 @@ describe("the committed v11 save", () => {
 
   it("decodes to the exact store it was written from", async () => {
     const sim = await decode(readFileSync(V11));
-    expect(hashSim(sim)).toBe("0e5c80e2");
+    // → dd0a01aa at SAVE_VERSION 12: the 11 → 12 rung **drops every monster** and
+    // gives the store its forecast clock
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). Every one of the
+    // eleven pinned decode hashes in this file moved for it, and they moved
+    // together: the files are frozen, and what changed is what a save now
+    // decodes into.
+    expect(hashSim(sim)).toBe("dd0a01aa");
   });
 
   it("keeps running from where it was saved, and the hive keeps its boosted rate", async () => {
@@ -912,74 +981,69 @@ describe("the committed v11 save", () => {
  */
 describe("the fixtures still have the store shape this build produces", () => {
   it("v1, through its migrations", async () => {
-    expect(shapeOf(await decode(readFileSync(V1)))).toEqual(shapeOf(replay(v1Script, V1_TICKS, FIXTURE_SEED, true)));
+    expect(shapeOf(await decode(readFileSync(V1)))).toEqual(shapeOf(replay(v1Script, V1_TICKS, FIXTURE_SEED)));
   });
 
   it("v2, through its migrations", async () => {
-    expect(shapeOf(await decode(readFileSync(V2)))).toEqual(shapeOf(replay(v2Script, V2_TICKS, FIXTURE_SEED, true)));
+    expect(shapeOf(await decode(readFileSync(V2)))).toEqual(shapeOf(replay(v2Script, V2_TICKS, FIXTURE_SEED)));
   });
 
   it("v3, through its migration", async () => {
     expect(shapeOf(await decode(readFileSync(V3)))).toEqual(
-      shapeOf(replay(v3Script, V3_TICKS, FIXTURE_SEED_V3, true)),
+      shapeOf(replay(v3Script, V3_TICKS, FIXTURE_SEED_V3)),
     );
   });
 
   it("v5, through its migration", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V5)), kinds)).toEqual(
-      shapeOf(replay(v5Script, V5_TICKS, FIXTURE_SEED_V5), kinds),
+    expect(shapeOf(await decode(readFileSync(V5)))).toEqual(
+      shapeOf(replay(v5Script, V5_TICKS, FIXTURE_SEED_V5)),
     );
   });
 
   it("v6, natively — the arrival loop included", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V6)), kinds)).toEqual(
-      shapeOf(replay(v6Script, V6_TICKS, FIXTURE_SEED_V6), kinds),
+    expect(shapeOf(await decode(readFileSync(V6)))).toEqual(
+      shapeOf(replay(v6Script, V6_TICKS, FIXTURE_SEED_V6)),
     );
   });
 
   it("v7, natively — ceilings included", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V7)), kinds)).toEqual(
-      shapeOf(replay(v7Script, V7_TICKS, FIXTURE_SEED), kinds),
+    expect(shapeOf(await decode(readFileSync(V7)))).toEqual(
+      shapeOf(replay(v7Script, V7_TICKS, FIXTURE_SEED)),
     );
   });
 
   it("v8, natively — the bread chain and a meal in flight", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V8)), kinds)).toEqual(
-      shapeOf(replay(v8Script, V8_TICKS, FIXTURE_SEED_V8), kinds),
+    expect(shapeOf(await decode(readFileSync(V8)))).toEqual(
+      shapeOf(replay(v8Script, V8_TICKS, FIXTURE_SEED_V8)),
     );
   });
 
   it("v9, natively — a manned Watchtower included", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V9)), kinds)).toEqual(
-      shapeOf(replay(v9Script, V9_TICKS, FIXTURE_SEED_V9), kinds),
+    expect(shapeOf(await decode(readFileSync(V9)))).toEqual(
+      shapeOf(replay(v9Script, V9_TICKS, FIXTURE_SEED_V9)),
     );
   });
 
   it("v10, natively — the cloth chain and two fittings in flight", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V10)), kinds)).toEqual(
-      shapeOf(replay(v10Script, V10_TICKS, FIXTURE_SEED_V10), kinds),
+    expect(shapeOf(await decode(readFileSync(V10)))).toEqual(
+      shapeOf(replay(v10Script, V10_TICKS, FIXTURE_SEED_V10)),
     );
   });
 
   it("v11, natively — the boosted hive and the cellar", async () => {
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V11)), kinds)).toEqual(
-      shapeOf(replay(v11Script, V11_TICKS, FIXTURE_SEED), kinds),
+    expect(shapeOf(await decode(readFileSync(V11)))).toEqual(
+      shapeOf(replay(v11Script, V11_TICKS, FIXTURE_SEED)),
     );
   });
 
-  it("v4, natively — monsters included", async () => {
-    // The one comparison that can carry the monster key set, because it is the
-    // only recipe written for a world that has any.
-    const kinds = [...OLD_KINDS, "monsters"] as const;
-    expect(shapeOf(await decode(readFileSync(V4)), kinds)).toEqual(
-      shapeOf(replay(v4Script, V4_TICKS, FIXTURE_SEED_V4), kinds),
+  it("v4, through the rung that emptied its wilderness", async () => {
+    // **No `monsters` in the kinds any more**, and there is nothing left that
+    // could put it back: `shapeOf` asserts each kind it is asked about is
+    // non-empty, and every save in this folder now decodes with `monsters: []`
+    // (docs/specs/2026-09-17-incursions-from-the-sea.md). The monster key set is
+    // pinned by `threats/` instead, where the entity is actually made.
+    expect(shapeOf(await decode(readFileSync(V4)))).toEqual(
+      shapeOf(replay(v4Script, V4_TICKS, FIXTURE_SEED_V4)),
     );
   });
 });

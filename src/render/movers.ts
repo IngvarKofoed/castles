@@ -149,8 +149,8 @@ const MAX_COLONISTS = 64;
 const COLONIST_BOXES = 6;
 /** The folk layer's size, and the budget `drawColonists` reserves against. */
 const FOLK_BOXES = MAX_COLONISTS * COLONIST_BOXES;
-/** Two boxes each, and the lair pass targets a couple of dozen dens — sized
- *  well clear of that so a denser map never silently drops one. */
+/** Two boxes each, and an incursion lands `INCURSION_MAX` of them — sized well
+ *  clear of that so a bigger storm never silently drops one. */
 const MAX_MONSTERS = 128;
 const MAX_ITEMS = 1024;
 const MAX_OVERLAY = 8192;
@@ -487,7 +487,7 @@ const CARRY = { w: 0.32, h: 0.26, y: 0.8 };
  *
  * **On the world clock, and deliberately not stilled by reduced motion.** At ×0
  * the swing stops with the colony, because no work is being done; under
- * `prefers-reduced-motion` it keeps going with walking and prowling, because it
+ * `prefers-reduced-motion` it keeps going with walking and the Wilds, because it
  * says work is happening and that is information rather than decoration
  * (docs/STYLEGUIDE.md, Motion).
  *
@@ -581,29 +581,6 @@ const MONSTER_MODELS: Record<MonsterKindValue, MonsterModel> = {
     head: { w: 0.46, h: 0.36, color: PROP.trollHide },
   },
 };
-
-/**
- * How a resting monster draws: squat and spread, so "asleep" reads without a
- * single HUD element saying so — and shifted to the **mouth of its den**.
- *
- * The shift is not decoration. A hunched figure is shorter than the den mound
- * it shares a tile with, so drawn on its stored position it is simply inside
- * the prop and invisible — a monster the player cannot see is the one thing
- * this game must never have. At the mouth it lies in front of the mound, which
- * is both visible and the better picture.
- */
-const DORMANT_SQUASH = 0.5;
-const DORMANT_SPREAD = 1.25;
-/**
- * **Must stay under half a tile.** A resting monster sits at exactly
- * `lair + 0.5`, so anything from 0.5 up pushes the drawn figure into the *next*
- * tile — and two things then read from the wrong one: `monsterAtTile` matches
- * on the monster's own floored position, so clicking the sleeper you can see
- * selects nothing; and the ground height under it is sampled a tile south, so
- * on a slope it floats or sinks. At 0.45 the figure still clears the den mound
- * (which ends 0.4 out) and still belongs to its own tile.
- */
-const DORMANT_FRONT = 0.45;
 
 /** One tile of a placement preview, and whether it may actually be placed. */
 /**
@@ -980,47 +957,37 @@ export class MoverRenderer {
 
   /**
    * The Wilds, interpolated between ticks exactly as the folk are — a monster
-   * moves in the world, so it is drawn moving.
+   * moves in the world, so it is drawn moving. Nothing at all is drawn between
+   * incursions, because nothing is there
+   * (docs/specs/2026-09-17-incursions-from-the-sea.md).
    *
    * It reads `sim/know`'s projection rather than the store: what comes back is
-   * position, kind, heading and a two-way stance, and the exact clock a monster
-   * is running never leaves the sim (docs/ARCHITECTURE.md, truth vs knowledge).
-   * That is the whole reason the renderer cannot accidentally draw a countdown
-   * over a den, which is what would quietly delete the watchtower mechanic.
+   * position, kind and heading, and the exact clock a storm is running never
+   * leaves the sim (docs/ARCHITECTURE.md, truth vs knowledge). That is the whole
+   * reason the renderer cannot accidentally draw a countdown over a beach, which
+   * is what would quietly delete the watchtower mechanic.
+   *
+   * **One posture, and that is now the whole of it.** A squashed, spread,
+   * shifted-forward figure used to draw a monster asleep at its den's mouth; no
+   * monster sleeps any more, so the three constants that did it are gone with
+   * the dens (docs/changelog/2026-09-05-monsters-and-the-hours-they-keep.md).
    */
   private drawMonsters(alpha: number): void {
     for (const m of monsters(this.sim)) {
       const model = MONSTER_MODELS[m.kind as MonsterKindValue] ?? MONSTER_MODELS[MonsterKind.Orc];
-      // Asleep at the den: squat, spread, and drawn at its mouth rather than on
-      // top of it — so the difference between a monster that can hurt you and
-      // one that cannot is visible from across the map without the HUD saying a
-      // word.
-      const dormant = m.stance === "dormant";
       const x = m.px + (m.x - m.px) * alpha;
-      const y = m.py + (m.y - m.py) * alpha + (dormant ? DORMANT_FRONT : 0);
+      const y = m.py + (m.y - m.py) * alpha;
       const base = this.groundY(x, y);
-      const squash = dormant ? DORMANT_SQUASH : 1;
-      const spread = dormant ? DORMANT_SPREAD : 1;
-      const bodyH = model.body.h * squash;
-      put(
-        this.solids,
-        x,
-        base,
-        y,
-        model.body.w * spread,
-        bodyH,
-        model.body.w * spread,
-        m.heading,
-        model.body.color,
-      );
+      const bodyH = model.body.h;
+      put(this.solids, x, base, y, model.body.w, bodyH, model.body.w, m.heading, model.body.color);
       put(
         this.solids,
         x,
         base + bodyH,
         y,
-        model.head.w * spread,
-        model.head.h * squash,
-        model.head.w * spread,
+        model.head.w,
+        model.head.h,
+        model.head.w,
         m.heading,
         model.head.color,
       );
@@ -1508,10 +1475,11 @@ export class MoverRenderer {
    * (docs/specs/2026-09-14-hives-and-mead.md).
    *
    * **A rectangle, because a rectangle is what the predicates test.** Both are
-   * Chebyshev gaps — tower-tile to den for one, footprint to footprint for the
-   * other — so a circle would draw a picture that excluded covered diagonal
-   * dens and counted fields the hive cannot reach. The overlay may never deny
-   * knowledge the player has paid for, nor promise a rate they will not get.
+   * Chebyshev gaps — tower-tile to a stretch of coast for one, footprint to
+   * footprint for the other — so a circle would draw a picture that excluded a
+   * covered diagonal beach and counted fields the hive cannot reach. The
+   * overlay may never deny knowledge the player has paid for, nor promise a
+   * rate they will not get.
    *
    * **Outline only, no interior wash.** The enclosure's faint fill works
    * because it says which side of a line the colony's ground is on; 49 tiles

@@ -15,9 +15,8 @@ import {
   type Inspection,
   monsters,
   readout,
-  rhythm,
+  forecast,
   stepLimit,
-  threat,
   wallItem,
   type BuildingKindValue,
   type GoodDef,
@@ -411,23 +410,13 @@ export class Hud {
    */
   private section: RailSection = "build";
   /**
-   * What the inspector is showing. Two shapes now — a building, or a monster —
-   * because a den's inhabitant is a thing worth watching and nothing else in
+   * What the inspector is showing. Two shapes — a building, or a monster —
+   * because a landed monster is a thing worth looking at and nothing else in
    * the game is inspectable.
    */
   private selected: { kind: "building" | "monster"; id: number } | null = null;
   /** Last rendered inspector signature, so the panel only rebuilds on change. */
   private lastPanel = "";
-  /**
-   * The monster the threat meter is currently watching.
-   *
-   * The pick **holds** until that monster goes back to sleep, so the bar cannot
-   * flicker between two clocks mid-siege — and the memory lives *here* rather
-   * than in the store, because which monster a particular meter is watching is
-   * a property of the meter and not of the world. `sim/know` owns the policy
-   * and is handed last frame's answer; it reads the store and never writes it.
-   */
-  private watching = -1;
   private readonly threatBars: HTMLElement;
   private readonly threatCaption: HTMLElement;
 
@@ -436,7 +425,7 @@ export class Hud {
     private readonly ports: HudPorts,
   ) {
     this.threatBars = el("div", { class: "bars", role: "img" });
-    this.threatCaption = el("u", {}, "wilds quiet");
+    this.threatCaption = el("u", {}, "a storm is far off");
     this.root = el("div", { id: "hud" });
     this.root.append(this.buildRibbon(), this.buildLeftColumn());
     this.inspector = el("aside", { class: "panel inspector", "aria-live": "polite" });
@@ -565,13 +554,17 @@ export class Hud {
   }
 
   /**
-   * The threat meter. `sim/know` picks the monster and works out how much of
-   * its clock is left; the HUD only hands back which one it was showing, so
-   * the pick holds while that monster is out.
+   * The forecast meter: **one bar on one clock**, counting toward the next
+   * landing and standing full while anything is ashore.
+   *
+   * It is the colony's weather rather than any one monster's hours, so there is
+   * nothing to hold and nothing to re-target — which is what the old threat
+   * meter needed a `watching` field for, and what made it flicker between
+   * clocks (docs/specs/2026-09-17-incursions-from-the-sea.md). `sim/know` owns
+   * the whole policy; the HUD only paints it.
    */
   private updateThreat(): void {
-    const t = threat(this.sim, this.watching);
-    this.watching = t.monster;
+    const t = forecast(this.sim);
     const want = `${t.lit}/${t.buckets}|${t.caption}`;
     // Guarded, because `update()` runs every frame and this is DOM.
     if (this.threatBars.dataset.state === want) return;
@@ -598,9 +591,9 @@ export class Hud {
     // The game's progress bar: buildable ground the wall has actually claimed.
     ribbon.append(this.count("enclosed", "enclosed"));
 
-    // And the one thing on the ribbon that is not a count: how long until the
-    // wilds matter. Five rust segments and a quiet caption — the whole of the
-    // game's alarm vocabulary (docs/STYLEGUIDE.md).
+    // And the one thing on the ribbon that is not a count: the weather — how
+    // long until the wilds come, and from where. Five rust segments and a quiet
+    // caption, the whole of the game's alarm vocabulary (docs/STYLEGUIDE.md).
     ribbon.append(el("span", { class: "divider" }));
     const threatBox = el("span", { class: "threat" });
     threatBox.append(this.threatBars, this.threatCaption);
@@ -1068,29 +1061,27 @@ export class Hud {
   }
 
   /**
-   * One monster's panel: what kind it is, whether it is up, and how far through
-   * its hours it is — the same coarse five-bucket bar the ribbon uses, because
-   * they are the same claim at different scopes.
+   * One monster's panel: what kind it is, and what it is doing.
    *
-   * **No action button.** There is nothing a player may do to a monster; an
-   * inspector with no button is the honest way to say so, and adding one would
-   * be the first crack in avoidance-only.
+   * **No bar, and no clock.** It carried a five-bucket rhythm bar until the
+   * wilds stopped living on the map; a monster now has no per-monster clock to
+   * bucket — it is ashore until the storm passes, and that clock is the
+   * colony's weather, which the ribbon already shows
+   * (docs/specs/2026-09-17-incursions-from-the-sea.md).
+   *
+   * **No action button either.** There is nothing a player may do to a monster;
+   * an inspector with no button is the honest way to say so, and adding one
+   * would be the first crack in avoidance-only.
    */
   private updateMonsterPanel(id: number): void {
     const seen = monsters(this.sim).find((m) => m.id === id);
-    const r = seen ? rhythm(this.sim, id) : null;
-    if (!seen || !r) {
+    if (!seen) {
       this.hideInspector();
       return;
     }
     this.inspector.hidden = false;
 
-    // `buckets` and `watched` are in the signature, not just `bucket`: a
-    // staff/unstaff flip changes the bar's *length* and the note beneath it,
-    // and on the flip where the bucket value happens to coincide this panel
-    // would otherwise redraw nothing — a stale ten-segment bar defeating
-    // "returns to fifths the same frame" (docs/specs/2026-09-09-watchtowers.md).
-    const signature = `m${id}|${seen.stance}|${r.phase}|${r.bucket}/${r.buckets}|${r.watched}`;
+    const signature = `m${id}|${seen.doing}`;
     if (signature === this.lastPanel) return;
     this.lastPanel = signature;
 
@@ -1100,27 +1091,16 @@ export class Hud {
     head.append(el("span", { class: "tag threat" }, name));
     this.inspector.replaceChildren(
       head,
-      rows([["Stance", seen.stance === "dormant" ? "resting" : "out"]]),
-      // `bucket + 1`, not `bucket`: the buckets are 0-based, so passing the raw
-      // value left the bar unable to reach full however far through its hours a
-      // monster got.
-      //
-      // This bar and the ribbon's meter deliberately measure **different
-      // things**, and the difference is worth stating because they sit on one
-      // screen: this one is *phase progress* — how far through whatever it is
-      // doing — so it fills as the phase runs out whichever phase that is. The
-      // ribbon's is *danger remaining*, so it fills toward a waking and drains
-      // toward a leaving. A monster walking home therefore reads full here (its
-      // rounds are over) and empty there (it can no longer hurt you). Do not
-      // "reconcile" them.
-      bars(r.bucket + 1, r.buckets, RHYTHM_LABEL[r.phase]),
-      // The house voice, and the whole of what the base game will tell you:
-      // watch it long enough and you learn its hours. A manned Watchtower
-      // within range of this monster's *den* is what changes the sentence —
-      // and it says a watcher rather than a tower, because the price is the
-      // pair of hands and not the building (docs/CONCEPT.md: information is
-      // infrastructure, bought with the scarcest currency in the game).
-      note(r.watched ? "a watcher knows its hours" : "its hours are read off the map, never exactly"),
+      rows([["Doing", seen.doing === "withdrawing" ? "heading for the boats" : "ashore"]]),
+      // The house voice, and the whole of what the game will tell you about one:
+      // it came off a boat and it will leave on one. A withdrawing monster is
+      // already harmless, which is CONCEPT's "an attack ends only when the
+      // monster leaves" said in the inspector.
+      note(
+        seen.doing === "withdrawing" ?
+          "it is leaving — nothing it passes is in danger now"
+        : "it came ashore with the storm, and leaves when the storm does",
+      ),
     );
   }
 
@@ -1491,7 +1471,7 @@ export function millNote(b: MillNote): string {
 }
 
 /**
- * The Watchtower's note row: what it is watching, in the house voice.
+ * The Watchtower's note row: how much sea it is watching, in the house voice.
  *
  * **Keyed off the worker's whereabouts, never off `staffed`, so the panel
  * cannot lie.** Coverage requires the watcher *inside* — the same gate
@@ -1501,17 +1481,19 @@ export function millNote(b: MillNote): string {
  * and the worker row above it is the corroboration
  * (docs/specs/2026-09-09-watchtowers.md).
  *
- * `watching` counts dens whether or not anybody is standing in it, which is
- * what lets an unstaffed tower honestly say what it *would* watch.
+ * `watching` counts **tiles of shore** whether or not anybody is standing in
+ * the tower, which is what lets an unstaffed one honestly say what it *would*
+ * watch. It counted dens until the wilds started arriving by sea
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md).
  */
 export function watchNote(b: Pick<Inspection, "watching" | "worker">): string {
-  // Nothing in range outranks every other wording: a tower watching no dens is
-  // a tower in the wrong place, and that is worth saying whoever is in it.
-  if (b.watching === 0) return "the watcher sees no dens from here";
-  const dens = `${b.watching} ${b.watching === 1 ? "den" : "dens"}`;
-  if (b.worker === "none") return `${dens} in reach — no watcher`;
-  if (b.worker !== "inside") return `${dens} in reach — the watcher is away`;
-  return `watching ${dens}`;
+  // No sea in range outranks every other wording: a tower facing inland is a
+  // tower in the wrong place, and that is worth saying whoever is in it.
+  if (b.watching === 0) return "the watcher sees no shore from here";
+  const shore = `${b.watching} ${b.watching === 1 ? "tile" : "tiles"} of shore`;
+  if (b.worker === "none") return `${shore} in reach — no watcher`;
+  if (b.worker !== "inside") return `${shore} in reach — the watcher is away`;
+  return `watching ${shore}`;
 }
 
 /**
@@ -1565,28 +1547,6 @@ function row(label: string, value: string): HTMLElement {
 
 function note(message: string): HTMLElement {
   return el("div", { class: "row note" }, message);
-}
-
-/** What a monster's rhythm bar is measuring, in the house voice. */
-const RHYTHM_LABEL: Record<"resting" | "prowling" | "homeward", string> = {
-  resting: "toward waking",
-  prowling: "through its rounds",
-  homeward: "heading home",
-};
-
-/**
- * The five-segment rust bar, shared by the ribbon's threat meter and a
- * monster's rhythm (docs/STYLEGUIDE.md). Unlit segments are the trough, never
- * a dimmer rust: a bar that is never fully off reads as a standing alarm.
- */
-function bars(lit: number, total: number, label: string): HTMLElement {
-  const box = el("div", { class: "rows" });
-  const bar = el("div", { class: "bars", role: "img", "aria-label": label });
-  for (let i = 0; i < total; i++) bar.append(el("i", i < lit ? { class: "on" } : {}));
-  const row = el("div", { class: "row" });
-  row.append(el("span", {}, label));
-  box.append(row, bar);
-  return box;
 }
 
 function meter(fraction: number): HTMLElement {

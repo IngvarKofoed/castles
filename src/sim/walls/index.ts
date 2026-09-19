@@ -1,5 +1,5 @@
 import { buildingAt } from "../buildings";
-import { ItemType, Loc, lairAt, type ItemTypeValue, type Sim } from "../store";
+import { ItemType, Loc, type ItemTypeValue, type Sim } from "../store";
 import {
   GATE_BUILD_TICKS,
   GATE_HP,
@@ -252,9 +252,16 @@ export function razeMarked(sim: Sim, x: number, y: number): boolean {
  * `canPlace`'s checks minus flatness, which is moot for a 1×1 footprint:
  * segments follow the terrain, and a height step between neighbouring segments
  * is a hillside palisade rather than a defect. Grass or sand, no tree, no
- * water, no rock, no building, no existing wall, no ground item — and **never a
- * lair tile**, because a den you could brick over is a monster you could
- * permanently neutralize.
+ * water, no rock, no building, no existing wall, no ground item.
+ *
+ * **A monster is not refused here**, unlike `canPlace`: a segment is a
+ * blueprint first and blueprints are open ground, so a line drawn under a
+ * landed monster is a line it walks over. Closing one around it is legal and
+ * the enclosure fill answers for it — a monster inside a ring makes the whole
+ * ring read as outside, which is the trap doing its job
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md). This refused a **lair**
+ * tile until that spec, because a den you could brick over was a monster you
+ * could permanently neutralize; there are no dens now.
  */
 export function canPlaceWall(sim: Sim, x: number, y: number): boolean {
   const { size, tmap, treeMap } = sim.world;
@@ -264,7 +271,6 @@ export function canPlaceWall(sim: Sim, x: number, y: number): boolean {
   if (treeMap[i]) return false;
   if (sim.wallMap[i] !== WallState.None) return false;
   if (buildingAt(sim, x, y)) return false;
-  if (lairAt(sim, x, y)) return false;
   for (const it of sim.items) {
     if (it.loc === Loc.Ground && it.x === x && it.y === y) return false;
   }

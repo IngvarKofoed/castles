@@ -446,9 +446,9 @@ function buildSession(sim: Sim): Session {
       return;
     }
     // A monster is picked before a building: it is the thing standing on the
-    // tile, and a den's inhabitant is what the player clicked on if it is
-    // there. Watching one creature's rounds is the per-monster half of the
-    // ribbon's threat meter (docs/CONCEPT.md — reading them is the toolkit).
+    // tile, so it is what the player clicked on if it is there. Looking at one
+    // is how you learn whether it is still dangerous or already leaving
+    // (docs/CONCEPT.md — reading them is the toolkit).
     const monster = monsterAtTile(sim, x, y);
     if (monster) {
       hud.selectMonster(monster.id);

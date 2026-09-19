@@ -8,73 +8,85 @@ import {
 } from "../store";
 import { NOTICE_BREAK } from "../tuning";
 import { isDamageable } from "../walls";
-import { tileIndex } from "../world/world";
+import { markEnclosureStale } from "../walls/enclosure";
+import { markChunkDirty, tileIndex } from "../world/world";
 import { biteWall, nearestDamageable } from "./damage";
 import { killColonist } from "./flee";
+import { colonyAnchor, settleIncursion, stepForecast } from "./incursion";
 import { adjacentTo, defOfMonster, monsterNeighbours, monsterPassable, monsterStep, reach } from "./index";
 
 /**
- * A monster's tick: the rhythm first, then whatever the rhythm allows.
+ * A monster's tick: the weather first, then whatever is ashore.
  *
- * **The rhythm is the whole design.** A monster is either resting at its lair —
- * noticing nothing, chasing nothing, biting nothing — or prowling its circuit
- * with its notice radius live, and an attack ends *only* when the prowl clock
- * does. Nothing the player does drives one off, and nothing they do keeps one
- * out past its hours either: it disengages mid-bite and walks home. That hard
- * stop is what makes CONCEPT's "hold until it leaves" something the player can
- * actually plan around, and it is why `GoingHome` notices nothing at all.
+ * **Monsters exist only for the length of an incursion**
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md). In peace `sim.monsters` is
+ * empty and everything below is skipped; the forecast clock still runs, which
+ * is why `stepForecast` is called before the guard rather than after it. A
+ * landed monster presses toward the colony, attacks what is unfinished and
+ * catches who is outside, and walks back to its boat when the storm passes.
+ * Nothing the player does drives one off, and nothing keeps one past the storm:
+ * it disengages mid-bite and leaves. That hard stop is what makes CONCEPT's
+ * "an attack ends only when the monster leaves" something a player can plan
+ * around, and it is why `Withdrawing` notices nothing at all.
  *
  * **Where this sits in the tick is part of the contract.** Monsters step after
  * colonists and before workshops (see `tick.ts`), so a catch always tests
  * post-move positions while a colonist's flee decision always reads last tick's
- * monster positions. Neither side gets to move twice against the other.
+ * monster positions. Neither side gets to move twice against the other. The
+ * forecast rides in this slot rather than earning a step of its own in
+ * `advanceTick`, because landing and withdrawal *are* monsters appearing and
+ * disappearing.
  *
- * No draw is made here, ever. Everything a monster does comes off state seeded
- * at spawn plus the shared tick counter, which is what keeps a colony under
- * siege as replayable as a quiet one.
+ * No draw is made here, ever — `threats/incursion.ts` owns the only ones, and
+ * makes them only at the end of a storm.
  */
 export function stepMonsters(sim: Sim): void {
-  if (!sim.monsters.length) return;
-  const occ = occupancy(sim);
-  const step = monsterStep(sim, occ);
-  for (const m of sim.monsters) {
-    m.px = m.x;
-    m.py = m.y;
-    stepMonster(sim, occ, step, m);
+  // Read before the forecast moves anything: `settleIncursion` needs the
+  // *transition* from "something ashore" to "nothing ashore", not the state.
+  const had = sim.monsters.length > 0;
+  stepForecast(sim);
+  if (sim.monsters.length) {
+    const occ = occupancy(sim);
+    const step = monsterStep(sim, occ);
+    // The colony, resolved once for the whole incursion's press rather than per
+    // monster: it is a whole-grid read, and every monster ashore walks at the
+    // same colony.
+    const anchor = colonyAnchor(sim);
+    const size = sim.world.size;
+    const goal =
+      anchor ?
+        tileIndex(
+          Math.min(size - 1, Math.max(0, Math.floor(anchor[0]))),
+          Math.min(size - 1, Math.max(0, Math.floor(anchor[1]))),
+          size,
+        )
+      : -1;
+    // Backwards, so a monster removed this tick does not shuffle one that has
+    // not stepped yet out from under the loop.
+    for (let i = sim.monsters.length - 1; i >= 0; i--) {
+      const m = sim.monsters[i];
+      m.px = m.x;
+      m.py = m.y;
+      const wasX = Math.floor(m.x);
+      const wasY = Math.floor(m.y);
+      stepMonster(sim, occ, step, m, goal);
+      // **A monster seeds the enclosure flood**, so a monster changing tile is a
+      // change to the fill's inputs exactly as a wall event is. Nothing else in
+      // the sim marks this — `markEnclosureStale`'s other callers are all
+      // wall-graph writes — and `settleEnclosure` runs last in `advanceTick`,
+      // after this, so the batching needs no ordering work here.
+      if (Math.floor(m.x) !== wasX || Math.floor(m.y) !== wasY) markEnclosureStale(sim);
+    }
   }
+  settleIncursion(sim, had);
 }
 
-function stepMonster(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
-  advancePhase(m);
-  if (m.phase === MonsterPhase.Rest) return;
-  if (m.phase === MonsterPhase.GoingHome) {
-    goHome(sim, occ, step, m);
+function stepMonster(sim: Sim, occ: Occupancy, step: StepGate, m: Monster, goal: number): void {
+  if (m.phase === MonsterPhase.Withdrawing) {
+    withdraw(sim, occ, step, m);
     return;
   }
-  prowl(sim, occ, step, m);
-}
-
-/**
- * Run the clock. Rest ends in a prowl that starts at the first waypoint; a
- * prowl ends in the walk home, whatever it was doing — target dropped, bite
- * abandoned, route thrown away. The clock is the law.
- */
-function advancePhase(m: Monster): void {
-  if (m.phase === MonsterPhase.Rest) {
-    if (--m.phaseTicks > 0) return;
-    m.phase = MonsterPhase.Prowl;
-    m.phaseTicks = m.prowlTicks;
-    m.leg = 0;
-    forget(m);
-    return;
-  }
-  if (m.phase === MonsterPhase.Prowl) {
-    if (--m.phaseTicks > 0) return;
-    m.phase = MonsterPhase.GoingHome;
-    m.phaseTicks = 0;
-    forget(m);
-  }
-  // GoingHome ends on arrival, not on a clock.
+  ashore(sim, occ, step, m, goal);
 }
 
 function forget(m: Monster): void {
@@ -86,34 +98,53 @@ function forget(m: Monster): void {
 }
 
 /**
- * Home, and then to sleep.
+ * Off the map, and the enclosure with it: the seed set just lost a member.
  *
- * A monster that cannot walk all the way in — its own den built over by a
- * migrated colony, a landslide of a terraform since — beds down beside it
- * instead: the rhythm has to keep running, or a monster could be neutralized
- * for good by being shut out of its lair, which is the one thing the design
- * will not allow. Where nothing at all can be reached and something damageable
- * is in the way, it chews; where even that is stone or cliff, it waits.
+ * The boat goes when the **last** monster that came in on it does, which is what
+ * the second half tests for: the hull is baked into the chunk mesh, so the chunk
+ * has to be told it is no longer there.
  */
-function goHome(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
-  const home = Math.floor(m.x) === m.lairX && Math.floor(m.y) === m.lairY;
-  if (!home) {
-    const walked = walkTo(sim, occ, step, m, tileIndex(m.lairX, m.lairY, sim.world.size));
-    if (walked === "moving") return;
-    if (walked === "stuck") {
-      // Deterministic desperation: something is between it and its den, and if
-      // that something can be chewed it gets chewed — even homeward.
-      desperate(sim, occ, step, m);
-      return;
-    }
+function leave(sim: Sim, m: Monster): void {
+  const i = sim.monsters.indexOf(m);
+  if (i >= 0) sim.monsters.splice(i, 1);
+  markEnclosureStale(sim);
+  if (!sim.monsters.some((o) => o.landX === m.landX && o.landY === m.landY)) {
+    markChunkDirty(sim.world, m.landX, m.landY);
   }
-  m.phase = MonsterPhase.Rest;
-  m.phaseTicks = m.restTicks;
-  if (home) {
-    m.x = m.lairX + 0.5;
-    m.y = m.lairY + 0.5;
+}
+
+/**
+ * Back to the boats, and gone on arrival.
+ *
+ * **The backstop clock is why this cannot simply wait for an arrival.** The way
+ * to the coast can be walled off behind a monster, and without a second clock a
+ * player who closed a ring at the wrong moment would keep a permanent resident —
+ * the den problem reborn, and inside the colony this time. It is deliberately
+ * longer than the storm, because removing one the instant the storm ended would
+ * have monsters blinking out mid-map in plain sight, which reads as a bug.
+ *
+ * Where something chewable is in the way it chews, exactly as it did homeward
+ * under the old model: a monster shut in by a palisade eats its way back out
+ * rather than becoming furniture.
+ */
+function withdraw(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
+  if (--m.phaseTicks <= 0) {
+    leave(sim, m);
+    return;
   }
-  forget(m);
+  const size = sim.world.size;
+  const goal = tileIndex(m.landX, m.landY, size);
+  const here = tileIndex(Math.floor(m.x), Math.floor(m.y), size);
+  if (touches(here, goal, size)) {
+    leave(sim, m);
+    return;
+  }
+  const walked = walkTo(sim, occ, step, m, goal);
+  if (walked === "arrived") {
+    leave(sim, m);
+    return;
+  }
+  if (walked === "stuck") desperate(sim, occ, step, m);
 }
 
 /**
@@ -121,7 +152,7 @@ function goHome(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
  * thing; a monster with a target **holds** it until it is broken, so a chasing
  * orc never abandons its victim for a closer fence post.
  */
-function prowl(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
+function ashore(sim: Sim, occ: Occupancy, step: StepGate, m: Monster, goal: number): void {
   if (m.target < 0 && m.targetTile < 0) acquire(sim, m);
   if (m.target >= 0) {
     chase(sim, occ, step, m);
@@ -131,7 +162,7 @@ function prowl(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
     attack(sim, occ, step, m);
     return;
   }
-  patrol(sim, occ, step, m);
+  press(sim, occ, step, m, goal);
 }
 
 /**
@@ -244,20 +275,25 @@ function attack(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
   if (walkTo(sim, occ, step, m, i) === "stuck") forget(m);
 }
 
-/** The circuit: waypoints in order, forever, until something is noticed or the
- *  prowl runs out. */
-function patrol(sim: Sim, occ: Occupancy, step: StepGate, m: Monster): void {
-  if (!m.circuit.length) return;
-  const goal = m.circuit[m.leg % m.circuit.length];
-  const walked = walkTo(sim, occ, step, m, goal);
-  if (walked === "moving") return;
-  // Arrived, or nothing leads there: either way take the next waypoint rather
-  // than standing on this one for the rest of the prowl. A leg that is simply
-  // unreachable also earns a look at whatever is in the way.
-  m.leg = (m.leg + 1) % m.circuit.length;
-  m.path = [];
-  m.step = 0;
-  if (walked === "stuck") desperate(sim, occ, step, m);
+/**
+ * Nothing noticed: press toward the colony.
+ *
+ * The goal is the colony's own centre, so "almost to the middle" is a
+ * *consequence* rather than a rule — a monster walks in until a wall stops it,
+ * and a closed wall is what stops it. Behind stone it chews at whatever is
+ * chewable and, finding nothing, waits.
+ *
+ * **`depth` is the one thing that bounds the walk**, measured from the beach it
+ * came ashore on: a colony that has reached further inland is pressed further
+ * inland, which is where CONCEPT's "danger scales outward" lives now that a
+ * single strength dial governs how many come. It bounds the *press* only — a
+ * chase already under way may carry a monster past it, because a colonist who
+ * walked out to meet one is a choice the player made.
+ */
+function press(sim: Sim, occ: Occupancy, step: StepGate, m: Monster, goal: number): void {
+  if (goal < 0) return;
+  if (Math.max(Math.abs(Math.floor(m.x) - m.landX), Math.abs(Math.floor(m.y) - m.landY)) >= m.depth) return;
+  if (walkTo(sim, occ, step, m, goal) === "stuck") desperate(sim, occ, step, m);
 }
 
 /**

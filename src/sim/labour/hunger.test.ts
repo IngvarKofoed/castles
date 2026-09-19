@@ -267,7 +267,7 @@ describe("hunger with no food anywhere", () => {
     // against a fleeing worker is the game's central difficulty dial, so an
     // empty larder may cost the colony its output and may never quietly raise
     // its death rate. Measured on the ground rather than off the helper.
-    sim.monsters.push(testMonster({ lairX: 4, lairY: 6 }));
+    sim.monsters.push(testMonster({x: 4 + 0.5, y: 6 + 0.5}));
     const from = c.x;
     advanceTick(sim);
     advanceTick(sim);

@@ -36,12 +36,13 @@ import { bury } from "./graves";
  */
 
 /**
- * The prowling monster within `FLEE_RANGE` of a **point**, or null — the
- * boundary asked about a place rather than about a person.
+ * The landed monster within `FLEE_RANGE` of a **point**, or null — the boundary
+ * asked about a place rather than about a person.
  *
- * Resting and homeward monsters are ignored, which is what makes CONCEPT's
- * "hold until it leaves" trustworthy: a leaving monster is already harmless and
- * the colony can see it walking away. So is a point on inside ground.
+ * A **withdrawing** monster is ignored, which is what makes CONCEPT's "an attack
+ * ends only when the monster leaves" trustworthy: one heading for its boat is
+ * already harmless and the colony can see it walking away. So is a point on
+ * inside ground.
  *
  * **Coordinates are tile-centre floats**, the same `x + 0.5` every other caller
  * of `reach` passes (`threatNear` from `c.x, c.y`, `watched` for its beach).
@@ -58,7 +59,7 @@ export function prowlerNear(sim: Sim, x: number, y: number): Monster | null {
   let best: Monster | null = null;
   let bestD = Infinity;
   for (const m of sim.monsters) {
-    if (m.phase !== MonsterPhase.Prowl) continue;
+    if (m.phase !== MonsterPhase.Ashore) continue;
     const d = reach(m, x, y);
     if (d > FLEE_RANGE) continue;
     // Ties break by id, so two monsters equidistant never make the choice

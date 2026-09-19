@@ -752,13 +752,13 @@ function pasture(cx: number, g: number, cz: number, b: Building, out: Box[]): vo
  * The only building in the game made of *cut stone* — which is also what it
  * costs — so it reads as the mason's work rather than the carpenter's, and it
  * is unmistakable beside the timber Mill next to it. Two courses stepping in,
- * the den's trick for a dome without a real one.
+ * two courses rather than one, for a dome without a real one.
  */
 function oven(cx: number, g: number, cz: number, b: Building, out: Box[]): void {
   out.push(box(cx, g, cz, b.w - 0.2, 0.9 * BH, b.h - 0.2, PROP.block));
   out.push(box(cx, g + 0.9 * BH, cz, b.w - 0.7, 0.5 * BH, b.h - 0.7, PROP.stoneWarm, 0, 0.96));
-  // The mouth, on the south face the camera can always see — the den's rule.
-  out.push(box(cx, g + 0.1 * BH, b.y + b.h - 0.16, 0.5, 0.5 * BH, 0.12, PROP.denMouth, 0, 0.85));
+  // The doorway, on the south face the camera can always see at every tilt.
+  out.push(box(cx, g + 0.1 * BH, b.y + b.h - 0.16, 0.5, 0.5 * BH, 0.12, PROP.doorway, 0, 0.85));
   // A short chimney off the back corner, and the fire's own glow is not drawn:
   // nothing in this game pulses (docs/STYLEGUIDE.md, Tone).
   out.push(box(b.x + 0.42, g + 1.4 * BH, b.y + 0.42, 0.26, 0.7 * BH, 0.26, PROP.stone, 0, 0.9));
@@ -1148,39 +1148,58 @@ function stoneCourses(
   }
 }
 
-const LAIR_SALT = 0x9e3779b1;
+const GRAVE_SALT = 0x9e3779b1;
+
+/** How deep a beached hull sits, and how tall its mast stands — both as
+ *  fractions of a block. The mast is where the silhouette comes from: it costs
+ *  no horizontal area at all, which is what lets the hull stay inside its tile. */
+const BOAT_H = 0.5;
+const MAST_H = 1.8;
 
 /**
- * A den on tile (tx, ty): a dark mound of turned earth with a black mouth in
- * it and a couple of bones lying about.
+ * A beached longship on tile (tx, ty): a tarred hull with an upturned prow and
+ * stern, a pale trim along its sheer, and a mast carrying a square sail.
  *
- * A landmark rather than a warning. It is baked into the chunk mesh like a tree
- * because it never moves — one monster per lair and monsters cannot be killed,
- * so this is as static as world content gets — and it reads at distance by
- * silhouette and by being the one dark thing on open grass. Nothing about it
- * pulses or glows: the world is the world, and the ribbon's meter is where the
- * game says anything about danger (docs/STYLEGUIDE.md, Tone).
+ * **It is the whole of what "they came from there" means.** An incursion has one
+ * landing site precisely so the direction is readable at a glance, and this is
+ * the thing that is glanced at; it stands on the sand for as long as the storm
+ * lasts and goes when the last monster leaves
+ * (docs/specs/2026-09-17-incursions-from-the-sea.md). Nothing interacts with it.
+ *
+ * **It stays inside its own tile**, unlike almost every other prop here. A boat
+ * lands on open sand where the nearest thing to click is more sand, but the rule
+ * is the rule: anything standing proud of a footprint resolves a click on itself
+ * to the tile next door, because `Picker.tileAt` floors the hit position
+ * (src/render/CLAUDE.md). **The sail is what does the reading instead** — a pale
+ * panel a mast-height up is visible across the map where a low dark hull on pale
+ * sand is not, and neither of them costs a neighbouring tile anything.
+ *
+ * `rot` comes from the mesher, which knows which side the water is on, so a hull
+ * lies **along the shore** rather than at a hash-picked angle. It is a quarter
+ * turn at a time, so nothing here leans — `Box.rot` spins about +y and knows no
+ * other axis (src/render/CLAUDE.md).
  */
-export function lairBoxes(tx: number, ty: number, h: number, seed: number, out: Box[]): void {
+export function boatBoxes(tx: number, ty: number, h: number, rot: number, out: Box[]): void {
   const g = h * BH;
   const x = tx + 0.5;
   const z = ty + 0.5;
-  const j = hash(tx, ty, seed ^ LAIR_SALT);
-  const rot = (j - 0.5) * 0.6;
-
-  // The mound, in two courses so it domes rather than reading as a slab. It is
-  // narrower than a full tile on purpose: the bones below have to sit *outside*
-  // it or they are enclosed geometry nobody ever sees.
-  out.push(box(x, g, z, 0.8, 0.52 * BH, 0.8, PROP.den, rot));
-  out.push(box(x, g + 0.52 * BH, z, 0.52, 0.36 * BH, 0.52, PROP.den, rot, 0.9));
-  // The mouth: a dark hollow cut into the south face, which is the face the
-  // camera can see at every tilt the game allows. It overhangs the mound a
-  // little so it reads as an opening rather than as a shadow.
-  out.push(box(x, g, z + 0.32, 0.38, 0.42 * BH, 0.3, PROP.denMouth, rot, 0.8));
-  // Bones. Two, small, and at opposite corners clear of the mound — enough to
-  // say what lives here without turning a landmark into a diorama.
-  out.push(box(x - 0.42, g, z - 0.3, 0.26, 0.1 * BH, 0.08, PROP.bone, rot + 0.7));
-  out.push(box(x + 0.38, g, z + 0.32, 0.2, 0.09 * BH, 0.08, PROP.bone, rot - 1.1));
+  // Along the hull's length and across its beam, in world terms — one of the two
+  // is always zero, since `rot` is only ever a quarter turn.
+  const ax = Math.cos(rot);
+  const az = -Math.sin(rot);
+  // The hull, in two courses so it reads as a shell rather than as a crate: a
+  // long keel with a shorter, paler gunwale course on top.
+  out.push(box(x, g, z, 0.92, BOAT_H * BH, 0.42, PROP.hull, rot));
+  out.push(box(x, g + BOAT_H * BH, z, 0.74, 0.14 * BH, 0.3, PROP.hullTrim, rot, 0.95));
+  // Prow and stern, stepped up rather than tilted — the one way a curve can be
+  // drawn in this renderer.
+  out.push(box(x + ax * 0.4, g + BOAT_H * BH, z + az * 0.4, 0.14, 0.42 * BH, 0.26, PROP.hull, rot, 0.9));
+  out.push(box(x - ax * 0.4, g + BOAT_H * BH, z - az * 0.4, 0.14, 0.3 * BH, 0.26, PROP.hull, rot, 0.9));
+  // The mast, and the square sail hung along it — all of the height and none of
+  // the width.
+  out.push(box(x, g + BOAT_H * BH, z, 0.09, MAST_H * BH, 0.09, PROP.hullTrim, rot));
+  out.push(box(x, g + (BOAT_H + MAST_H - 0.08) * BH, z, 0.68, 0.1 * BH, 0.1, PROP.hullTrim, rot, 0.9));
+  out.push(box(x, g + (BOAT_H + 0.55) * BH, z, 0.6, 1.15 * BH, 0.07, PROP.sail, rot, 0.98));
 }
 
 /**
@@ -1195,7 +1214,7 @@ export function graveBoxes(tx: number, ty: number, h: number, seed: number, out:
   const g = h * BH;
   const x = tx + 0.5;
   const z = ty + 0.5;
-  const j = hash(tx, ty, seed ^ LAIR_SALT);
+  const j = hash(tx, ty, seed ^ GRAVE_SALT);
   const lean = (j - 0.5) * 0.5;
   out.push(box(x, g, z, 0.46, 0.1 * BH, 0.62, PROP.graveEarth, lean, 0.95));
   out.push(box(x, g + 0.1 * BH, z - 0.16, 0.26, 0.44 * BH, 0.07, PROP.graveBoard, lean));
